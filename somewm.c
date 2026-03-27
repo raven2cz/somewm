@@ -1047,11 +1047,6 @@ buttonpress(struct wl_listener *listener, void *data)
 			                             CLEANMASK(mods), true)) {
 				return;
 			}
-
-			/* Fall back to global button check */
-			if (luaA_button_check(CLEANMASK(mods), event->button)) {
-				return;
-			}
 		} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
 			/* Calculate client-relative coordinates */
 			rel_x = (int)cursor->x - c->geometry.x;
@@ -1111,10 +1106,6 @@ buttonpress(struct wl_listener *listener, void *data)
 			}
 		}
 
-		/* All button bindings are handled via Lua (AwesomeWM pattern) */
-		if (luaA_button_check(CLEANMASK(mods), event->button)) {
-			return;
-		}
 		break;
 	}
 	case WL_POINTER_BUTTON_STATE_RELEASED: {
