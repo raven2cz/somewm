@@ -26,3 +26,5 @@ docs/*
 
 # Nix build output
 result
+subprojects/scenefx
+.codex
