@@ -1601,6 +1601,12 @@ commitnotify(struct wl_listener *listener, void *data)
 	if (c->resize) {
 		if (c->resize <= c->surface.xdg->current.configure_serial) {
 			c->resize = 0;
+			/* Resize complete — apply deferred visual state (position,
+			 * borders, shadow, titlebars) that was skipped while
+			 * c->resize was non-zero. Now c->resize == 0 so
+			 * apply_geometry_to_wlroots takes the full visual path. */
+			if (!some_client_get_floating(c) && !c->fullscreen)
+				apply_geometry_to_wlroots(c);
 		}
 	}
 
@@ -4547,6 +4553,20 @@ apply_geometry_to_wlroots(Client *c)
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
+	/* For tiled XDG clients with a pending resize AND a position change,
+	 * defer the visual update. The client is still rendering at the old size,
+	 * so showing it at the new position would create a visible gap (flicker
+	 * when adjusting mfact). Position, borders, shadow, and titlebars are all
+	 * updated atomically when the resize completes (c->resize cleared in
+	 * commitnotify). Skip defer when only size changes (no position shift)
+	 * or when position changes without resize (carousel animation). */
+	if (c->resize && !some_client_get_floating(c) && !c->fullscreen
+			&& !client_is_x11(c)
+			&& (c->scene->node.x != c->geometry.x
+				|| c->scene->node.y != c->geometry.y)) {
+		goto send_configure;
+	}
+
 	/* Update scene-graph position and borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
@@ -4574,6 +4594,7 @@ apply_geometry_to_wlroots(Client *c)
 	/* Update titlebar positions - they depend on current geometry */
 	client_update_titlebar_positions(c);
 
+send_configure:
 	/* Request size change from client (subtract borders AND titlebars from geometry)
 	 * CRITICAL: Only send configure if there's no pending resize waiting for client commit.
 	 * Without this check, we flood the client with configure events on every refresh cycle,
