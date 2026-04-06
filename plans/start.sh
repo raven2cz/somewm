@@ -2,6 +2,21 @@
 # Start somewm with debug logging
 mkdir -p ~/.local/log
 
+# Clean stale Quickshell instance locks from previous sessions.
+# Without this, awful.spawn.once() may think QS is already running
+# after a compositor crash/restart.
+if [ -d /run/user/$(id -u)/quickshell ]; then
+    # Kill any orphaned QS processes from previous session
+    pkill -u "$(id -un)" -f "qs -c somewm" 2>/dev/null
+    # Remove stale runtime dirs so spawn.once doesn't skip launch
+    rm -rf /run/user/$(id -u)/quickshell/by-id/* \
+           /run/user/$(id -u)/quickshell/by-pid/* \
+           /run/user/$(id -u)/quickshell/by-path/* 2>/dev/null
+fi
+
+# Clear QML cache to pick up any QS config changes
+rm -rf ~/.cache/quickshell/qmlcache 2>/dev/null
+
 # Ensure /usr/local/lib is on library path (scenefx, lgi guard)
 # ldconfig should handle this, but LD_LIBRARY_PATH is a safe fallback
 if [[ ":${LD_LIBRARY_PATH:-}:" != *":/usr/local/lib:"* ]]; then
