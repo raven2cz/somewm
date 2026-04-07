@@ -17,8 +17,7 @@ Variants {
         screen: modelData
 
         property bool shouldShow: Core.Panels.osdVisible &&
-            (modelData.name === Services.Compositor.focusedScreenName ||
-             String(modelData.index) === Services.Compositor.focusedScreenName)
+            Services.Compositor.isActiveScreen(modelData)
 
         visible: shouldShow || fadeAnim.running
 

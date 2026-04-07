@@ -25,8 +25,7 @@ Variants {
 
         // Is dashboard open on this screen?
         readonly property bool dashActive: Core.Panels.isOpen("dashboard") &&
-            (modelData.name === Services.Compositor.focusedScreenName ||
-             String(modelData.index) === Services.Compositor.focusedScreenName)
+            Services.Compositor.isActiveScreen(modelData)
 
         color: "transparent"
 
