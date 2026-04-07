@@ -1,38 +1,53 @@
-# Fix: Pointer enter not delivered to newly visible surfaces
+# Fix: Pointer enter not delivered to newly visible layer surfaces
 
 ## Problem
 
 When a layer-shell surface (e.g. QS dock panel) appears under the cursor,
-hover/focus doesn't work until the user clicks. Same issue occurs generally
-across somewm — not QS-specific.
+hover/focus doesn't work until the user physically moves the mouse.
 
-## Root Cause (preliminary)
+## Root Cause
 
-- `motionnotify()` (somewm.c:3964) correctly finds layer surfaces via `xytonode()`
-- `pointerfocus()` (somewm.c:4321) correctly calls `wlr_seat_pointer_notify_enter()`
-- BUT deferred pointer enter logic (~line 4362-4367) appears to delay `wl_pointer.enter`
-  until keyboard focus is established on the surface
-- Click forces pointer enter + button events, which "unsticks" the state
+`commitlayersurfacenotify()` in somewm.c detects layer surface map transitions
+(`was_mapped=0 → l->mapped=1`) but does not re-evaluate pointer focus afterward.
+The cursor remains focused on whatever was under it before the surface appeared.
 
-## Why click fixes it
+Sway handles this via `cursor_rebase_all()` in `handle_map()`
+(sway/desktop/layer_shell.c:301). somewm's own `unmaplayersurfacenotify()`
+already calls `motionnotify(0, NULL, 0, 0, 0, 0)` for the reverse case.
 
-Click triggers `wlr_seat_pointer_notify_button()` which implicitly confirms
-pointer focus on the surface. After that, motion/hover events flow normally.
+## Why regular clients don't need the same fix
 
-## Affected areas
+`mapnotify()` at lines 3862-3873 already has a cursor-in-geometry check that
+calls `pointerfocus()` directly. It deliberately avoids `motionnotify()` because
+`xytonode()` may not find the surface yet (buffer not committed). Layer surfaces
+don't have this problem — `commitlayersurfacenotify()` runs after buffer commit.
 
-- Layer-shell surfaces (QS panels: dock, dashboard, control panel)
-- Possibly also regular client surfaces on tag switch or new window map
-- User reports this is a general somewm behavior, not panel-specific
+## Fix Applied
 
-## Fix direction
+In `commitlayersurfacenotify()` (somewm.c:~1507-1514), after `arrangelayers()`:
+```c
+/* Re-evaluate pointer focus when layer surface maps */
+if (!was_mapped && l->mapped && !exclusive_focus)
+    motionnotify(0, NULL, 0, 0, 0, 0);
+```
 
-- Check `pointerfocus()` deferred enter logic — does it need to re-send
-  pointer enter when a NEW surface appears under an already-stationary cursor?
-- Compare with Sway's `seat_pointer_notify_enter` in `sway/input/seat.c`
-- wlroots `wlr_seat_pointer_notify_enter` should be called whenever the
-  surface under cursor changes, even without pointer motion
+Key design decisions:
+- **After `arrangelayers()`**: scene node geometry must be updated before
+  `xytonode()` hit-test runs, otherwise stale 0x0 geometry causes misses
+- **`!exclusive_focus` guard**: prevents disrupting keyboard grabs (e.g. session
+  lock). The unmap path clears `exclusive_focus` before rebasing, but map doesn't
+- **`time=0`**: skips Lua mouse signals (`mouse::enter/leave/move` are gated on
+  `time != 0`), only runs `xytonode()` + `pointerfocus()` for wl_pointer delivery
+- **`CurPressed` safe**: if user holds a button, `motionnotify()` keeps focus on
+  the drag target — new surface won't steal focus mid-drag
+
+## Cross-model review
+
+Reviewed by Codex (gpt-5.4), Gemini (3.1-pro-preview), and Sonnet.
+All three approved. Incorporated suggestions:
+- exclusive_focus guard (Sonnet)
+- Precise comment about motionnotify vs cursor_rebase_all scope (Codex)
 
 ## Status
 
-Parked — will investigate after QS dock stabilization is complete.
+Fix implemented, reviewed, ready for commit + upstream PR.
