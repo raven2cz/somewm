@@ -3529,8 +3529,11 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	/* Handle unmanaged clients first so we can return prior create borders */
 	if (client_is_unmanaged(c)) {
-		/* Unmanaged clients always are floating */
-		wlr_scene_node_reparent(&c->scene->node, layers[LyrFloat]);
+		/* Unmanaged clients (override_redirect) go to overlay layer.
+		 * X11 semantics: override_redirect windows display above all
+		 * managed windows. LyrOverlay is above fullscreen but below
+		 * session lock (LyrBlock). */
+		wlr_scene_node_reparent(&c->scene->node, layers[LyrOverlay]);
 		wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 		client_set_size(c, c->geometry.width, c->geometry.height);
 		if (client_wants_focus(c)) {
