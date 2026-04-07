@@ -86,6 +86,14 @@ client_layer_translator(Client *c)
 	if (!c)
 		return WINDOW_LAYER_NORMAL;
 
+	/* Override-redirect (unmanaged) X11 surfaces are always on top.
+	 * X11 semantics: override_redirect bypasses the WM entirely and
+	 * displays above all managed windows. Maps to LyrOverlay. */
+#ifdef XWAYLAND
+	if (c->client_type == X11 && c->surface.xwayland->override_redirect)
+		return WINDOW_LAYER_ONTOP;
+#endif
+
 	/* First deal with user-set attributes */
 	if (c->ontop)
 		return WINDOW_LAYER_ONTOP;
