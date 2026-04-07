@@ -16,8 +16,7 @@ Variants {
         screen: modelData
 
         property bool shouldShow: Core.Panels.isOpen("media") &&
-            (modelData.name === Services.Compositor.focusedScreenName ||
-             String(modelData.index) === Services.Compositor.focusedScreenName)
+            Services.Compositor.isActiveScreen(modelData)
 
         visible: shouldShow || fadeOut.running
 

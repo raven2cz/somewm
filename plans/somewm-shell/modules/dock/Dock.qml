@@ -21,8 +21,7 @@ Variants {
         screen: modelData
 
         property bool shouldShow: Core.Panels.isOpen("dock") &&
-            (modelData.name === Services.Compositor.focusedScreenName ||
-             String(modelData.index) === Services.Compositor.focusedScreenName)
+            Services.Compositor.isActiveScreen(modelData)
 
         color: "transparent"
         focusable: shouldShow

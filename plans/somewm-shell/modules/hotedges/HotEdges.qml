@@ -33,8 +33,7 @@ Scope {
             screen: modelData
 
             readonly property bool isActiveScreen:
-                modelData.name === Services.Compositor.focusedScreenName ||
-                String(modelData.index) === Services.Compositor.focusedScreenName
+                Services.Compositor.isActiveScreen(modelData)
 
             color: "transparent"
             visible: isActiveScreen
@@ -82,8 +81,7 @@ Scope {
             screen: modelData
 
             readonly property bool isActiveScreen:
-                modelData.name === Services.Compositor.focusedScreenName ||
-                String(modelData.index) === Services.Compositor.focusedScreenName
+                Services.Compositor.isActiveScreen(modelData)
 
             color: "transparent"
             visible: isActiveScreen
@@ -130,8 +128,7 @@ Scope {
             screen: modelData
 
             readonly property bool isActiveScreen:
-                modelData.name === Services.Compositor.focusedScreenName ||
-                String(modelData.index) === Services.Compositor.focusedScreenName
+                Services.Compositor.isActiveScreen(modelData)
 
             color: "transparent"
             visible: isActiveScreen

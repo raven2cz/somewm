@@ -19,8 +19,7 @@ Variants {
         panelWidth: Math.round(420 * Core.Theme.dpiScale)
 
         shown: Core.Panels.isOpen("sidebar") &&
-            (modelData.name === Services.Compositor.focusedScreenName ||
-             String(modelData.index) === Services.Compositor.focusedScreenName)
+            Services.Compositor.isActiveScreen(modelData)
 
         // Sidebar content
         ColumnLayout {

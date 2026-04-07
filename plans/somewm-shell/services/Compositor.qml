@@ -9,7 +9,15 @@ Singleton {
     property var clients: []
     property var tags: []
     property string focusedClient: ""
-    property string focusedScreenName: ""  // pushed from rc.lua screen::focus signal
+    // Set by screenProc on startup, then updated by rc.lua screen::focus signal.
+    property string focusedScreenName: ""
+
+    // Check if a given screen is the focused one.
+    // Used by all panel modules to target the correct monitor.
+    function isActiveScreen(screenData): bool {
+        return screenData.name === focusedScreenName ||
+               String(screenData.index) === focusedScreenName
+    }
 
     // Debounce: coalesce rapid push events into a single refresh
     property bool _dirty: false
@@ -93,18 +101,23 @@ Singleton {
     Process {
         id: stateProc
         command: ["somewm-client", "eval",
+            "local function esc(s) return s:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"'):gsub('\\n','\\\\n'):gsub('\\t','\\\\t'):gsub('\\r','') end " +
             "local json='{\"clients\":[' local sep='' " +
             "for _,c in ipairs(client.get()) do " +
-            "local function esc(s) return s:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"'):gsub('\\n','\\\\n'):gsub('\\t','\\\\t'):gsub('\\r','') end " +
             "json=json..sep..'{\"name\":\"'..esc(c.name or '')..'\",\"class\":\"'..esc(c.class or '')" +
             "..'\",\"tag\":\"'..esc(c.first_tag and c.first_tag.name or '')..'\",\"wid\":'..tostring(c.window or 0)..'}' " +
-            "sep=',' end return json..']}'"
+            "sep=',' end " +
+            "local fs = require('awful').screen.focused() " +
+            "json=json..'],\"focusedScreen\":\"'..esc(fs and (fs.name or tostring(fs.index)) or '')..'\"}' " +
+            "return json"
         ]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
                     var data = JSON.parse(root._ipcValue(text))
                     root.clients = data.clients || []
+                    if (data.focusedScreen)
+                        root.focusedScreenName = data.focusedScreen
                 } catch (e) {
                     console.error("Client state parse error:", e)
                     root.clients = []
@@ -128,22 +141,6 @@ Singleton {
         function spawn(cmd: string): void { root.spawn(cmd) }
     }
 
-    // Initial fetch on startup (one-time, not recurring)
-    // Also request initial focused screen name from compositor
-    Component.onCompleted: {
-        _refreshState()
-        // Fetch initial focused screen (push may not have arrived yet)
-        screenProc.running = true
-    }
-    Process {
-        id: screenProc
-        command: ["somewm-client", "eval",
-            "local s = require('awful').screen.focused(); return s.name or tostring(s.index)"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var name = root._ipcValue(text)
-                if (name) root.focusedScreenName = name
-            }
-        }
-    }
+    // Initial state fetch — stateProc returns clients + focusedScreen in one call
+    Component.onCompleted: _refreshState()
 }
