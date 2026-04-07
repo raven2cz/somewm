@@ -50,4 +50,4 @@ All three approved. Incorporated suggestions:
 
 ## Status
 
-Fix implemented, reviewed, ready for commit + upstream PR.
+DONE — merged to main (`561f6b0`), upstream PR trip-zip/somewm#420.
