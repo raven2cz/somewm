@@ -54,10 +54,19 @@ package.preload["wibox"] = function()
 	}
 end
 
--- Stub screen iterator
+-- Stub screen iterator (for scr in screen do ... end)
+-- In Lua, `for var in callable_table do` uses __call as the iterator function.
+-- __call must return nil to signal end of iteration.
+local _screen_list = {}
 _G.screen = setmetatable({}, {
-	__call = function()
-		return function() return nil end
+	__call = function(_, prev)
+		if prev == nil then
+			return _screen_list[1]
+		end
+		for i, s in ipairs(_screen_list) do
+			if s == prev then return _screen_list[i + 1] end
+		end
+		return nil
 	end,
 })
 

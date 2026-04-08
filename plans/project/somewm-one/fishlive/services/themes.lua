@@ -97,10 +97,23 @@ function themes.get_palette(theme_path)
 		table = table,
 	}
 
-	local chunk, err = loadfile(theme_path)
-	if not chunk then return nil end
-
-	setfenv(chunk, sandbox)
+	-- Load theme.lua in sandboxed environment
+	-- Lua 5.1: use setfenv; Lua 5.2+: use load with env parameter
+	local chunk, err
+	if setfenv then
+		-- Lua 5.1 / LuaJIT
+		chunk, err = loadfile(theme_path)
+		if not chunk then return nil end
+		setfenv(chunk, sandbox)
+	else
+		-- Lua 5.2+: read file and use load() with env
+		local f = io.open(theme_path, "r")
+		if not f then return nil end
+		local code = f:read("*a")
+		f:close()
+		chunk, err = load(code, theme_path, "t", sandbox)
+		if not chunk then return nil end
+	end
 	local ok, result = pcall(chunk)
 	if not ok or type(result) ~= "table" then return nil end
 
@@ -163,7 +176,7 @@ function themes.scan()
 					name = name,
 					path = themes_dir .. name .. "/",
 					palette = palette or {},
-					wallpaper_count = count_wallpapers(themes_dir .. name),
+					wallpaper_count = count_wallpapers(themes_dir .. name .. "/"),
 					active = (name == themes.get_current()),
 				})
 			end

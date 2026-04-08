@@ -62,15 +62,19 @@ package.preload["wibox.widget.imagebox"] = function()
 	return require("wibox").widget.imagebox
 end
 
--- Stub global screen iterator
+-- Stub global screen iterator (for scr in screen do ... end)
+-- __call is used directly as the iterator by `for`, so it receives the
+-- previous value and must return the next screen or nil.
 local mock_screens = {}
 _G.screen = setmetatable({}, {
-	__call = function()
-		local i = 0
-		return function()
-			i = i + 1
-			return mock_screens[i]
+	__call = function(_, prev)
+		if prev == nil then
+			return mock_screens[1]
 		end
+		for i, s in ipairs(mock_screens) do
+			if s == prev then return mock_screens[i + 1] end
+		end
+		return nil
 	end,
 })
 
