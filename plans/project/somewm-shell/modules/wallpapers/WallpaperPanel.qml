@@ -351,9 +351,16 @@ Variants {
                                 height: panel.itemHeight + 30
                                 fillMode: Image.PreserveAspectCrop
                                 source: {
+                                    if (!delegateRoot.filePath) return ""
                                     // Use thumbnail if available, otherwise original
-                                    var thumbPath = Services.Wallpapers.thumbDir + "/" + delegateRoot.safeFileName
-                                    return delegateRoot.filePath ? "file://" + delegateRoot.filePath : ""
+                                    var thumbUrl = Services.Wallpapers.thumbDirUrl + "/" + delegateRoot.safeFileName
+                                    return thumbUrl
+                                }
+                                // Fall back to full-res if thumbnail not found
+                                onStatusChanged: {
+                                    if (status === Image.Error && delegateRoot.filePath) {
+                                        source = "file://" + delegateRoot.filePath
+                                    }
                                 }
                                 asynchronous: true
 

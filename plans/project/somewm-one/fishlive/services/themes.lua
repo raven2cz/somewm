@@ -75,9 +75,8 @@ end
 function themes.get_palette(theme_path)
 	if not gears.filesystem.file_readable(theme_path) then return nil end
 
-	-- Sandboxed environment: provide only what theme.lua needs
+	-- Sandboxed environment: minimal — no require, no io, no os
 	local sandbox = {
-		require = require,
 		tostring = tostring,
 		tonumber = tonumber,
 		pairs = pairs,
@@ -109,15 +108,25 @@ function themes.get_palette(theme_path)
 	return palette
 end
 
+--- Wallpaper file extensions to look for.
+local WP_EXTENSIONS = { jpg = true, jpeg = true, png = true, webp = true }
+
 --- Count wallpaper files in a theme's wallpapers/ directory.
+-- Uses safe Lua io.popen with %q-escaped paths to prevent shell injection.
 -- @tparam string theme_dir Path to theme directory
 -- @treturn number Number of wallpaper files found
 local function count_wallpapers(theme_dir)
 	local wp_dir = theme_dir .. "wallpapers/"
 	local count = 0
-	local handle = io.popen('ls "' .. wp_dir .. '" 2>/dev/null | grep -cE "\\.(jpg|jpeg|png|webp)$"')
+	local handle = io.popen(string.format(
+		'ls %s 2>/dev/null', string.format("%q", wp_dir)))
 	if handle then
-		count = tonumber(handle:read("*a")) or 0
+		for line in handle:lines() do
+			local ext = line:match("%.([^%.]+)$")
+			if ext and WP_EXTENSIONS[ext:lower()] then
+				count = count + 1
+			end
+		end
 		handle:close()
 	end
 	return count
@@ -129,8 +138,9 @@ function themes.scan()
 	local themes_dir = get_themes_dir()
 	local result = {}
 
-	-- List directories in themes/
-	local handle = io.popen('ls -1d "' .. themes_dir .. '"*/ 2>/dev/null')
+	-- List directories in themes/ (safe: %q escapes the path)
+	local handle = io.popen(string.format(
+		'ls -1d %s*/ 2>/dev/null', string.format("%q", themes_dir)))
 	if not handle then return result end
 
 	for line in handle:lines() do
@@ -231,26 +241,16 @@ function themes.switch(theme_name)
 	-- Clear overrides (they belonged to the previous theme)
 	wp_service._overrides = {}
 
-	-- Re-apply wallpapers for all screens
+	-- Re-apply wallpapers for all screens using public apply wrapper
 	for scr in screen do
 		scr._wppath = wppath
 		local sel = scr.selected_tag
 		if sel then
 			local wp = wp_service._resolve(sel.name)
 			if wp then
-				-- Force re-apply by clearing current
+				-- Clear cached path so apply() doesn't skip as redundant
 				scr._current_wallpaper = nil
-				require("fishlive.services.wallpaper")
-				local apply = function(s, p)
-					-- Access the module-level apply via set_override dance
-					wp_service.set_override(sel.name, p)
-					wp_service._overrides[sel.name] = nil
-				end
-				-- Direct: just call save_to_theme-like logic without copy
-				if scr._wallpaper_widget then
-					scr._wallpaper_widget.image = wp
-				end
-				scr._current_wallpaper = wp
+				wp_service.apply(scr, wp)
 			end
 		end
 	end

@@ -121,8 +121,10 @@ function wallpaper.init(scr, wppath, default_wallpaper)
 	-- Expose wppath for tag_slide animation overlays
 	scr._wppath = wppath
 
-	-- Initial wallpaper
-	local path = wallpaper._resolve(wallpaper._default:match("(.-)%.") or "1")
+	-- Initial wallpaper: use screen's first tag name, not filename parsing
+	local first_tag = scr.tags and scr.tags[1]
+	local init_tag = first_tag and first_tag.name or "1"
+	local path = wallpaper._resolve(init_tag)
 	if path then apply_wallpaper(scr, path) end
 
 	-- Pre-cache all wallpapers for tag_slide animation overlays
@@ -276,6 +278,14 @@ end
 function wallpaper.get_current()
 	local focused = awful.screen.focused()
 	return focused and focused._current_wallpaper or ""
+end
+
+--- Apply a wallpaper to a screen (public wrapper for theme switching).
+-- @tparam screen scr The screen object
+-- @tparam string path Absolute path to wallpaper image
+-- @treturn boolean True if applied
+function wallpaper.apply(scr, path)
+	return apply_wallpaper(scr, path)
 end
 
 return wallpaper
