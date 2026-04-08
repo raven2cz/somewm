@@ -236,7 +236,7 @@ Singleton {
     // Theme export — regenerates theme.json from current wallpaper colors
     Process {
         id: themeExportProc
-        command: [Quickshell.env("HOME") + "/git/github/somewm/plans/theme-export.sh"]
+        command: [Quickshell.shellDir + "/theme-export.sh"]
     }
 
     // Set wallpaper for a specific tag (e.g. from carousel with tag selector)
