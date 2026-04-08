@@ -85,8 +85,26 @@ end
 function themes.get_palette(theme_path)
 	if not gears.filesystem.file_readable(theme_path) then return nil end
 
-	-- Sandboxed environment: minimal — no require, no io, no os
+	-- Sandboxed environment: whitelisted require only, no io/os/debug
+	local SAFE_MODULES = {
+		["beautiful.theme_assets"] = true,
+		["beautiful.xresources"] = true,
+		["ruled.notification"] = true,
+		["gears.filesystem"] = true,
+		["gears"] = true,
+		["gears.color"] = true,
+		["gears.shape"] = true,
+		["dpi"] = true,
+		["math"] = true,
+		["string"] = true,
+		["table"] = true,
+	}
+	local safe_require = function(mod)
+		if SAFE_MODULES[mod] then return require(mod) end
+		error("sandbox: module '" .. tostring(mod) .. "' not allowed", 2)
+	end
 	local sandbox = {
+		require = safe_require,
 		tostring = tostring,
 		tonumber = tonumber,
 		pairs = pairs,
@@ -95,6 +113,9 @@ function themes.get_palette(theme_path)
 		math = math,
 		string = string,
 		table = table,
+		setmetatable = setmetatable,
+		getmetatable = getmetatable,
+		unpack = unpack or table.unpack,
 	}
 
 	-- Load theme.lua in sandboxed environment
