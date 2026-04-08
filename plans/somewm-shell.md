@@ -732,7 +732,7 @@ This handles both named outputs (e.g. `DP-1`) and unnamed/indexed screens.
 # theme-export.sh — atomic write, no cjson dependency, full export
 THEME_JSON="$HOME/.config/somewm/themes/default/theme.json"
 THEME_TMP="${THEME_JSON}.tmp"
-FALLBACK="/home/box/git/github/somewm/plans/somewm-shell/theme.default.json"
+FALLBACK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/theme.default.json"
 
 # Try live export from running compositor
 if somewm-client eval '
@@ -836,7 +836,7 @@ end, { description = "close all shell panels", group = "shell" }),
 
 ### Phase 4: AI Integration (exploratory, separate sub-project)
 - [ ] Ollama HTTP from QML
-- [ ] AI chat module (separate `plans/somewm-shell-ai/`)
+- [ ] AI chat module (separate `plans/project/somewm-shell-ai/`)
 - [ ] MCP server for somewm
 
 ## Dependencies

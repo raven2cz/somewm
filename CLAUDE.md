@@ -93,7 +93,7 @@ ninja -C build    # Direct meson build (faster iteration)
 ```bash
 # 1. Edit code
 # 2. Build + install with SceneFX (handles ldconfig for libscenefx)
-~/git/github/somewm/plans/install-scenefx.sh
+~/git/github/somewm/plans/scripts/install-scenefx.sh
 # 3. Hot-swap running session via IPC
 somewm-client exec somewm
 ```
@@ -109,10 +109,10 @@ ASAN dev build without SceneFX.
 ### Full test cycle (reboot required for DRM changes)
 ```bash
 # Build + install with SceneFX + reboot
-~/git/github/somewm/plans/install-scenefx.sh && sudo reboot
+~/git/github/somewm/plans/scripts/install-scenefx.sh && sudo reboot
 
 # After reboot, launch from TTY (script at plans/start.sh)
-~/git/github/somewm/plans/start.sh
+~/git/github/somewm/plans/scripts/start.sh
 ```
 
 ### Nested compositor sandbox (no reboot, limited fidelity)
@@ -307,18 +307,18 @@ Current rc.lua includes:
 
 ## somewm-one (User Config Project)
 
-Our rc.lua + themes + plugins are versioned in `plans/somewm-one/`.
+Our rc.lua + themes + plugins are versioned in `plans/project/somewm-one/`.
 This is the "release" copy — edit here, deploy to `~/.config/somewm`.
 
 ```bash
 # Edit config
-vim plans/somewm-one/rc.lua
+vim plans/project/somewm-one/rc.lua
 
 # Deploy to active config (backs up rc.lua.bak first)
-plans/somewm-one/deploy.sh
+plans/project/somewm-one/deploy.sh
 
 # Dry run (show what would be synced)
-plans/somewm-one/deploy.sh --dry-run
+plans/project/somewm-one/deploy.sh --dry-run
 
 # Reload after deploy (from running somewm session)
 somewm-client reload
@@ -330,20 +330,20 @@ Contents:
 - `layout-machi/` — layout-machi plugin (tiling layout engine)
 - `deploy.sh` — rsync to `~/.config/somewm` (excludes itself)
 
-**Rule:** Always edit `plans/somewm-one/rc.lua`, never `~/.config/somewm/rc.lua` directly.
+**Rule:** Always edit `plans/project/somewm-one/rc.lua`, never `~/.config/somewm/rc.lua` directly.
 After editing, run `deploy.sh` to sync.
 
 ## Plans Directory
 
 `plans/` contains development plans, issue tracking, and fix documentation.
 - `plans/upstream/` - Upstream sync records and fork status
-- `plans/somewm-one/` - User config project (rc.lua, themes, deploy script)
-- `plans/alfa-focus-dispatch.md` - Focus/keyboard delivery fix (4 bugs found)
-- `plans/fix-137-xwayland-keyboard-focus.md` - Upstream fix guide for #137 with code
-- `plans/stabilization-issues.md` - Documents fixed issues (updatemons UAF, output cleanup)
-- `plans/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
-- `plans/install-and-reboot.sh` - Legacy build + sudo install + reboot script
-- `plans/start.sh` - Launch somewm with debug logging from TTY
+- `plans/project/somewm-one/` - User config project (rc.lua, themes, deploy script)
+- `plans/project/somewm-shell/` - Quickshell desktop shell (QML/Qt6)
+- `plans/project/somewm-shell-ai/` - AI-assisted shell modules
+- `plans/done/` - Archived completed plans and investigations
+- `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
+- `plans/scripts/start.sh` - Launch somewm with debug logging from TTY
+- `plans/scripts/somewm-debug-wrapper.sh` - Debug session wrapper with timestamped logs
 
 ## Reference Projects
 

@@ -1,7 +1,19 @@
 # Fork Status: raven2cz/somewm vs trip-zip/somewm
 
 Last sync with upstream: **2026-03-30** (8 commits: fullscreen fixes, systemd, shadow optimization)
-Last fork-status update: **2026-03-30**
+Last fork-status update: **2026-04-08**
+
+## Upstream sync gap
+
+We are **~20 commits behind upstream/main**. Notable upstream changes since last sync:
+- `focus_restore()` consolidation refactor
+- per-device input rules (`awful.input.rules`)
+- keygrabber key release routing
+- null pointer fix in `wlr_xdg_surface`
+- stack refresh for `ewmh_update_net_client_list_stacking()`
+- `root._remove_key()` for immediate keybinding removal
+- benchmark instrumentation for signal dispatch
+- `screen.fake_add()` SEGV fix
 
 ## What's in main
 
@@ -16,12 +28,17 @@ Last fork-status update: **2026-03-30**
 | 5 | `[SOMEWM-DEBUG]` startup markers | `somewm.c` | — |
 | 6 | Client animation framework (9 types) | `lua/awful/anim_client.lua` + C changes | [#381](https://github.com/trip-zip/somewm/issues/381) |
 | 7 | SceneFX visual effects (optional) | 28 files, `scenefx_compat.h` | [#387](https://github.com/trip-zip/somewm/issues/387) |
-| 8 | Layoutlist hotplug crash fix | `lua/awful/widget/layoutlist.lua` | [#390](https://github.com/trip-zip/somewm/issues/390), [PR #391](https://github.com/trip-zip/somewm/pull/391) |
-| 9 | somewm-one config project | `plans/somewm-one/` | — |
+| 8 | Layoutlist hotplug crash fix | `lua/awful/widget/layoutlist.lua` | [#390](https://github.com/trip-zip/somewm/issues/390) |
+| 9 | Override-redirect XWayland overlay stacking | `somewm.c` | [PR #427](https://github.com/trip-zip/somewm/pull/427) |
+| 10 | Pointer enter for newly mapped layer surfaces | `somewm.c` | [PR #421](https://github.com/trip-zip/somewm/pull/421) |
+| 11 | Wibox opacity/border propagation to C drawin | `objects/drawin.c` | [PR #407](https://github.com/trip-zip/somewm/pull/407) |
+| 12 | Notification FX (fadeIn, shadow, visual refresh) | `lua/naughty/`, `objects/drawin.c` | — |
+| 13 | somewm-shell (Quickshell desktop shell) | `plans/project/somewm-shell/` | — |
+| 14 | somewm-one config project | `plans/project/somewm-one/` | — |
 
 ### SceneFX integration (merged 2026-03-30)
 
-Optional compile-time extension (`-Dscenefx=auto`). See [scenefx-integration.md](../scenefx-integration.md).
+Optional compile-time extension (`-Dscenefx=auto`). See `plans/done/scenefx-integration.md`.
 - Rounded corners (`c.corner_radius`)
 - GPU shadows (dual-path: scenefx native or 9-slice fallback)
 - Backdrop blur (`c.backdrop_blur`)
@@ -29,10 +46,31 @@ Optional compile-time extension (`-Dscenefx=auto`). See [scenefx-integration.md]
 - Titlebar rounded corners
 - Fade animation + decoration interaction
 
-### Client animation framework (merged earlier)
+## Our upstream PRs
 
-9 animation types via `anim_client.lua`. See upstream issue [#381](https://github.com/trip-zip/somewm/issues/381).
-Branch `feat/unified-animations` preserved for reference.
+### Open
+
+| PR | Title | Branch | Created |
+|----|-------|--------|---------|
+| [#427](https://github.com/trip-zip/somewm/pull/427) | fix(stack): place override_redirect XWayland surfaces in overlay layer | `fix/xwayland-override-redirect-stacking-upstream` | 2026-04-07 |
+| [#421](https://github.com/trip-zip/somewm/pull/421) | fix: deliver pointer enter to newly mapped layer surfaces | `fix/pointer-enter-layer-surfaces-upstream` | 2026-04-07 |
+| [#407](https://github.com/trip-zip/somewm/pull/407) | fix(wibox): propagate opacity/border to underlying C drawin | `fix/wibox-opacity-propagation` | 2026-04-03 |
+
+### Merged
+
+| PR | Title | Merged |
+|----|-------|--------|
+| [#400](https://github.com/trip-zip/somewm/pull/400) | fix(drawin): shadow and border not refreshed on resize | 2026-04-03 |
+| [#391](https://github.com/trip-zip/somewm/pull/391) | fix: layoutlist assertion crash on monitor hotplug | 2026-03-30 |
+| [#384](https://github.com/trip-zip/somewm/pull/384) | feat: retroactive added::connected signal for output class | 2026-03-27 |
+| [#382](https://github.com/trip-zip/somewm/pull/382) | fix: use set_bounds instead of set_size for initial XDG configure | 2026-03-27 |
+
+### Closed (superseded/rejected)
+
+| PR | Title | Reason |
+|----|-------|--------|
+| [#420](https://github.com/trip-zip/somewm/pull/420) | fix: deliver pointer enter to newly mapped layer surfaces | Replaced by #421 |
+| [#394](https://github.com/trip-zip/somewm/pull/394) | fix: guard XDG surface operations against uninitialized state | Closed |
 
 ## Our contributions accepted upstream
 
@@ -51,67 +89,80 @@ Branch `feat/unified-animations` preserved for reference.
 | Multi-monitor hotplug (6 bugs) | #216 | Cherry-picked modified |
 | Keyboard focus desync (sloppy) | #237 | Cherry-picked modified |
 | NumLock wibar scroll + UBSan | #239 | Cherry-picked modified |
+| Layoutlist hotplug crash | #390 | PR #391 merged |
+| Output added::connected signal | — | PR #384 merged |
+| Floating layout set_bounds | — | PR #382 merged |
+| Drawin shadow/border refresh | — | PR #400 merged |
 
-## Open issues on upstream
+## Open issues on upstream (ours)
 
-| # | Title | Notes |
-|---|-------|-------|
-| [#387](https://github.com/trip-zip/somewm/issues/387) | SceneFX visual effects | Our issue, references feat/scenefx-integration branch |
-| [#381](https://github.com/trip-zip/somewm/issues/381) | Client animation system | Our issue, references feat/unified-animations branch |
-| [#390](https://github.com/trip-zip/somewm/issues/390) | Layoutlist assertion crash on hotplug | Our fix, [PR #391](https://github.com/trip-zip/somewm/pull/391) |
-| [#249](https://github.com/trip-zip/somewm/issues/249) | Tag state lost on hotplug | Upstream has #312 (tag persistence) |
-| [#232](https://github.com/trip-zip/somewm/issues/232) | awesome.restart() SIGSEGV | Our cold restart workaround active |
-| [#193](https://github.com/trip-zip/somewm/issues/193) | Naughty stuck notifications | Upstream fixed break bug (#274) |
+| # | Title | Status |
+|---|-------|--------|
+| [#408](https://github.com/trip-zip/somewm/issues/408) | wibox.opacity has no visual effect on Wayland | OPEN — our PR #407 addresses this |
+| [#401](https://github.com/trip-zip/somewm/issues/401) | lockscreen: add background image support | OPEN — done in our fork |
+| [#393](https://github.com/trip-zip/somewm/issues/393) | feat: KDE-style tag slide animation | OPEN — tagged 2.x |
+| [#387](https://github.com/trip-zip/somewm/issues/387) | SceneFX visual effects | OPEN — tagged 2.x |
+| [#381](https://github.com/trip-zip/somewm/issues/381) | Client animation system | OPEN — tagged 2.x |
+| [#249](https://github.com/trip-zip/somewm/issues/249) | Tag state lost on hotplug | OPEN — upstream has #312 (tag persistence) |
+| [#238](https://github.com/trip-zip/somewm/issues/238) | NumLock on startup | OPEN — in our fork |
+| [#232](https://github.com/trip-zip/somewm/issues/232) | awesome.restart() SIGSEGV | OPEN — cold restart workaround in our fork |
 
 ## Branch status
 
-### Active (not in main, intentionally preserved)
+### Active (kept intentionally)
 
 | Branch | Purpose | Status |
 |--------|---------|--------|
-| `feat/scenefx-integration` | SceneFX visual effects PoC | **Merged to main 2026-03-30**. Branch preserved — referenced by upstream [#387](https://github.com/trip-zip/somewm/issues/387) |
-| `feat/unified-animations` | Client animation system | **Merged to main earlier**. Branch preserved — referenced by upstream [#381](https://github.com/trip-zip/somewm/issues/381) |
-| `backup/scenefx-integration` | Pre-squash backup (25 commits) | Safety backup, can be deleted after verification |
+| `feat/scenefx-integration` | SceneFX visual effects PoC | **Merged to main**. Preserved — referenced by upstream #387 |
+| `feat/unified-animations` | Client animation system | **Merged to main**. Preserved — referenced by upstream #381 |
+| `backup/scenefx-integration` | Pre-squash backup (25 commits) | Safety backup |
+| `fix/xwayland-override-redirect-stacking-upstream` | Upstream PR #427 | OPEN |
+| `fix/pointer-enter-layer-surfaces-upstream` | Upstream PR #421 | OPEN |
+| `fix/wibox-opacity-propagation` | Upstream PR #407 | OPEN |
+| `fix/stale-border-color-on-unfocus` | Yellow border bug investigation | WIP |
 
 ### Stale (already in main, can be deleted)
 
-These branches were created before the upstream sync (2026-03-22) and their commits
-are already in main under different hashes (cherry-picked or merged separately):
-
 | Branch | Why stale |
 |--------|-----------|
-| `feat/cold-restart` | Commit `63ca2ed` = main's `bdc4fcb` |
-| `fix/floating-layout-initial-size` | Commits `bbd1f97`, `b7ca0aa` = main's `9012e25`, `a28205e` |
-| `fix/scroll-wibar-numlock` | Commit `3d063e0` = main's `8a664de` |
-| `feat/numlock-on-startup` | Commit `eb33fa2` in main |
-| `feat/output-added-connected` | Merged to main |
-| `fix/hot-reload-lgi-crash` | Merged to main |
-| `fix/keyboard-focus-desync` | Cherry-picked by upstream, in main via sync |
-| `fix/minimized-clients-reappear-tag-switch` | Cherry-picked by upstream |
-| `fix/multi-monitor-hotplug` | Cherry-picked by upstream |
-| `fix/selmon-not-updated-on-mouse-motion` | Cherry-picked by upstream |
-| `fix/shadow-resize-perf` | Merged to main |
-| `fix/steam-menu-popup-positioning` | Cherry-picked by upstream |
-| `fix/titlebar-geometry-clipping-and-pointer-focus` | Cherry-picked by upstream |
-| `fix/xkb-keyboard-layout-switching` | Cherry-picked by upstream |
-| `fix/xwayland-keyboard-focus` | Cherry-picked by upstream |
-| `experiment/scenefx-poc` | Superseded by feat/scenefx-integration |
+| `feat/cold-restart` | Merged to main |
+| `feat/numlock-on-startup` | Merged to main |
+| `feat/output-added-connected` | PR #384 merged upstream |
+| `feat/lockscreen-bg-image` | Merged to main |
+| `feat/quickshell-caelestia-dashboard` | Superseded by somewm-shell |
+| `feat/somewm-one-components` | Archived, superseded by somewm-shell |
+| `feat/tag-slide-animation` | Architecture documented, archived |
+| `feat/wibar-fx-shadows` | PR #400 merged upstream |
 | `feature/native-screenrecord` | Merged to main |
+| `fix/floating-layout-initial-size` | PR #382 merged upstream |
+| `fix/hot-reload-lgi-crash` | Merged to main |
+| `fix/keyboard-focus-desync` | Cherry-picked upstream, in main |
+| `fix/layoutlist-hotplug-upstream` | PR #391 merged upstream |
+| `fix/minimized-clients-reappear-tag-switch` | Cherry-picked upstream |
+| `fix/multi-monitor-hotplug` | Cherry-picked upstream |
+| `fix/pointer-enter-layer-surfaces` | Replaced by -upstream branch |
+| `fix/scroll-wibar-numlock` | Merged to main |
+| `fix/selmon-not-updated-on-mouse-motion` | Cherry-picked upstream |
+| `fix/shadow-resize-perf` | Merged to main |
+| `fix/steam-menu-popup-positioning` | Cherry-picked upstream |
+| `fix/tile-resize-flicker` | Investigation branch |
+| `fix/titlebar-geometry-clipping-and-pointer-focus` | Cherry-picked upstream |
+| `fix/xdg-activate-uninitialized-crash` | PR #394 closed |
+| `fix/xkb-keyboard-layout-switching` | Cherry-picked upstream |
+| `fix/xwayland-keyboard-focus` | Cherry-picked upstream |
+| `experiment/scenefx-poc` | Superseded by feat/scenefx-integration |
 | `sync/upstream-main` | Merge branch, completed |
-| `fix/layoutlist-hotplug` | Merged to main |
 
-### Upstream branches (Jimmy's, not ours)
+### Upstream branches (Jimmy's, on our remote)
 
-| Branch | Commits | Notes |
-|--------|---------|-------|
-| `a11y_module` | 2 | WIP accessibility module |
-| `feat/lockscreen` | 7 | Lock screen implementation |
-| `feat/wallpaper_caching` | 1 | Wallpaper cache optimization |
-| `fix/firefox-tiling-regression` | 1 | Stack refactor regression |
-| `fix/shadow-beautiful-lookup` | 1 | Beautiful module require fix |
-| `fix/silent_exit` | 1 | Error visibility improvement |
-
-These are upstream WIP/fixes on our fork's remote. Do not merge — they belong in upstream PRs.
+| Branch | Notes |
+|--------|-------|
+| `a11y_module` | WIP accessibility module |
+| `feat/lockscreen` | Lock screen implementation |
+| `feat/wallpaper_caching` | Wallpaper cache optimization |
+| `fix/firefox-tiling-regression` | Stack refactor regression |
+| `fix/shadow-beautiful-lookup` | Beautiful module require fix |
+| `fix/silent_exit` | Error visibility improvement |
 
 ## Maintenance checklist
 
@@ -121,3 +172,4 @@ When syncing with upstream or merging branches:
 3. Move merged branches to "Stale" section
 4. Check if upstream adopted any of our commits
 5. Update open issues status
+6. Consider deleting stale branches (`git push origin --delete <branch>`)
