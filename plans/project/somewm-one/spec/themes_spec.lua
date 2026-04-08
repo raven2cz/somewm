@@ -236,6 +236,14 @@ return theme
 			assert.is_false(themes.switch("nonexistent"))
 		end)
 
+		it("rejects path traversal in theme name", function()
+			assert.is_false(themes.switch("../etc"))
+			assert.is_false(themes.switch("foo/bar"))
+			assert.is_false(themes.switch(".."))
+			assert.is_false(themes.switch("."))
+			assert.is_false(themes.switch(""))
+		end)
+
 		it("calls beautiful.init with new theme path", function()
 			themes.switch("dark")
 			assert.equals(test_dir .. "themes/dark/theme.lua", mock_beautiful_path)

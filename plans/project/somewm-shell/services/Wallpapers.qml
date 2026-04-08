@@ -195,9 +195,11 @@ Singleton {
         }
     }
 
-    // Escape string for safe Lua interpolation (backslash, single quote, newline)
+    // Escape string for safe Lua interpolation
     function _luaEscape(str) {
-        return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n")
+        return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
+            .replace(/\n/g, "\\n").replace(/\r/g, "\\r")
+            .replace(/[\x00-\x1f]/g, "")
     }
 
     // Set wallpaper via Lua wallpaper service (with override for current tag)

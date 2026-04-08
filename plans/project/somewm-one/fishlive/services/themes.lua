@@ -29,6 +29,16 @@ local themes = {}
 -- State file for persisting active theme across restarts
 local STATE_FILE = gears.filesystem.get_configuration_dir() .. ".active_theme"
 
+--- Validate that a theme name is a safe basename (no path traversal).
+-- @tparam string name Theme name to validate
+-- @treturn boolean True if safe
+local function is_safe_name(name)
+	if not name or name == "" then return false end
+	-- Only allow alphanumeric, dash, underscore, dot (no slashes, no ..)
+	if name:match("[/\\]") or name == ".." or name == "." then return false end
+	return name:match("^[%w%-_%.]+$") ~= nil
+end
+
 -- Color keys to extract from theme.lua for palette preview
 local PALETTE_KEYS = {
 	"bg_normal", "bg_focus", "bg_minimize",
@@ -203,6 +213,7 @@ end
 -- @tparam string theme_name Theme directory name
 -- @treturn string JSON object with palette colors
 function themes.get_palette_json(theme_name)
+	if not is_safe_name(theme_name) then return "{}" end
 	local theme_lua = get_themes_dir() .. theme_name .. "/theme.lua"
 	local palette = themes.get_palette(theme_lua)
 	if not palette then return "{}" end
@@ -222,6 +233,8 @@ end
 -- @tparam string theme_name Theme directory name
 -- @treturn boolean True if switch succeeded
 function themes.switch(theme_name)
+	if not is_safe_name(theme_name) then return false end
+
 	local themes_dir = get_themes_dir()
 	local theme_lua = themes_dir .. theme_name .. "/theme.lua"
 

@@ -201,10 +201,16 @@ end
 function wallpaper.save_to_theme(tag_name, source_path)
 	if not source_path or source_path == "" then return false end
 	if not wallpaper._wppath then return false end
+	-- Validate tag_name: only safe basenames (no path traversal)
+	if not tag_name or tag_name == "" then return false end
+	if tag_name:match("[/\\]") or tag_name == ".." or tag_name == "." then return false end
 	if not gears.filesystem.file_readable(source_path) then return false end
 
-	-- Determine extension from source
+	-- Determine extension from source, whitelist only image extensions
+	local SAFE_EXT = { jpg = true, jpeg = true, png = true, webp = true }
 	local ext = source_path:match("%.([^%.]+)$") or "jpg"
+	ext = ext:lower()
+	if not SAFE_EXT[ext] then ext = "jpg" end
 
 	-- Remove any existing file for this tag (different extension)
 	for _, e in ipairs({ "jpg", "jpeg", "png", "webp" }) do
