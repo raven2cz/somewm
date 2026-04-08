@@ -84,7 +84,8 @@ end
 -- {{{ Variable definitions
 -- @DOC_LOAD_THEME@
 -- Themes define colours, icons, font and wallpapers.
-local themeName = "default"
+local themes_service = require("fishlive.services.themes")
+local themeName = themes_service.get_current()
 beautiful.init(gears.filesystem.get_configuration_dir() .. "themes/" .. themeName .. "/theme.lua")
 
 -- Initialize lockscreen (must be after beautiful.init)

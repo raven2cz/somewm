@@ -425,6 +425,83 @@ Variants {
                         }
                     }
 
+                    // === Theme selector (visible when applyTheme is ON) ===
+                    Repeater {
+                        model: Services.Wallpapers.applyTheme ? Services.Wallpapers.themes : []
+
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool isActive: modelData.name === Services.Wallpapers.activeTheme
+
+                            width: themeRow.width + Math.round(12 * panel.sp)
+                            height: Math.round(36 * panel.sp)
+                            radius: Math.round(10 * panel.sp)
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: isActive
+                                ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.2)
+                                : (themeMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
+                            border.color: isActive ? Core.Theme.accent
+                                : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                            border.width: isActive ? 2 : 1
+
+                            Behavior on color { ColorAnimation { duration: 300 } }
+                            Behavior on border.color { ColorAnimation { duration: 300 } }
+
+                            Row {
+                                id: themeRow
+                                anchors.centerIn: parent
+                                spacing: Math.round(4 * panel.sp)
+
+                                // Theme name
+                                Text {
+                                    text: modelData.name
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    font.family: Core.Theme.fontUI
+                                    font.pixelSize: Math.round(11 * panel.sp)
+                                    font.weight: isActive ? Font.Bold : Font.Normal
+                                    color: isActive ? Core.Theme.accent : Core.Theme.fgDim
+                                }
+
+                                // Color palette swatches (5 key colors)
+                                Row {
+                                    spacing: Math.round(2 * panel.sp)
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Repeater {
+                                        model: {
+                                            var p = modelData.palette || {}
+                                            var colors = []
+                                            if (p.bg_normal) colors.push(p.bg_normal)
+                                            if (p.fg_focus) colors.push(p.fg_focus)
+                                            if (p.border_color_active) colors.push(p.border_color_active)
+                                            if (p.bg_urgent) colors.push(p.bg_urgent)
+                                            if (p.widget_cpu_color) colors.push(p.widget_cpu_color)
+                                            return colors.slice(0, 5)
+                                        }
+
+                                        Rectangle {
+                                            required property string modelData
+                                            width: Math.round(10 * panel.sp)
+                                            height: width
+                                            radius: width / 2
+                                            color: modelData
+                                            border.color: Qt.rgba(1, 1, 1, 0.2)
+                                            border.width: 1
+                                        }
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                id: themeMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Services.Wallpapers.switchTheme(modelData.name)
+                            }
+                        }
+                    }
+
                     // Separator
                     Rectangle {
                         width: 1; height: Math.round(28 * panel.sp)

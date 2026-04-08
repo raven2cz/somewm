@@ -205,13 +205,13 @@ Singleton {
         root.currentWallpaper = path
         var safe = _luaEscape(path)
 
-        // Use the wallpaper service to set override for current tag
+        // Save wallpaper to theme dir for current tag (persistent)
         setProc.command = ["somewm-client", "eval",
             "local wp = require('fishlive.services.wallpaper'); " +
             "local s = require('awful').screen.focused(); " +
             "local t = s and s.selected_tag; " +
             "local tag_name = t and t.name or '1'; " +
-            "wp.set_override(tag_name, '" + safe + "'); " +
+            "wp.save_to_theme(tag_name, '" + safe + "'); " +
             "return tag_name"]
         setProc.running = true
     }
@@ -283,9 +283,74 @@ Singleton {
         Core.Config.set("wallpapers.applyTheme", enabled)
     }
 
+    // === Theme scanning and switching ===
+
+    // Available themes: [{name, path, wallpaper_count, active, palette:{...}}]
+    property var themes: []
+    property string activeTheme: ""
+
+    function refreshThemes() {
+        themeScanProc.running = true
+    }
+
+    Process {
+        id: themeScanProc
+        command: ["somewm-client", "eval",
+            "return require('fishlive.services.themes').scan_json()"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var json = nl >= 0 ? raw.substring(nl + 1) : raw
+                try {
+                    var list = JSON.parse(json)
+                    root.themes = list
+                    // Find active theme
+                    for (var i = 0; i < list.length; i++) {
+                        if (list[i].active) {
+                            root.activeTheme = list[i].name
+                            break
+                        }
+                    }
+                } catch (e) {
+                    console.error("Theme scan parse error:", e)
+                    root.themes = []
+                }
+            }
+        }
+    }
+
+    // Switch to a different theme (colors + wallpapers)
+    function switchTheme(themeName) {
+        var safe = _luaEscape(themeName)
+        themeSwitchProc.command = ["somewm-client", "eval",
+            "require('fishlive.services.themes').switch('" + safe + "'); " +
+            "return '" + safe + "'"]
+        themeSwitchProc.running = true
+    }
+
+    Process {
+        id: themeSwitchProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var name = nl >= 0 ? raw.substring(nl + 1) : raw
+                if (name && name !== "OK") root.activeTheme = name
+                // Re-export theme colors to JSON for shell
+                themeExportProc.running = true
+                // Refresh wallpapers (now from new theme dir)
+                root.refresh()
+                root.refreshCurrent()
+                root.refreshThemes()
+            }
+        }
+    }
+
     Component.onCompleted: {
         refresh()
         refreshCurrent()
         refreshOverrides()
+        refreshThemes()
     }
 }

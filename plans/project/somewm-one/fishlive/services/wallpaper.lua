@@ -35,6 +35,7 @@ wallpaper._default = "1.jpg"      -- fallback wallpaper filename
 wallpaper._initialized = false
 
 --- Apply wallpaper to a screen using awful.wallpaper API (HiDPI-aware).
+-- Reuses existing wallpaper widget to avoid flicker on image swap.
 -- @tparam screen scr The screen object
 -- @tparam string path Absolute path to wallpaper image
 local function apply_wallpaper(scr, path)
@@ -45,21 +46,29 @@ local function apply_wallpaper(scr, path)
 	-- Skip redundant updates
 	if scr._current_wallpaper == path then return true end
 
-	awful.wallpaper {
-		screen = scr,
-		widget = {
-			{
-				image     = path,
-				upscale   = true,
-				downscale = true,
-				widget    = wibox.widget.imagebox,
-			},
-			valign = "center",
-			halign = "center",
-			tiled  = false,
-			widget = wibox.container.tile,
+	if scr._wallpaper_widget then
+		-- Reuse existing widget: atomic image swap, no flicker
+		scr._wallpaper_widget.image = path
+	else
+		-- First time: create wallpaper object and store references
+		local imgbox = wibox.widget {
+			image     = path,
+			upscale   = true,
+			downscale = true,
+			widget    = wibox.widget.imagebox,
 		}
-	}
+		scr._wallpaper_obj = awful.wallpaper {
+			screen = scr,
+			widget = {
+				imgbox,
+				valign = "center",
+				halign = "center",
+				tiled  = false,
+				widget = wibox.container.tile,
+			}
+		}
+		scr._wallpaper_widget = imgbox
+	end
 	scr._current_wallpaper = path
 	return true
 end
@@ -177,6 +186,55 @@ function wallpaper.clear_override(tag_name)
 	end
 
 	broker.emit_signal("data::wallpaper", wallpaper._get_state())
+end
+
+--- Save a wallpaper into the active theme directory for a tag.
+-- Copies the source file to wppath/{tag_name}.{ext}, making it the
+-- persistent wallpaper for that tag. After restart, _resolve() finds
+-- it via the theme-based lookup (no override needed).
+--
+-- @tparam string tag_name Tag name (e.g. "3")
+-- @tparam string source_path Absolute path to source wallpaper image
+-- @treturn boolean True if saved and applied successfully
+function wallpaper.save_to_theme(tag_name, source_path)
+	if not source_path or source_path == "" then return false end
+	if not wallpaper._wppath then return false end
+	if not gears.filesystem.file_readable(source_path) then return false end
+
+	-- Determine extension from source
+	local ext = source_path:match("%.([^%.]+)$") or "jpg"
+
+	-- Remove any existing file for this tag (different extension)
+	for _, e in ipairs({ "jpg", "jpeg", "png", "webp" }) do
+		local old = wallpaper._wppath .. tag_name .. "." .. e
+		os.remove(old)
+	end
+
+	-- Copy source to theme wallpapers dir
+	local dest = wallpaper._wppath .. tag_name .. "." .. ext
+	local src_file = io.open(source_path, "rb")
+	if not src_file then return false end
+	local data = src_file:read("*a")
+	src_file:close()
+
+	local dst_file = io.open(dest, "wb")
+	if not dst_file then return false end
+	dst_file:write(data)
+	dst_file:close()
+
+	-- Clear any in-memory override (the theme file IS the source now)
+	wallpaper._overrides[tag_name] = nil
+
+	-- Apply immediately on all screens showing this tag
+	for scr in screen do
+		local sel = scr.selected_tag
+		if sel and sel.name == tag_name then
+			apply_wallpaper(scr, dest)
+		end
+	end
+
+	broker.emit_signal("data::wallpaper", wallpaper._get_state())
+	return true
 end
 
 --- Set the main wallpaper (tag "1" override).

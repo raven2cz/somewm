@@ -1,0 +1,270 @@
+---------------------------------------------------------------------------
+--- Theme service — scan, preview, and switch themes at runtime.
+--
+-- Each theme lives in ~/.config/somewm/themes/{name}/ with:
+--   theme.lua      — color definitions (beautiful module format)
+--   wallpapers/    — per-tag wallpapers (1.jpg, 2.jpg, ...)
+--   icons/         — optional theme-specific icons
+--   layouts/       — optional layout indicator images
+--   titlebar/      — optional titlebar button images
+--
+-- IPC API (via somewm-client eval):
+--   require('fishlive.services.themes').scan_json()
+--   require('fishlive.services.themes').switch("theme_name")
+--   require('fishlive.services.themes').get_current()
+--   require('fishlive.services.themes').get_palette_json("theme_name")
+--
+-- @module fishlive.services.themes
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
+---------------------------------------------------------------------------
+
+local awful = require("awful")
+local beautiful = require("beautiful")
+local gears = require("gears")
+local broker = require("fishlive.broker")
+
+local themes = {}
+
+-- State file for persisting active theme across restarts
+local STATE_FILE = gears.filesystem.get_configuration_dir() .. ".active_theme"
+
+-- Color keys to extract from theme.lua for palette preview
+local PALETTE_KEYS = {
+	"bg_normal", "bg_focus", "bg_minimize",
+	"fg_normal", "fg_focus", "fg_minimize",
+	"border_color_active", "border_color_marked",
+	"bg_urgent",
+	"widget_cpu_color", "widget_gpu_color", "widget_memory_color",
+	"widget_disk_color", "widget_network_color", "widget_volume_color",
+}
+
+--- Get the themes base directory.
+-- @treturn string Path to themes/ directory
+local function get_themes_dir()
+	return gears.filesystem.get_configuration_dir() .. "themes/"
+end
+
+--- Read the persisted active theme name.
+-- @treturn string Theme name (defaults to "default")
+function themes.get_current()
+	local f = io.open(STATE_FILE, "r")
+	if not f then return "default" end
+	local name = f:read("*l")
+	f:close()
+	if not name or name == "" then return "default" end
+	-- Validate theme exists
+	local path = get_themes_dir() .. name .. "/theme.lua"
+	if gears.filesystem.file_readable(path) then return name end
+	return "default"
+end
+
+--- Save the active theme name to state file.
+-- @tparam string name Theme name
+local function save_current(name)
+	local f = io.open(STATE_FILE, "w")
+	if not f then return end
+	f:write(name .. "\n")
+	f:close()
+end
+
+--- Extract color palette from a theme.lua without applying it.
+-- Uses sandboxed loadfile to safely read theme colors.
+-- @tparam string theme_path Absolute path to theme.lua
+-- @treturn table|nil Palette table {bg_normal="#...", ...} or nil on error
+function themes.get_palette(theme_path)
+	if not gears.filesystem.file_readable(theme_path) then return nil end
+
+	-- Sandboxed environment: provide only what theme.lua needs
+	local sandbox = {
+		require = require,
+		tostring = tostring,
+		tonumber = tonumber,
+		pairs = pairs,
+		ipairs = ipairs,
+		type = type,
+		math = math,
+		string = string,
+		table = table,
+	}
+
+	local chunk, err = loadfile(theme_path)
+	if not chunk then return nil end
+
+	setfenv(chunk, sandbox)
+	local ok, result = pcall(chunk)
+	if not ok or type(result) ~= "table" then return nil end
+
+	local palette = {}
+	for _, key in ipairs(PALETTE_KEYS) do
+		if result[key] then
+			palette[key] = tostring(result[key])
+		end
+	end
+
+	-- Also grab theme_name and font if present
+	palette.theme_name = result.theme_name or nil
+	palette.font = result.font or nil
+
+	return palette
+end
+
+--- Count wallpaper files in a theme's wallpapers/ directory.
+-- @tparam string theme_dir Path to theme directory
+-- @treturn number Number of wallpaper files found
+local function count_wallpapers(theme_dir)
+	local wp_dir = theme_dir .. "wallpapers/"
+	local count = 0
+	local handle = io.popen('ls "' .. wp_dir .. '" 2>/dev/null | grep -cE "\\.(jpg|jpeg|png|webp)$"')
+	if handle then
+		count = tonumber(handle:read("*a")) or 0
+		handle:close()
+	end
+	return count
+end
+
+--- Scan all available themes.
+-- @treturn table List of {name, path, palette, wallpaper_count}
+function themes.scan()
+	local themes_dir = get_themes_dir()
+	local result = {}
+
+	-- List directories in themes/
+	local handle = io.popen('ls -1d "' .. themes_dir .. '"*/ 2>/dev/null')
+	if not handle then return result end
+
+	for line in handle:lines() do
+		local name = line:match("([^/]+)/$")
+		if name then
+			local theme_lua = themes_dir .. name .. "/theme.lua"
+			if gears.filesystem.file_readable(theme_lua) then
+				local palette = themes.get_palette(theme_lua)
+				table.insert(result, {
+					name = name,
+					path = themes_dir .. name .. "/",
+					palette = palette or {},
+					wallpaper_count = count_wallpapers(themes_dir .. name),
+					active = (name == themes.get_current()),
+				})
+			end
+		end
+	end
+	handle:close()
+
+	-- Sort: active first, then alphabetically
+	table.sort(result, function(a, b)
+		if a.active ~= b.active then return a.active end
+		return a.name < b.name
+	end)
+
+	return result
+end
+
+--- Get scan results as JSON string for IPC.
+-- @treturn string JSON array of theme objects
+function themes.scan_json()
+	local list = themes.scan()
+	local parts = {}
+
+	for _, t in ipairs(list) do
+		local palette_parts = {}
+		if t.palette then
+			for k, v in pairs(t.palette) do
+				local ek = k:gsub('\\', '\\\\'):gsub('"', '\\"')
+				local ev = tostring(v):gsub('\\', '\\\\'):gsub('"', '\\"')
+				table.insert(palette_parts, '"' .. ek .. '":"' .. ev .. '"')
+			end
+		end
+
+		table.insert(parts, string.format(
+			'{"name":"%s","path":"%s","wallpaper_count":%d,"active":%s,"palette":{%s}}',
+			t.name:gsub('"', '\\"'),
+			t.path:gsub('"', '\\"'),
+			t.wallpaper_count,
+			tostring(t.active),
+			table.concat(palette_parts, ",")
+		))
+	end
+
+	return "[" .. table.concat(parts, ",") .. "]"
+end
+
+--- Get palette for a specific theme as JSON.
+-- @tparam string theme_name Theme directory name
+-- @treturn string JSON object with palette colors
+function themes.get_palette_json(theme_name)
+	local theme_lua = get_themes_dir() .. theme_name .. "/theme.lua"
+	local palette = themes.get_palette(theme_lua)
+	if not palette then return "{}" end
+
+	local parts = {}
+	for k, v in pairs(palette) do
+		local ek = k:gsub('\\', '\\\\'):gsub('"', '\\"')
+		local ev = tostring(v):gsub('\\', '\\\\'):gsub('"', '\\"')
+		table.insert(parts, '"' .. ek .. '":"' .. ev .. '"')
+	end
+	return "{" .. table.concat(parts, ",") .. "}"
+end
+
+--- Switch to a different theme.
+-- Calls beautiful.init() with the new theme, re-applies wallpapers,
+-- and saves the selection for persistence across restarts.
+-- @tparam string theme_name Theme directory name
+-- @treturn boolean True if switch succeeded
+function themes.switch(theme_name)
+	local themes_dir = get_themes_dir()
+	local theme_lua = themes_dir .. theme_name .. "/theme.lua"
+
+	if not gears.filesystem.file_readable(theme_lua) then
+		return false
+	end
+
+	-- Apply new theme via beautiful
+	beautiful.init(theme_lua)
+
+	-- Re-apply wallpapers for all screens using new theme's wallpapers
+	local wp_service = require("fishlive.services.wallpaper")
+	local wppath = themes_dir .. theme_name .. "/wallpapers/"
+
+	-- Update wallpaper service base path
+	wp_service._wppath = wppath
+	-- Clear overrides (they belonged to the previous theme)
+	wp_service._overrides = {}
+
+	-- Re-apply wallpapers for all screens
+	for scr in screen do
+		scr._wppath = wppath
+		local sel = scr.selected_tag
+		if sel then
+			local wp = wp_service._resolve(sel.name)
+			if wp then
+				-- Force re-apply by clearing current
+				scr._current_wallpaper = nil
+				require("fishlive.services.wallpaper")
+				local apply = function(s, p)
+					-- Access the module-level apply via set_override dance
+					wp_service.set_override(sel.name, p)
+					wp_service._overrides[sel.name] = nil
+				end
+				-- Direct: just call save_to_theme-like logic without copy
+				if scr._wallpaper_widget then
+					scr._wallpaper_widget.image = wp
+				end
+				scr._current_wallpaper = wp
+			end
+		end
+	end
+
+	-- Persist selection
+	save_current(theme_name)
+
+	-- Notify shell
+	broker.emit_signal("data::theme", {
+		name = theme_name,
+		path = themes_dir .. theme_name .. "/",
+	})
+
+	return true
+end
+
+return themes
