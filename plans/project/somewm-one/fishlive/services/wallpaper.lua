@@ -68,7 +68,7 @@ end
 local function update_slide_cache(path)
 	if not path or not root.wallpaper_cache_preload then return end
 	for scr in screen do
-		root.wallpaper_cache_preload({ path }, scr)
+		root.wallpaper_cache_preload({ path }, scr, { fit = "cover" })
 	end
 end
 
@@ -184,7 +184,7 @@ function wallpaper.init(scr, wppath, default_wallpaper, opts)
 			local wp = wallpaper._resolve(tag.name)
 			if wp then table.insert(paths, wp) end
 		end
-		if #paths > 0 then root.wallpaper_cache_preload(paths, scr) end
+		if #paths > 0 then root.wallpaper_cache_preload(paths, scr, { fit = "cover" }) end
 	end
 
 	-- Switch wallpaper on tag selection

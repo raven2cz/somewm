@@ -12,7 +12,7 @@ TARGET="$HOME/.config/somewm"
 
 if [[ "${1:-}" == "--dry-run" ]]; then
     echo "Dry run — would sync:"
-    rsync -av --delete --exclude 'deploy.sh' --dry-run "$SCRIPT_DIR/" "$TARGET/"
+    rsync -av --delete --exclude 'deploy.sh' --exclude 'themes/*/user-wallpapers/' --dry-run "$SCRIPT_DIR/" "$TARGET/"
     exit 0
 fi
 
@@ -23,7 +23,7 @@ if [[ -f "$TARGET/rc.lua" ]]; then
 fi
 
 # Sync (exclude deploy.sh itself)
-rsync -av --delete --exclude 'deploy.sh' "$SCRIPT_DIR/" "$TARGET/"
+rsync -av --delete --exclude 'deploy.sh' --exclude 'themes/*/user-wallpapers/' "$SCRIPT_DIR/" "$TARGET/"
 
 echo ""
 echo "Deployed somewm-one to $TARGET"
