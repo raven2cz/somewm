@@ -534,6 +534,8 @@ awful.keyboard.append_global_keybindings({
               {description = "reload configuration", group = "awesome"}),
     awful.key({ modkey,           }, "q", function() awesome.emit_signal("exit_screen::toggle") end,
               {description = "exit screen (power/session)", group = "awesome"}),
+    awful.key({ modkey, "Shift"   }, "q", function() awesome.quit() end,
+              {description = "quit somewm", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "Escape", function() awesome.lock() end,
               {description = "lock screen", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "l", function() awesome.lock() end,

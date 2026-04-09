@@ -74,30 +74,23 @@ local function apply_wallpaper(scr, path)
 	-- Skip redundant updates
 	if scr._current_wallpaper == path then return true end
 
-	if scr._wallpaper_widget then
-		-- Reuse existing widget and repaint root surface
-		scr._wallpaper_widget.image = path
-		if scr._wallpaper_obj then scr._wallpaper_obj:repaint() end
-	else
-		-- First time: create wallpaper object and store references
-		local imgbox = wibox.widget {
-			image     = path,
-			upscale   = true,
-			downscale = true,
-			widget    = wibox.widget.imagebox,
+	-- Create a fresh awful.wallpaper each time — the constructor handles
+	-- repaint and properly replaces the previous wallpaper for this screen.
+	awful.wallpaper {
+		screen = scr,
+		widget = {
+			{
+				image     = path,
+				upscale   = true,
+				downscale = true,
+				widget    = wibox.widget.imagebox,
+			},
+			valign = "center",
+			halign = "center",
+			tiled  = false,
+			widget = wibox.container.tile,
 		}
-		scr._wallpaper_obj = awful.wallpaper {
-			screen = scr,
-			widget = {
-				imgbox,
-				valign = "center",
-				halign = "center",
-				tiled  = false,
-				widget = wibox.container.tile,
-			}
-		}
-		scr._wallpaper_widget = imgbox
-	end
+	}
 	scr._current_wallpaper = path
 	return true
 end
