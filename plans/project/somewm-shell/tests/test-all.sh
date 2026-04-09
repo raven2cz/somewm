@@ -381,7 +381,7 @@ fi
 section "8. Theme Export Script Validation"
 # ============================================================
 
-theme_export="/home/box/git/github/somewm/plans/theme-export.sh"
+theme_export="/home/box/git/github/somewm/plans/project/somewm-shell/theme-export.sh"
 if [[ -f "$theme_export" ]]; then
     pass "theme-export.sh exists"
 
@@ -579,7 +579,7 @@ fi
 section "16. rc.lua Shell Keybindings"
 # ============================================================
 
-RC_LUA="/home/box/git/github/somewm/plans/somewm-one/rc.lua"
+RC_LUA="/home/box/git/github/somewm/plans/project/somewm-one/rc.lua"
 if [[ -f "$RC_LUA" ]]; then
     for panel in dashboard wallpapers collage; do
         if grep -q "toggle $panel" "$RC_LUA"; then

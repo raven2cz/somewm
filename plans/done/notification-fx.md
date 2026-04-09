@@ -34,7 +34,7 @@ end
 registered via `luaA_class_add_property(&drawin_class, "_opacity", ...)` in `drawin.c:2559`.
 Setting `drawin.opacity` from Lua creates a plain Lua field, bypassing the C setter entirely.
 
-### `plans/somewm-one/anim_client.lua`
+### `plans/project/somewm-one/anim_client.lua`
 - Added `notification` section to defaults (enabled, duration 0.5s, ease-out-cubic)
 - Added `anim_client.fade_notification(popup)` public function
 - Uses `drawin._opacity` directly (not `popup.opacity`) because wibox widget redraws
@@ -43,7 +43,7 @@ Setting `drawin.opacity` from Lua creates a plain Lua field, bypassing the C set
 - Shadow animates together: captures original shadow config, sets opacity=0 initially,
   interpolates shadow opacity in tick callback, restores original on completion
 
-### `plans/somewm-one/rc.lua`
+### `plans/project/somewm-one/rc.lua`
 - `request::display` handler: captures `naughty.layout.box` return value, calls
   `anim_client.fade_notification(popup)` after creation
 - `border_width = 0` on popup (no amber border)
@@ -55,7 +55,7 @@ Setting `drawin.opacity` from Lua creates a plain Lua field, bypassing the C set
 - Spacing: `dpi(12)` between icon and text, `dpi(6)` between title and message
 - Added `notification` config section in `anim_client.enable()` call
 
-### `plans/somewm-one/themes/default/theme.lua`
+### `plans/project/somewm-one/themes/default/theme.lua`
 - `notification_border_width = dpi(0)` — no border
 - `notification_font = "CommitMono Nerd Font Propo 14"` (up from 11)
 - `notification_icon_size = dpi(170)` (up from 128)

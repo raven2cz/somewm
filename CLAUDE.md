@@ -111,7 +111,7 @@ ASAN dev build without SceneFX.
 # Build + install with SceneFX + reboot
 ~/git/github/somewm/plans/scripts/install-scenefx.sh && sudo reboot
 
-# After reboot, launch from TTY (script at plans/start.sh)
+# After reboot, launch from TTY (script at plans/scripts/start.sh)
 ~/git/github/somewm/plans/scripts/start.sh
 ```
 

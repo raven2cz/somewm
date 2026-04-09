@@ -2,7 +2,7 @@
 --- Tests for fishlive.exit_screen
 ---------------------------------------------------------------------------
 
-package.path = "./plans/somewm-one/?.lua;./plans/somewm-one/?/init.lua;" .. package.path
+package.path = "./plans/project/somewm-one/?.lua;./plans/project/somewm-one/?/init.lua;" .. package.path
 
 -- Stub lgi (rubato needs lgi.GLib for timers)
 package.preload["lgi"] = function()

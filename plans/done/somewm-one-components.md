@@ -59,7 +59,7 @@ but redesigned for cleaner architecture and somewm/Wayland specifics.
 ### File Structure
 
 ```
-plans/somewm-one/
+plans/project/somewm-one/
 ├── rc.lua                      # Main config (orchestrator)
 ├── themes/
 │   └── default/

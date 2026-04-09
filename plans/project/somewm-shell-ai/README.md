@@ -28,14 +28,14 @@ ollama pull llama3.2    # or any preferred model
 
 ## Integration
 
-Add to `plans/somewm-shell/shell.qml`:
+Add to `plans/project/somewm-shell/shell.qml`:
 ```qml
 import "../somewm-shell-ai/modules/chat" as AiChat
 // Inside ShellRoot:
 AiChat.ChatPanel {}
 ```
 
-Add keybinding to `plans/somewm-one/rc.lua`:
+Add keybinding to `plans/project/somewm-one/rc.lua`:
 ```lua
 awful.key({ modkey, "Shift" }, "a", function()
     awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle ai-chat")

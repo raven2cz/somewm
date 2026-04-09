@@ -3,7 +3,7 @@
 ---------------------------------------------------------------------------
 
 -- Minimal stubs so broker.lua can be required without awesome runtime
-package.path = "./plans/somewm-one/?.lua;" .. package.path
+package.path = "./plans/project/somewm-one/?.lua;" .. package.path
 
 describe("broker", function()
 	local broker

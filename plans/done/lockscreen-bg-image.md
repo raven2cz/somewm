@@ -67,7 +67,7 @@ ale `pairs()` ho iteruje.
 | Soubor | Změna |
 |--------|-------|
 | `lua/lockscreen.lua` | bg_image/bg_image_overlay podpora, pairs() bugfix |
-| `plans/somewm-one/themes/default/theme.lua` | `lockscreen_bg_image` pro tapetu z tagu 1 |
+| `plans/project/somewm-one/themes/default/theme.lua` | `lockscreen_bg_image` pro tapetu z tagu 1 |
 
 ## Upstream relevance
 

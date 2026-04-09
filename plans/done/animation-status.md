@@ -305,6 +305,6 @@ No new C changes are needed for the uncommitted `layout` animation work.
 | File | Role |
 |------|------|
 | `lua/awful/anim_client.lua` | Primary module (673 lines committed, ~865 with WIP) |
-| `plans/somewm-one/anim_client.lua` | Deploy copy (kept in sync) |
-| `plans/somewm-one/rc.lua` | Config example + `anim_client.enable({...})` call |
+| `plans/project/somewm-one/anim_client.lua` | Deploy copy (kept in sync) |
+| `plans/project/somewm-one/rc.lua` | Config example + `anim_client.enable({...})` call |
 | `plans/unified-animations.md` | Implementation plan for this branch |

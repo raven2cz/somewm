@@ -30,7 +30,7 @@ Per-tag wallpapers are supported via the preload cache.
 
 | File | What it configures |
 |------|-------------------|
-| `plans/somewm-one/rc.lua` | `s._wppath` = wallpaper directory path, `root.wallpaper_cache_preload()` at startup, `require("somewm.tag_slide").enable({...})` |
+| `plans/project/somewm-one/rc.lua` | `s._wppath` = wallpaper directory path, `root.wallpaper_cache_preload()` at startup, `require("somewm.tag_slide").enable({...})` |
 
 ## Animation Sequence
 

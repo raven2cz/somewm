@@ -252,8 +252,8 @@ loaded. Add a comment in rc.lua:
 ## Files to modify
 
 - `lua/awful/anim_client.lua` — main changes (arrange handler, config, helpers)
-- `plans/somewm-one/anim_client.lua` — sync copy
-- `plans/somewm-one/rc.lua` — add layout config section
+- `plans/project/somewm-one/anim_client.lua` — sync copy
+- `plans/project/somewm-one/rc.lua` — add layout config section
 
 ## Risk
 
