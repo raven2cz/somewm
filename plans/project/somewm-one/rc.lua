@@ -1391,7 +1391,7 @@ awful.spawn.once("nm-applet")
 -- somewm-shell: export theme then launch Quickshell
 -- Clean stale QS locks first (handles hot-swap restart and crash recovery),
 -- then spawn. Uses awful.spawn (not spawn.once) so it works after every reload.
-awful.spawn.easy_async(os.getenv("HOME") .. "/git/github/somewm/plans/theme-export.sh", function()
+awful.spawn.easy_async(os.getenv("HOME") .. "/git/github/somewm/plans/project/somewm-shell/theme-export.sh", function()
     awful.spawn.easy_async_with_shell(
         "pkill -f 'qs -c somewm' 2>/dev/null; " ..
         "rm -rf /run/user/$(id -u)/quickshell/by-id/* " ..
