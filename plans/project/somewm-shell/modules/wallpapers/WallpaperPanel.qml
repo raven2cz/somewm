@@ -62,6 +62,7 @@ Variants {
             if (shouldShow) {
                 initialFocusSet = false
                 view.forceActiveFocus()
+                Services.Wallpapers.refreshSelectedTag()
                 _focusCurrentWallpaper()
             }
         }

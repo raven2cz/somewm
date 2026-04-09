@@ -72,7 +72,53 @@ local function update_slide_cache(path)
 	end
 end
 
+--- Build a cover-scaled Cairo surface for the given image and screen geometry.
+-- Matches the C-side cache formula: scale = max(scale_x, scale_y), centered.
+-- @tparam string path  Absolute path to the image file
+-- @tparam number scr_w Screen width in pixels
+-- @tparam number scr_h Screen height in pixels
+-- @treturn cairo.ImageSurface|nil  Cropped, cover-scaled surface (or nil on error)
+local function make_cover_surface(path, scr_w, scr_h)
+	local lgi   = require("lgi")
+	local cairo = lgi.cairo
+
+	-- Load source surface via gears (handles PNG, JPEG, etc.)
+	local src = gears.surface(path)
+	if not src then return nil end
+
+	local img_w = src.width
+	local img_h = src.height
+	if img_w == 0 or img_h == 0 then return nil end
+
+	-- Cover: use the LARGER scale factor so the image fills the screen on
+	-- both axes, cropping the overflow (identical to the C-side cache logic).
+	local scale_x = scr_w / img_w
+	local scale_y = scr_h / img_h
+	local scale   = math.max(scale_x, scale_y)
+
+	-- Scaled image size after applying cover scale
+	local sw = img_w * scale
+	local sh = img_h * scale
+
+	-- Center the scaled image over the screen (negative offsets = crop)
+	local offset_x = (scr_w - sw) / 2
+	local offset_y = (scr_h - sh) / 2
+
+	-- Draw into a screen-sized surface — the clip provided by the surface
+	-- boundary is what implements the crop in cover mode.
+	local dst = cairo.ImageSurface(cairo.Format.ARGB32, scr_w, scr_h)
+	local cr  = cairo.Context(dst)
+
+	cr:scale(scale, scale)
+	cr:set_source_surface(src, offset_x / scale, offset_y / scale)
+	cr:paint()
+
+	return dst
+end
+
 --- Apply wallpaper to a screen using awful.wallpaper API (HiDPI-aware).
+-- Uses cover scaling to match the C-side tag_slide animation cache exactly,
+-- preventing the visual "jump" when the animation overlay is destroyed.
 -- @tparam screen scr The screen object
 -- @tparam string path Absolute path to wallpaper image
 local function apply_wallpaper(scr, path)
@@ -83,23 +129,48 @@ local function apply_wallpaper(scr, path)
 	-- Skip redundant updates
 	if scr._current_wallpaper == path then return true end
 
+	local geo  = scr.geometry
+	local surf = make_cover_surface(path, geo.width, geo.height)
+
 	-- Create a fresh awful.wallpaper each time — the constructor handles
 	-- repaint and properly replaces the previous wallpaper for this screen.
-	awful.wallpaper {
-		screen = scr,
-		widget = {
-			{
-				image     = path,
-				upscale   = true,
-				downscale = true,
-				widget    = wibox.widget.imagebox,
-			},
-			valign = "center",
-			halign = "center",
-			tiled  = false,
-			widget = wibox.container.tile,
+	if surf then
+		-- Fast path: hand the pre-scaled cover surface directly to imagebox.
+		-- With resize=false the imagebox renders it 1:1 (no further scaling),
+		-- which is exactly the cover-cropped output we computed above.
+		awful.wallpaper {
+			screen = scr,
+			widget = {
+				{
+					image  = surf,
+					resize = false,
+					widget = wibox.widget.imagebox,
+				},
+				valign = "center",
+				halign = "center",
+				tiled  = false,
+				widget = wibox.container.tile,
+			}
 		}
-	}
+	else
+		-- Fallback: contain scaling if surface construction fails.
+		awful.wallpaper {
+			screen = scr,
+			widget = {
+				{
+					image     = path,
+					upscale   = true,
+					downscale = true,
+					widget    = wibox.widget.imagebox,
+				},
+				valign = "center",
+				halign = "center",
+				tiled  = false,
+				widget = wibox.container.tile,
+			}
+		}
+	end
+
 	scr._current_wallpaper = path
 	return true
 end
@@ -178,6 +249,8 @@ function wallpaper.init(scr, wppath, default_wallpaper, opts)
 	if path then apply_wallpaper(scr, path) end
 
 	-- Pre-cache all resolved wallpapers for tag_slide animation overlays
+	-- Clear stale cache first (previous session may have used different scaling)
+	if root.wallpaper_cache_clear then root.wallpaper_cache_clear() end
 	if root.wallpaper_cache_preload then
 		local paths = {}
 		for _, tag in ipairs(scr.tags) do
