@@ -162,10 +162,9 @@ end
 
 --- Predict wallpaper path for the tag at offset from current.
 -- Filters hidden tags to match awful.tag.viewidx cycling behavior.
--- Requires s._wppath to be set by rc.lua (directory path ending with /).
+-- Uses wallpaper service _resolve() when available, falls back to
+-- s._wppath + tag_name + ".jpg" for backwards compatibility.
 local function predict_wp_path(s, offset)
-	local wppath = s._wppath
-	if not wppath then return nil end
 	-- Filter to visible (non-hidden) tags, same as awful.tag.viewidx
 	local tags = {}
 	for _, t in ipairs(s.tags) do
@@ -177,7 +176,19 @@ local function predict_wp_path(s, offset)
 	for i, t in ipairs(tags) do if t == sel then idx = i; break end end
 	if not idx then return nil end
 	local ni = ((idx - 1 + offset) % #tags) + 1
-	return wppath .. tags[ni].name .. ".jpg"
+	local tag_name = tags[ni].name
+
+	-- Try wallpaper service _resolve() first (handles user-wallpapers, overrides)
+	local ok, wp_service = pcall(require, "fishlive.services.wallpaper")
+	if ok and wp_service and wp_service._resolve then
+		local path = wp_service._resolve(tag_name)
+		if path then return path end
+	end
+
+	-- Fallback: direct path construction
+	local wppath = s._wppath
+	if not wppath then return nil end
+	return wppath .. tag_name .. ".jpg"
 end
 
 ---------------------------------------------------------------------------

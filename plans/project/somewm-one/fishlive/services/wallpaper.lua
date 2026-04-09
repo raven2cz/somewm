@@ -62,8 +62,17 @@ local function find_in_dir(dir, tag_name)
 	return nil
 end
 
+--- Update tag_slide wallpaper cache for a specific path.
+-- Call after changing a wallpaper so animation overlays use the new image.
+-- @tparam string path Absolute path to the new wallpaper
+local function update_slide_cache(path)
+	if not path or not root.wallpaper_cache_preload then return end
+	for scr in screen do
+		root.wallpaper_cache_preload({ path }, scr)
+	end
+end
+
 --- Apply wallpaper to a screen using awful.wallpaper API (HiDPI-aware).
--- Reuses existing wallpaper widget to avoid flicker on image swap.
 -- @tparam screen scr The screen object
 -- @tparam string path Absolute path to wallpaper image
 local function apply_wallpaper(scr, path)
@@ -168,14 +177,12 @@ function wallpaper.init(scr, wppath, default_wallpaper, opts)
 	local path = wallpaper._resolve(init_tag)
 	if path then apply_wallpaper(scr, path) end
 
-	-- Pre-cache all wallpapers for tag_slide animation overlays
+	-- Pre-cache all resolved wallpapers for tag_slide animation overlays
 	if root.wallpaper_cache_preload then
 		local paths = {}
-		for i = 1, 9 do
-			local wp = wppath .. i .. ".jpg"
-			if gears.filesystem.file_readable(wp) then
-				table.insert(paths, wp)
-			end
+		for _, tag in ipairs(scr.tags) do
+			local wp = wallpaper._resolve(tag.name)
+			if wp then table.insert(paths, wp) end
 		end
 		if #paths > 0 then root.wallpaper_cache_preload(paths, scr) end
 	end
@@ -209,6 +216,9 @@ function wallpaper.set_override(tag_name, path)
 		end
 	end
 
+	-- Update tag_slide cache so animation uses new wallpaper
+	update_slide_cache(path)
+
 	-- Notify shell of change
 	broker.emit_signal("data::wallpaper", wallpaper._get_state())
 end
@@ -219,13 +229,16 @@ function wallpaper.clear_override(tag_name)
 	wallpaper._overrides[tag_name] = nil
 
 	-- Revert to resolved wallpaper if this tag is currently selected
+	local resolved = wallpaper._resolve(tag_name)
 	for scr in screen do
 		local sel = scr.selected_tag
 		if sel and sel.name == tag_name then
-			local wp = wallpaper._resolve(tag_name)
-			if wp then apply_wallpaper(scr, wp) end
+			if resolved then apply_wallpaper(scr, resolved) end
 		end
 	end
+
+	-- Update tag_slide cache so animation uses reverted wallpaper
+	if resolved then update_slide_cache(resolved) end
 
 	broker.emit_signal("data::wallpaper", wallpaper._get_state())
 end
@@ -285,6 +298,9 @@ function wallpaper.save_to_theme(tag_name, source_path)
 			apply_wallpaper(scr, dest)
 		end
 	end
+
+	-- Update tag_slide cache so animation uses new wallpaper
+	update_slide_cache(dest)
 
 	broker.emit_signal("data::wallpaper", wallpaper._get_state())
 	return true
