@@ -6,10 +6,10 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_network_color or "#89b482"
 	local widget = wibox.widget.textbox()
 
 	broker.connect_signal("data::network", function(data)
+		local color = beautiful.widget_network_color or "#89b482"
 		widget.markup = string.format(
 			'<span font="%s" foreground="%s">%s</span>' ..
 			'<span font="%s" foreground="%s"> %s </span>' ..

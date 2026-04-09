@@ -6,8 +6,7 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_cpu_color or "#7daea3"
-	local widget, update = wh.create_icon_text(color)
+	local widget, update = wh.create_icon_text("widget_cpu_color", "#7daea3")
 
 	broker.connect_signal("data::cpu", function(data)
 		if data.temp then

@@ -7,8 +7,7 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_updates_color or "#d8a657"
-	local widget, update = wh.create_icon_text(color)
+	local widget, update = wh.create_icon_text("widget_updates_color", "#d8a657")
 
 	broker.connect_signal("data::updates", function(data)
 		update(data.icon, tostring(data.total))

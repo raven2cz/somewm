@@ -55,7 +55,7 @@ Singleton {
     function scanFolder(folderPath) {
         root.activeFolder = folderPath
         root.loading = true
-        scanProc.command = ["find", folderPath,
+        scanProc.command = ["find", "-L", folderPath,
             "-maxdepth", "1", "-type", "f",
             "(", "-name", "*.jpg", "-o", "-name", "*.jpeg",
             "-o", "-name", "*.png", "-o", "-name", "*.webp", ")"]
@@ -164,6 +164,13 @@ Singleton {
         }
     }
 
+    // === Refresh filmstrip (rescan browse dirs on picker open) ===
+
+    function refreshBrowseFolders() {
+        _subdirsReady = false
+        refreshBrowseDirs()
+    }
+
     // === Compositor IPC: overrides ===
 
     function refreshOverrides() {
@@ -255,7 +262,7 @@ Singleton {
             "  [ -d \"$d\" ] || continue\n" +
             "  for sub in \"$d\"/*/; do\n" +
             "    [ -d \"$sub\" ] || continue\n" +
-            "    first=$(find \"$sub\" -maxdepth 1 -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \\) 2>/dev/null | sort | head -1)\n" +
+            "    first=$(find -L \"$sub\" -maxdepth 1 -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \\) 2>/dev/null | sort | head -1)\n" +
             "    echo \"${sub%/}\t${first}\"\n" +
             "  done\n" +
             "done | sort",
@@ -304,6 +311,7 @@ Singleton {
 
         // 2. Subdirectories from browse_dirs (one level deep, with firstImage)
         root._subdirsRaw.forEach(function(entry) {
+            if (!entry.firstImage) return
             var dir = entry.path || entry
             var parts = dir.split("/")
             var name = parts[parts.length - 1]

@@ -63,6 +63,7 @@ Variants {
                 initialFocusSet = false
                 view.forceActiveFocus()
                 Services.Wallpapers.refreshSelectedTag()
+                Services.Wallpapers.refreshBrowseFolders()
                 _focusCurrentWallpaper()
             }
         }
@@ -194,7 +195,7 @@ Variants {
                 anchors.horizontalCenter: parent.horizontalCenter
                 z: 20
 
-                height: Math.round(56 * panel.sp)
+                height: Math.round(60 * panel.sp)
                 width: topBarRow.width + Math.round(24 * panel.sp)
                 radius: Math.round(14 * panel.sp)
 
@@ -211,52 +212,18 @@ Variants {
                     anchors.centerIn: parent
                     spacing: Math.round(12 * panel.sp)
 
-                    // Apply Theme toggle
-                    Rectangle {
-                        width: applyThemeLabel.implicitWidth + Math.round(20 * panel.sp)
-                        height: Math.round(36 * panel.sp)
-                        radius: Math.round(10 * panel.sp)
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: Services.Wallpapers.applyTheme
-                            ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.2)
-                            : "transparent"
-                        border.color: Services.Wallpapers.applyTheme
-                            ? Core.Theme.accent
-                            : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
-                        border.width: Services.Wallpapers.applyTheme ? 2 : 1
-
-                        Behavior on color { ColorAnimation { duration: 300 } }
-                        Behavior on border.color { ColorAnimation { duration: 300 } }
-
-                        Text {
-                            id: applyThemeLabel
-                            anchors.centerIn: parent
-                            text: "\ue3ab"  // palette icon
-                            font.family: Core.Theme.fontIcon
-                            font.pixelSize: Math.round(18 * panel.sp)
-                            color: Services.Wallpapers.applyTheme ? Core.Theme.accent : Core.Theme.fgDim
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Services.Wallpapers.setApplyTheme(!Services.Wallpapers.applyTheme)
-                        }
-                    }
-
-                    // Theme selector (scrollable when many themes)
+                    // Theme selector — gradient cards (scrollable)
                     Flickable {
-                        width: Math.min(themeRepeaterRow.width, Math.round(600 * panel.sp))
-                        height: Math.round(36 * panel.sp)
+                        width: Math.min(themeRepeaterRow.width, Math.round(800 * panel.sp))
+                        height: Math.round(48 * panel.sp)
                         anchors.verticalCenter: parent.verticalCenter
                         contentWidth: themeRepeaterRow.width
                         clip: true
                         flickableDirection: Flickable.HorizontalFlick
-                        visible: Services.Wallpapers.applyTheme
 
                         Row {
                             id: themeRepeaterRow
-                            spacing: Math.round(8 * panel.sp)
+                            spacing: Math.round(10 * panel.sp)
 
                             Repeater {
                                 model: Services.Wallpapers.themes
@@ -264,57 +231,65 @@ Variants {
                                 delegate: Rectangle {
                                     required property var modelData
                                     readonly property bool isActive: modelData.name === Services.Wallpapers.activeTheme
+                                    readonly property var pal: modelData.palette || {}
 
-                                    width: themeRow.width + Math.round(12 * panel.sp)
-                                    height: Math.round(36 * panel.sp)
-                                    radius: Math.round(10 * panel.sp)
-                                    color: isActive
-                                        ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.2)
-                                        : (themeMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
-                                    border.color: isActive ? Core.Theme.accent
-                                        : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                                    width: Math.round(120 * panel.sp)
+                                    height: Math.round(48 * panel.sp)
+                                    radius: Math.round(12 * panel.sp)
+                                    opacity: isActive ? 1.0 : (themeMa.containsMouse ? 0.95 : 0.8)
                                     border.width: isActive ? 2 : 1
+                                    border.color: isActive
+                                        ? (pal.border_color_active || Core.Theme.accent)
+                                        : Qt.rgba(1, 1, 1, 0.15)
 
-                                    Behavior on color { ColorAnimation { duration: 300 } }
+                                    // Gradient background from theme's own colors
+                                    gradient: Gradient {
+                                        orientation: Gradient.Horizontal
+                                        GradientStop { position: 0.0; color: pal.bg_normal || "#181818" }
+                                        GradientStop { position: 1.0; color: pal.bg_focus || "#232323" }
+                                    }
+
+                                    Behavior on opacity { NumberAnimation { duration: 300 } }
                                     Behavior on border.color { ColorAnimation { duration: 300 } }
 
-                                    Row {
-                                        id: themeRow
+                                    Column {
                                         anchors.centerIn: parent
                                         spacing: Math.round(4 * panel.sp)
 
                                         Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
                                             text: modelData.name
-                                            anchors.verticalCenter: parent.verticalCenter
                                             font.family: Core.Theme.fontUI
-                                            font.pixelSize: Math.round(11 * panel.sp)
+                                            font.pixelSize: Math.round(13 * panel.sp)
                                             font.weight: isActive ? Font.Bold : Font.Normal
-                                            color: isActive ? Core.Theme.accent : Core.Theme.fgDim
+                                            color: pal.fg_focus || "#d4d4d4"
                                         }
 
                                         Row {
-                                            spacing: Math.round(2 * panel.sp)
-                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            spacing: Math.round(4 * panel.sp)
 
                                             Repeater {
                                                 model: {
-                                                    var p = modelData.palette || {}
+                                                    var p = pal
                                                     var colors = []
                                                     if (p.bg_normal) colors.push(p.bg_normal)
+                                                    if (p.bg_focus) colors.push(p.bg_focus)
                                                     if (p.fg_focus) colors.push(p.fg_focus)
                                                     if (p.border_color_active) colors.push(p.border_color_active)
                                                     if (p.bg_urgent) colors.push(p.bg_urgent)
                                                     if (p.widget_cpu_color) colors.push(p.widget_cpu_color)
-                                                    return colors.slice(0, 5)
+                                                    if (p.widget_volume_color) colors.push(p.widget_volume_color)
+                                                    return colors.slice(0, 7)
                                                 }
 
                                                 Rectangle {
                                                     required property string modelData
-                                                    width: Math.round(10 * panel.sp)
+                                                    width: Math.round(12 * panel.sp)
                                                     height: width
                                                     radius: width / 2
                                                     color: modelData
-                                                    border.color: Qt.rgba(1, 1, 1, 0.2)
+                                                    border.color: Qt.rgba(1, 1, 1, 0.25)
                                                     border.width: 1
                                                 }
                                             }
@@ -331,13 +306,6 @@ Variants {
                                 }
                             }
                         }
-                    }
-
-                    // Separator
-                    Rectangle {
-                        width: 1; height: Math.round(28 * panel.sp)
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
                     }
 
                     // Refresh button

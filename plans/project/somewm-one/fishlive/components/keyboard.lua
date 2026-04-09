@@ -7,16 +7,16 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_keyboard_color or "#7daea3"
-	local widget, update = wh.create_icon_text(color)
+	local widget, _update = wh.create_icon_text("widget_keyboard_color", "#7daea3")
 
 	broker.connect_signal("data::keyboard", function(data)
+		local color = beautiful.widget_keyboard_color or "#7daea3"
 		-- Extra leading space: keyboard is first widget, needs gap from taglist colors
 		widget.markup = string.format(
 			'<span> </span><span font="%s" foreground="%s">%s</span>' ..
 			'<span font="%s" foreground="%s"> %s</span>',
-			require("fishlive.widget_helper").icon_font, color, data.icon,
-			require("fishlive.widget_helper").number_font, color, string.upper(data.layout))
+			wh.icon_font, color, data.icon,
+			wh.number_font, color, string.upper(data.layout))
 	end)
 
 	widget:buttons(awful.util.table.join(

@@ -7,8 +7,7 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_volume_color or "#ea6962"
-	local widget, update = wh.create_icon_text(color)
+	local widget, update = wh.create_icon_text("widget_volume_color", "#ea6962")
 
 	broker.connect_signal("data::volume", function(data)
 		update(data.icon, string.format("%3d%%", data.volume))

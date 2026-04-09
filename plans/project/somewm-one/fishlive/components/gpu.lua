@@ -6,8 +6,7 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_gpu_color or "#98c379"
-	local widget, update = wh.create_icon_text(color)
+	local widget, update = wh.create_icon_text("widget_gpu_color", "#98c379")
 
 	broker.connect_signal("data::gpu", function(data)
 		update(data.icon, string.format("%3d%% %2d°C", data.usage, data.temp))

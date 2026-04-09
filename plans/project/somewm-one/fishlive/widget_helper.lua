@@ -27,10 +27,14 @@ M.shadow_memo = {
 }
 
 --- Create a widget with icon + text in a SINGLE textbox.
--- This avoids all spacing issues between separate icon/text widgets.
-function M.create_icon_text(color)
+-- Color is read dynamically from beautiful on every update,
+-- so theme switches take effect immediately.
+-- @param color_key string: beautiful key name (e.g. "widget_cpu_color")
+-- @param fallback string: fallback color if beautiful key is nil
+function M.create_icon_text(color_key, fallback)
 	local tb = wibox.widget.textbox()
 	return tb, function(icon, text)
+		local color = beautiful[color_key] or fallback
 		tb.markup = string.format(
 			'<span font="%s" foreground="%s">%s</span>' ..
 			'<span font="%s" foreground="%s"> %s</span>',
@@ -40,11 +44,17 @@ function M.create_icon_text(color)
 end
 
 --- Create a separator widget between components.
+-- Re-reads color from beautiful on data::theme signal.
 function M.separator()
 	local sep = wibox.widget.textbox()
-	sep.markup = string.format('<span color="%s"> │ </span>',
-		beautiful.fg_minimize or "#555555")
-	sep.font = beautiful.font or "Geist 10"
+	local function refresh()
+		sep.markup = string.format('<span color="%s"> │ </span>',
+			beautiful.fg_minimize or "#555555")
+		sep.font = beautiful.font or "Geist 10"
+	end
+	refresh()
+	local broker = require("fishlive.broker")
+	broker.connect_signal("data::theme", refresh)
 	return sep
 end
 

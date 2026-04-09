@@ -6,8 +6,7 @@ local wh = require("fishlive.widget_helper")
 local M = {}
 
 function M.create(screen, config)
-	local color = beautiful.widget_memory_color or "#d3869b"
-	local widget, update = wh.create_icon_text(color)
+	local widget, update = wh.create_icon_text("widget_memory_color", "#d3869b")
 
 	broker.connect_signal("data::memory", function(data)
 		local used_g = data.used / 1024
