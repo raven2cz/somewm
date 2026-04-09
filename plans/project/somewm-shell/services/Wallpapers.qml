@@ -7,17 +7,10 @@ import "../core" as Core
 Singleton {
     id: root
 
-    // Wallpaper directories to scan
-    property var directories: [
-        Quickshell.env("HOME") + "/Pictures/Wallpapers",
-        Quickshell.env("HOME") + "/Pictures/wallpapers",
-        Quickshell.env("HOME") + "/.config/somewm/themes/default/wallpapers"
-    ]
-
     // Current wallpaper path (from compositor)
     property string currentWallpaper: ""
 
-    // List of { path, name } objects
+    // List of { path, name } objects — wallpapers from activeFolder
     property var wallpapers: []
 
     property bool loading: false
@@ -25,10 +18,6 @@ Singleton {
     // Thumbnail cache directory
     readonly property string thumbDir: Quickshell.env("HOME") + "/.cache/somewm-shell/wallpaper_thumbs"
     readonly property string thumbDirUrl: "file://" + thumbDir
-
-    // Color marker cache
-    readonly property string colorMarkerDir: Quickshell.env("HOME") + "/.cache/somewm-shell/wallpaper_colors"
-    property var colorMap: ({})
 
     // Apply theme toggle — persisted in config.json
     property bool applyTheme: {
@@ -40,15 +29,36 @@ Singleton {
     // Per-tag override map from compositor { "1": "/path/...", ... }
     property var overrides: ({})
 
-    function refresh() {
+    // === Folder browsing ===
+
+    // Browse folders for filmstrip: [{name, path, isTheme}]
+    property var browseFolders: []
+    // Currently selected folder in filmstrip
+    property string activeFolder: ""
+    // Theme wallpapers directory (from compositor)
+    property string themeWallpapersDir: ""
+    // Raw browse_dirs from compositor config
+    property var browseDirs: []
+    // Ready flags for async folder building (both must be true)
+    property bool _themeWpDirReady: false
+    property bool _subdirsReady: false
+
+    // === Tag selector ===
+
+    // Tag names from compositor: ["1","2",...,"9"]
+    property var tagList: []
+    // Currently selected tag for wallpaper assignment
+    property string selectedTag: ""
+
+    // === Scan folder for wallpapers ===
+
+    function scanFolder(folderPath) {
+        root.activeFolder = folderPath
         root.loading = true
-        // Build find command across all directories
-        var dirs = root.directories.filter(function(d) { return d !== "" })
-        scanProc.command = ["find"].concat(dirs).concat([
-            "-maxdepth", "2", "-type", "f",
+        scanProc.command = ["find", folderPath,
+            "-maxdepth", "1", "-type", "f",
             "(", "-name", "*.jpg", "-o", "-name", "*.jpeg",
-            "-o", "-name", "*.png", "-o", "-name", "*.webp", ")"
-        ])
+            "-o", "-name", "*.png", "-o", "-name", "*.webp", ")"]
         scanProc.running = true
     }
 
@@ -66,93 +76,54 @@ Singleton {
                 result.sort(function(a, b) { return a.name.localeCompare(b.name) })
                 root.wallpapers = result
                 root.loading = false
-                // Generate thumbnails for new wallpapers
-                root._generateThumbnails()
+                // Generate thumbnails for this folder
+                root._generateThumbnails(root.activeFolder)
             }
         }
     }
 
-    // Generate thumbnails (only for files without existing thumbs)
-    function _generateThumbnails() {
+    // Full refresh: fetch dirs from compositor, build folder list, scan first folder
+    function refresh() {
+        root._themeWpDirReady = false
+        root._subdirsReady = false
+        refreshThemeWpDir()
+        refreshBrowseDirs()
+        refreshTagList()
+        refreshSelectedTag()
+        refreshCurrent()
+        refreshOverrides()
+        refreshThemes()
+    }
+
+    // === Thumbnail generation ===
+
+    function _generateThumbnails(folderPath) {
+        if (!folderPath) return
         var thumbDirPath = root.thumbDir
+        // Pass paths as positional args to avoid shell injection and quoting issues
         thumbGenProc.command = ["bash", "-c",
-            "mkdir -p '" + thumbDirPath + "'\n" +
+            "src_dir=\"$1\"; thumb_dir=\"$2\"\n" +
+            "mkdir -p \"$thumb_dir\"\n" +
             "CMD=magick; command -v magick &>/dev/null || CMD=convert\n" +
-            "for f in " + root.directories.map(function(d) {
-                return "'" + d + "'/*.{jpg,jpeg,png,webp}"
-            }).join(" ") + "; do\n" +
+            "for f in \"$src_dir\"/*.{jpg,jpeg,png,webp}; do\n" +
             "  [ -f \"$f\" ] || continue\n" +
             "  name=$(basename \"$f\")\n" +
-            "  thumb='" + thumbDirPath + "/$name'\n" +
+            "  thumb=\"$thumb_dir/$name\"\n" +
             "  [ -f \"$thumb\" ] && continue\n" +
             "  $CMD \"$f\" -resize x420 -quality 70 \"$thumb\" 2>/dev/null &\n" +
-            "  # Limit parallel jobs\n" +
             "  [ $(jobs -r | wc -l) -ge 4 ] && wait -n\n" +
             "done\n" +
-            "wait"]
+            "wait",
+            "bash", folderPath, thumbDirPath]
         thumbGenProc.running = true
     }
 
     Process {
         id: thumbGenProc
-        onRunningChanged: {
-            if (!running) root._extractColors()
-        }
     }
 
-    // Extract dominant colors for each thumbnail
-    function _extractColors() {
-        var thumbDirPath = root.thumbDir
-        var colorDirPath = root.colorMarkerDir
-        colorExtractProc.command = ["bash", "-c",
-            "mkdir -p '" + colorDirPath + "'\n" +
-            "CMD=magick; command -v magick &>/dev/null || CMD=convert\n" +
-            "for f in '" + thumbDirPath + "'/*; do\n" +
-            "  [ -f \"$f\" ] || continue\n" +
-            "  name=$(basename \"$f\")\n" +
-            "  # Skip if marker already exists\n" +
-            "  ls '" + colorDirPath + "/'\"$name\"'_HEX_'* &>/dev/null && continue\n" +
-            "  hex=$($CMD \"$f\" -modulate 100,200 -resize '1x1^' -gravity center -extent 1x1 -depth 8 -format '%[hex:p{0,0}]' info:- 2>/dev/null | grep -oE '[0-9A-Fa-f]{6}' | head -n 1)\n" +
-            "  [ -n \"$hex\" ] && touch '" + colorDirPath + "/'\"$name\"'_HEX_'\"$hex\"\n" +
-            "done"]
-        colorExtractProc.running = true
-    }
+    // === Compositor IPC: current wallpaper ===
 
-    Process {
-        id: colorExtractProc
-        onRunningChanged: {
-            if (!running) root._loadColorMarkers()
-        }
-    }
-
-    // Load color markers into colorMap
-    function _loadColorMarkers() {
-        colorLoadProc.command = ["bash", "-c",
-            "ls '" + root.colorMarkerDir + "/' 2>/dev/null | grep _HEX_ || true"]
-        colorLoadProc.running = true
-    }
-
-    Process {
-        id: colorLoadProc
-        stdout: StdioCollector {
-            onStreamFinished: {
-                var newMap = {}
-                var lines = text.trim().split("\n")
-                lines.forEach(function(line) {
-                    if (!line) return
-                    var idx = line.lastIndexOf("_HEX_")
-                    if (idx !== -1) {
-                        var fname = line.substring(0, idx)
-                        var hex = line.substring(idx + 5)
-                        newMap[fname] = "#" + hex
-                    }
-                })
-                root.colorMap = newMap
-            }
-        }
-    }
-
-    // Get current wallpaper from the Lua wallpaper service
     function refreshCurrent() {
         currentProc.running = true
     }
@@ -164,7 +135,6 @@ Singleton {
         stdout: StdioCollector {
             onStreamFinished: {
                 var raw = text.trim()
-                // somewm-client returns "OK\n<value>"
                 var nl = raw.indexOf("\n")
                 var path = nl >= 0 ? raw.substring(nl + 1) : raw
                 if (path && path !== "OK") root.currentWallpaper = path
@@ -172,7 +142,30 @@ Singleton {
         }
     }
 
-    // Fetch override map from compositor
+    // === Compositor IPC: focused tag (sync selectedTag on picker open) ===
+
+    function refreshSelectedTag() {
+        focusedTagProc.running = true
+    }
+
+    Process {
+        id: focusedTagProc
+        command: ["somewm-client", "eval",
+            "local s = require('awful').screen.focused(); " +
+            "local t = s and s.selected_tag; " +
+            "return t and t.name or '1'"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var tag = nl >= 0 ? raw.substring(nl + 1) : raw
+                if (tag && tag !== "OK") root.selectedTag = tag
+            }
+        }
+    }
+
+    // === Compositor IPC: overrides ===
+
     function refreshOverrides() {
         overridesProc.running = true
     }
@@ -195,26 +188,188 @@ Singleton {
         }
     }
 
-    // Escape string for safe Lua interpolation
+    // === Compositor IPC: theme wallpapers dir ===
+
+    function refreshThemeWpDir() {
+        themeWpDirProc.running = true
+    }
+
+    Process {
+        id: themeWpDirProc
+        command: ["somewm-client", "eval",
+            "return require('fishlive.services.wallpaper').get_theme_wallpapers_dir()"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var dir = nl >= 0 ? raw.substring(nl + 1) : raw
+                if (dir && dir !== "OK") {
+                    root.themeWallpapersDir = dir
+                }
+                root._themeWpDirReady = true
+                if (root._subdirsReady) root._buildBrowseFolders()
+            }
+        }
+    }
+
+    // === Compositor IPC: browse directories ===
+
+    function refreshBrowseDirs() {
+        browseDirsProc.running = true
+    }
+
+    Process {
+        id: browseDirsProc
+        command: ["somewm-client", "eval",
+            "return require('fishlive.services.wallpaper').get_browse_dirs_json()"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var json = nl >= 0 ? raw.substring(nl + 1) : raw
+                try {
+                    root.browseDirs = JSON.parse(json)
+                } catch (e) {
+                    root.browseDirs = []
+                }
+                // Scan for subdirectories
+                root._scanSubdirs()
+            }
+        }
+    }
+
+    // Scan one-level-deep subdirectories from browse_dirs
+    property var _subdirsRaw: []
+
+    function _scanSubdirs() {
+        if (root.browseDirs.length === 0) {
+            root._subdirsRaw = []
+            root._subdirsReady = true
+            if (root._themeWpDirReady) root._buildBrowseFolders()
+            return
+        }
+        // Pass dirs as positional args to avoid shell injection
+        // Output: dir\tfirst_image per line
+        var cmd = ["bash", "-c",
+            "for d in \"$@\"; do\n" +
+            "  [ -d \"$d\" ] || continue\n" +
+            "  for sub in \"$d\"/*/; do\n" +
+            "    [ -d \"$sub\" ] || continue\n" +
+            "    first=$(find \"$sub\" -maxdepth 1 -type f \\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \\) 2>/dev/null | sort | head -1)\n" +
+            "    echo \"${sub%/}\t${first}\"\n" +
+            "  done\n" +
+            "done | sort",
+            "bash"]
+        for (var i = 0; i < root.browseDirs.length; i++) {
+            cmd.push(root.browseDirs[i])
+        }
+        subdirsProc.command = cmd
+        subdirsProc.running = true
+    }
+
+    Process {
+        id: subdirsProc
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var lines = text.trim().split("\n")
+                var dirs = []
+                lines.forEach(function(line) {
+                    if (!line) return
+                    var parts = line.split("\t")
+                    dirs.push({ path: parts[0], firstImage: parts[1] || "" })
+                })
+                root._subdirsRaw = dirs
+                root._subdirsReady = true
+                if (root._themeWpDirReady) root._buildBrowseFolders()
+            }
+        }
+    }
+
+    // Build the browseFolders model from theme dir + subdirs
+    function _buildBrowseFolders() {
+        var folders = []
+
+        // 1. Active theme wallpapers dir (always first)
+        if (root.themeWallpapersDir) {
+            var themeName = root.themeWallpapersDir.split("/").filter(function(s) { return s !== "" })
+            var lastDir = themeName.length > 1 ? themeName[themeName.length - 2] : "Theme"
+            // Theme dir uses "1.jpg" as preview (theme wallpapers are numbered)
+            folders.push({
+                name: lastDir + " (theme)",
+                path: root.themeWallpapersDir,
+                isTheme: true,
+                firstImage: root.themeWallpapersDir + "1.jpg"
+            })
+        }
+
+        // 2. Subdirectories from browse_dirs (one level deep, with firstImage)
+        root._subdirsRaw.forEach(function(entry) {
+            var dir = entry.path || entry
+            var parts = dir.split("/")
+            var name = parts[parts.length - 1]
+            folders.push({
+                name: name,
+                path: dir,
+                isTheme: false,
+                firstImage: entry.firstImage || ""
+            })
+        })
+
+        root.browseFolders = folders
+
+        // Auto-select first folder if none selected
+        if (!root.activeFolder && folders.length > 0) {
+            root.scanFolder(folders[0].path)
+        }
+    }
+
+    // === Compositor IPC: tag list ===
+
+    function refreshTagList() {
+        tagListProc.running = true
+    }
+
+    Process {
+        id: tagListProc
+        command: ["somewm-client", "eval",
+            "return require('fishlive.services.wallpaper').get_tags_json()"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var json = nl >= 0 ? raw.substring(nl + 1) : raw
+                try {
+                    root.tagList = JSON.parse(json)
+                    // Default to first tag if none selected
+                    if (!root.selectedTag && root.tagList.length > 0) {
+                        root.selectedTag = root.tagList[0]
+                    }
+                } catch (e) {
+                    root.tagList = []
+                }
+            }
+        }
+    }
+
+    // === Lua escape for IPC ===
+
     function _luaEscape(str) {
         return str.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
             .replace(/\n/g, "\\n").replace(/\r/g, "\\r")
             .replace(/[\x00-\x1f]/g, "")
     }
 
-    // Set wallpaper via Lua wallpaper service (with override for current tag)
+    // === Set wallpaper (save to user-wallpapers for selected tag) ===
+
     function setWallpaper(path) {
         root.currentWallpaper = path
-        var safe = _luaEscape(path)
+        var safePath = _luaEscape(path)
+        var safeTag = _luaEscape(root.selectedTag || "1")
 
-        // Save wallpaper to theme dir for current tag (persistent)
         setProc.command = ["somewm-client", "eval",
-            "local wp = require('fishlive.services.wallpaper'); " +
-            "local s = require('awful').screen.focused(); " +
-            "local t = s and s.selected_tag; " +
-            "local tag_name = t and t.name or '1'; " +
-            "wp.save_to_theme(tag_name, '" + safe + "'); " +
-            "return tag_name"]
+            "require('fishlive.services.wallpaper').save_to_theme('" +
+            safeTag + "', '" + safePath + "'); " +
+            "return '" + safeTag + "'"]
         setProc.running = true
     }
 
@@ -222,14 +377,12 @@ Singleton {
         id: setProc
         stdout: StdioCollector {
             onStreamFinished: {
-                // Verify wallpaper was actually set, refresh overrides
                 root.refreshCurrent()
                 root.refreshOverrides()
             }
         }
         onRunningChanged: {
             if (!running && root.applyTheme) {
-                // Run theme-export.sh after wallpaper is set
                 themeExportProc.running = true
             }
         }
@@ -241,13 +394,13 @@ Singleton {
         command: [Quickshell.shellDir + "/theme-export.sh"]
     }
 
-    // Set wallpaper for a specific tag (e.g. from carousel with tag selector)
+    // Set wallpaper for a specific tag
     function setWallpaperForTag(tagName, path) {
         root.currentWallpaper = path
         var safePath = _luaEscape(path)
         var safeTag = _luaEscape(tagName)
         tagSetProc.command = ["somewm-client", "eval",
-            "require('fishlive.services.wallpaper').set_override('" +
+            "require('fishlive.services.wallpaper').save_to_theme('" +
             safeTag + "', '" + safePath + "')"]
         tagSetProc.running = true
     }
@@ -261,7 +414,7 @@ Singleton {
         }
     }
 
-    // Clear override for a tag (revert to theme default)
+    // Clear override for a tag (revert to resolved wallpaper)
     function clearOverride(tagName) {
         var safe = _luaEscape(tagName)
         clearProc.command = ["somewm-client", "eval",
@@ -285,9 +438,27 @@ Singleton {
         Core.Config.set("wallpapers.applyTheme", enabled)
     }
 
+    // === View tag (switch tag in compositor + update selectedTag) ===
+
+    function viewTag(tagName) {
+        root.selectedTag = tagName
+        viewTagProc.command = ["somewm-client", "eval",
+            "require('fishlive.services.wallpaper').view_tag('" +
+            _luaEscape(tagName) + "')"]
+        viewTagProc.running = true
+    }
+
+    Process {
+        id: viewTagProc
+        onRunningChanged: {
+            if (!running) {
+                refreshCurrent()
+            }
+        }
+    }
+
     // === Theme scanning and switching ===
 
-    // Available themes: [{name, path, wallpaper_count, active, palette:{...}}]
     property var themes: []
     property string activeTheme: ""
 
@@ -307,7 +478,6 @@ Singleton {
                 try {
                     var list = JSON.parse(json)
                     root.themes = list
-                    // Find active theme
                     for (var i = 0; i < list.length; i++) {
                         if (list[i].active) {
                             root.activeTheme = list[i].name
@@ -322,7 +492,6 @@ Singleton {
         }
     }
 
-    // Switch to a different theme (colors + wallpapers)
     function switchTheme(themeName) {
         var safe = _luaEscape(themeName)
         themeSwitchProc.command = ["somewm-client", "eval",
@@ -341,8 +510,8 @@ Singleton {
                 if (name && name !== "OK") root.activeTheme = name
                 // Re-export theme colors to JSON for shell
                 themeExportProc.running = true
-                // Refresh wallpapers (now from new theme dir)
-                root.refresh()
+                // Refresh everything: theme dir changed, folder list needs rebuild
+                root.refreshThemeWpDir()
                 root.refreshCurrent()
                 root.refreshThemes()
             }
@@ -351,8 +520,5 @@ Singleton {
 
     Component.onCompleted: {
         refresh()
-        refreshCurrent()
-        refreshOverrides()
-        refreshThemes()
     }
 }

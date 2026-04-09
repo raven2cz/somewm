@@ -1,14 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
-import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Wayland
 import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
 
-// Wallpaper Picker — faithful ilyamiro-nixos WallpaperPicker.qml port
-// Full-width horizontal ListView carousel with skewed 3D perspective
+// Wallpaper Picker — 3-zone layout: top bar, carousel + tag bar, filmstrip
 Variants {
     model: Quickshell.screens
 
@@ -37,107 +35,26 @@ Variants {
 
         mask: Region { item: pickerArea }
 
-        // === Constants (ilyamiro-faithful) ===
+        // === Constants (scaled ~20% up for 4K) ===
         readonly property real sp: Core.Theme.dpiScale
-        readonly property int itemWidth: 400
-        readonly property int itemHeight: 420
+        readonly property int itemWidth: 480
+        readonly property int itemHeight: 500
         readonly property int borderWidth: 3
-        readonly property int itemSpacing: 10
+        readonly property int itemSpacing: 12
         readonly property real skewFactor: -0.35
-        readonly property int pickerHeight: Math.round(650 * sp)
+        readonly property int pickerHeight: Math.round(780 * sp)
 
         // === State ===
-        property string currentFilter: "All"
         property bool initialFocusSet: false
         property int scrollAccum: 0
         readonly property int scrollThreshold: 300
 
-        // Color filtering (HSV bucketing — ilyamiro pattern)
-        readonly property var filterData: [
-            { name: "All", hex: "", label: "All" },
-            { name: "Red", hex: "#FF4500", label: "" },
-            { name: "Orange", hex: "#FFA500", label: "" },
-            { name: "Yellow", hex: "#FFD700", label: "" },
-            { name: "Green", hex: "#32CD32", label: "" },
-            { name: "Blue", hex: "#1E90FF", label: "" },
-            { name: "Purple", hex: "#8A2BE2", label: "" },
-            { name: "Pink", hex: "#FF69B4", label: "" },
-            { name: "Monochrome", hex: "#A9A9A9", label: "" }
-        ]
-
-        function getHexBucket(hexStr) {
-            if (!hexStr) return "Monochrome"
-            hexStr = String(hexStr).trim().replace(/#/g, '')
-            if (hexStr.length > 6) hexStr = hexStr.substring(0, 6)
-            if (hexStr.length !== 6) return "Monochrome"
-
-            var r = parseInt(hexStr.substring(0,2), 16) / 255
-            var g = parseInt(hexStr.substring(2,4), 16) / 255
-            var b = parseInt(hexStr.substring(4,6), 16) / 255
-            if (isNaN(r) || isNaN(g) || isNaN(b)) return "Monochrome"
-
-            var max = Math.max(r, g, b), min = Math.min(r, g, b)
-            var d = max - min
-            var h = 0, s = max === 0 ? 0 : d / max
-
-            if (max !== min) {
-                if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
-                else if (max === g) h = (b - r) / d + 2
-                else h = (r - g) / d + 4
-                h /= 6
-            }
-            h = h * 360
-
-            if (s < 0.05 || max < 0.08) return "Monochrome"
-            if (h >= 345 || h < 15) return "Red"
-            if (h >= 15 && h < 45) return "Orange"
-            if (h >= 45 && h < 75) return "Yellow"
-            if (h >= 75 && h < 165) return "Green"
-            if (h >= 165 && h < 260) return "Blue"
-            if (h >= 260 && h < 315) return "Purple"
-            if (h >= 315 && h < 345) return "Pink"
-            return "Monochrome"
-        }
-
-        function matchesFilter(fileName) {
-            if (currentFilter === "All") return true
-            var hexColor = Services.Wallpapers.colorMap[String(fileName)]
-            if (!hexColor) return currentFilter === "Monochrome"
-            return getHexBucket(hexColor) === currentFilter
-        }
-
-        function stepToNextValid(direction) {
+        function stepToNext(direction) {
             var model = Services.Wallpapers.wallpapers
             if (!model || model.length === 0) return
-            var start = view.currentIndex
-            for (var i = start + direction; i >= 0 && i < model.length; i += direction) {
-                if (matchesFilter(model[i].name)) {
-                    view.currentIndex = i
-                    return
-                }
-            }
-        }
-
-        function cycleFilter(direction) {
-            var idx = -1
-            for (var i = 0; i < filterData.length; i++) {
-                if (filterData[i].name === currentFilter) { idx = i; break }
-            }
-            if (idx !== -1) {
-                var next = (idx + direction + filterData.length) % filterData.length
-                currentFilter = filterData[next].name
-            }
-        }
-
-        onCurrentFilterChanged: {
-            // Jump to first matching item after filter change
-            var model = Services.Wallpapers.wallpapers
-            if (!model) return
-            for (var i = 0; i < model.length; i++) {
-                if (matchesFilter(model[i].name)) {
-                    view.currentIndex = i
-                    break
-                }
+            var next = view.currentIndex + direction
+            if (next >= 0 && next < model.length) {
+                view.currentIndex = next
             }
         }
 
@@ -145,8 +62,15 @@ Variants {
             if (shouldShow) {
                 initialFocusSet = false
                 view.forceActiveFocus()
-                // Focus on current wallpaper
                 _focusCurrentWallpaper()
+            }
+        }
+
+        // Re-focus carousel when current wallpaper changes (e.g. after tag switch)
+        Connections {
+            target: Services.Wallpapers
+            function onCurrentWallpaperChanged() {
+                if (panel.shouldShow) panel._focusCurrentWallpaper()
             }
         }
 
@@ -169,11 +93,9 @@ Variants {
             interval: 150
         }
 
-        // === Keyboard shortcuts (ilyamiro-faithful) ===
-        Shortcut { sequence: "Left"; onActivated: panel.stepToNextValid(-1) }
-        Shortcut { sequence: "Right"; onActivated: panel.stepToNextValid(1) }
-        Shortcut { sequence: "Tab"; onActivated: panel.cycleFilter(1) }
-        Shortcut { sequence: "Backtab"; onActivated: panel.cycleFilter(-1) }
+        // === Keyboard shortcuts ===
+        Shortcut { sequence: "Left"; onActivated: panel.stepToNext(-1) }
+        Shortcut { sequence: "Right"; onActivated: panel.stepToNext(1) }
         Shortcut { sequence: "Escape"; onActivated: Core.Panels.close("wallpapers") }
         Shortcut {
             sequence: "Return"
@@ -185,13 +107,54 @@ Variants {
             }
         }
 
+        // Tag selection: 1-9
+        Shortcut { sequence: "1"; onActivated: Services.Wallpapers.viewTag("1") }
+        Shortcut { sequence: "2"; onActivated: Services.Wallpapers.viewTag("2") }
+        Shortcut { sequence: "3"; onActivated: Services.Wallpapers.viewTag("3") }
+        Shortcut { sequence: "4"; onActivated: Services.Wallpapers.viewTag("4") }
+        Shortcut { sequence: "5"; onActivated: Services.Wallpapers.viewTag("5") }
+        Shortcut { sequence: "6"; onActivated: Services.Wallpapers.viewTag("6") }
+        Shortcut { sequence: "7"; onActivated: Services.Wallpapers.viewTag("7") }
+        Shortcut { sequence: "8"; onActivated: Services.Wallpapers.viewTag("8") }
+        Shortcut { sequence: "9"; onActivated: Services.Wallpapers.viewTag("9") }
+
+        // Folder navigation: Up/Down
+        Shortcut {
+            sequence: "Up"
+            onActivated: {
+                var folders = Services.Wallpapers.browseFolders
+                if (!folders || folders.length === 0) return
+                var active = Services.Wallpapers.activeFolder
+                for (var i = 0; i < folders.length; i++) {
+                    if (folders[i].path === active) {
+                        if (i > 0) Services.Wallpapers.scanFolder(folders[i - 1].path)
+                        return
+                    }
+                }
+            }
+        }
+        Shortcut {
+            sequence: "Down"
+            onActivated: {
+                var folders = Services.Wallpapers.browseFolders
+                if (!folders || folders.length === 0) return
+                var active = Services.Wallpapers.activeFolder
+                for (var i = 0; i < folders.length; i++) {
+                    if (folders[i].path === active) {
+                        if (i < folders.length - 1) Services.Wallpapers.scanFolder(folders[i + 1].path)
+                        return
+                    }
+                }
+            }
+        }
+
         // === Picker area (mask target) ===
         Item {
             id: pickerArea
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width
-            height: panel.pickerHeight
+            height: parent.height
         }
 
         // === Backdrop (semi-transparent, dismiss on click) ===
@@ -215,175 +178,23 @@ Variants {
             }
         }
 
-        // === Main carousel area ===
+        // === Full-screen layout ===
         Item {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width
-            height: panel.pickerHeight
+            anchors.fill: parent
 
             opacity: panel.shouldShow ? 1.0 : 0.0
             Behavior on opacity { NumberAnimation { duration: 600; easing.type: Easing.OutQuart } }
 
-            // === ListView (ilyamiro-faithful horizontal carousel) ===
-            ListView {
-                id: view
-                anchors.fill: parent
-                spacing: 0
-                orientation: ListView.Horizontal
-                clip: false
-                cacheBuffer: 2000
-                focus: true
-
-                highlightRangeMode: ListView.StrictlyEnforceRange
-                preferredHighlightBegin: (width / 2) - ((panel.itemWidth * 1.5 + panel.itemSpacing) / 2)
-                preferredHighlightEnd: (width / 2) + ((panel.itemWidth * 1.5 + panel.itemSpacing) / 2)
-                highlightMoveDuration: panel.initialFocusSet ? 500 : 0
-
-                header: Item { width: Math.max(0, (view.width / 2) - ((panel.itemWidth * 1.5) / 2)) }
-                footer: Item { width: Math.max(0, (view.width / 2) - ((panel.itemWidth * 1.5) / 2)) }
-
-                model: Services.Wallpapers.wallpapers
-
-                add: Transition {
-                    enabled: panel.initialFocusSet
-                    ParallelAnimation {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 400; easing.type: Easing.OutCubic }
-                        NumberAnimation { property: "scale"; from: 0.5; to: 1; duration: 400; easing.type: Easing.OutBack }
-                    }
-                }
-                addDisplaced: Transition {
-                    enabled: panel.initialFocusSet
-                    NumberAnimation { property: "x"; duration: 400; easing.type: Easing.OutCubic }
-                }
-
-                // Mouse wheel navigation (ilyamiro pattern)
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.NoButton
-
-                    onWheel: (wheel) => {
-                        if (scrollThrottle.running) { wheel.accepted = true; return }
-
-                        var dx = wheel.angleDelta.x
-                        var dy = wheel.angleDelta.y
-                        var delta = Math.abs(dx) > Math.abs(dy) ? dx : dy
-                        panel.scrollAccum += delta
-
-                        if (Math.abs(panel.scrollAccum) >= panel.scrollThreshold) {
-                            panel.stepToNextValid(panel.scrollAccum > 0 ? -1 : 1)
-                            panel.scrollAccum = 0
-                            scrollThrottle.start()
-                        }
-                        wheel.accepted = true
-                    }
-                }
-
-                delegate: Item {
-                    id: delegateRoot
-
-                    readonly property string safeFileName: modelData.name || ""
-                    readonly property string filePath: modelData.path || ""
-                    readonly property bool isCurrent: ListView.isCurrentItem
-                    readonly property bool isMatch: panel.matchesFilter(safeFileName)
-
-                    readonly property real targetWidth: isCurrent ? (panel.itemWidth * 1.5) : (panel.itemWidth * 0.5)
-                    readonly property real targetHeight: isCurrent ? (panel.itemHeight + 30) : panel.itemHeight
-
-                    width: isMatch ? (targetWidth + panel.itemSpacing) : 0
-                    height: isMatch ? targetHeight : 0
-                    visible: width > 0.1
-                    opacity: isMatch ? (isCurrent ? 1.0 : 0.6) : 0.0
-                    scale: isMatch ? 1.0 : 0.5
-
-                    anchors.verticalCenter: parent ? parent.verticalCenter : undefined
-                    anchors.verticalCenterOffset: 15
-
-                    z: isCurrent ? 10 : 1
-
-                    Behavior on scale { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
-                    Behavior on width { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
-                    Behavior on height { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
-                    Behavior on opacity { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
-
-                    Item {
-                        anchors.centerIn: parent
-                        anchors.horizontalCenterOffset: ((panel.itemHeight - height) / 2) * panel.skewFactor
-                        width: parent.width > 0 ? parent.width * (delegateRoot.targetWidth / (delegateRoot.targetWidth + panel.itemSpacing)) : 0
-                        height: parent.height
-
-                        transform: Matrix4x4 {
-                            property real s: panel.skewFactor
-                            matrix: Qt.matrix4x4(1, s, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            enabled: delegateRoot.isMatch
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                view.currentIndex = index
-                                Services.Wallpapers.setWallpaper(delegateRoot.filePath)
-                            }
-                        }
-
-                        // Outer blurry border image (ilyamiro: stretch 1x1 sourceSize)
-                        Image {
-                            anchors.fill: parent
-                            source: delegateRoot.filePath ? "file://" + delegateRoot.filePath : ""
-                            sourceSize: Qt.size(1, 1)
-                            fillMode: Image.Stretch
-                            asynchronous: true
-                        }
-
-                        // Inner clipped image with inverse skew
-                        Item {
-                            anchors.fill: parent
-                            anchors.margins: panel.borderWidth
-                            clip: true
-
-                            Rectangle { anchors.fill: parent; color: "black" }
-
-                            Image {
-                                anchors.centerIn: parent
-                                anchors.horizontalCenterOffset: -50
-                                width: (panel.itemWidth * 1.5) + ((panel.itemHeight + 30) * Math.abs(panel.skewFactor)) + 50
-                                height: panel.itemHeight + 30
-                                fillMode: Image.PreserveAspectCrop
-                                source: {
-                                    if (!delegateRoot.filePath) return ""
-                                    // Use thumbnail if available, otherwise original
-                                    var thumbUrl = Services.Wallpapers.thumbDirUrl + "/" + delegateRoot.safeFileName
-                                    return thumbUrl
-                                }
-                                // Fall back to full-res if thumbnail not found
-                                onStatusChanged: {
-                                    if (status === Image.Error && delegateRoot.filePath) {
-                                        source = "file://" + delegateRoot.filePath
-                                    }
-                                }
-                                asynchronous: true
-
-                                transform: Matrix4x4 {
-                                    property real s: -panel.skewFactor
-                                    matrix: Qt.matrix4x4(1, s, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // === Floating filter bar (ilyamiro-faithful) ===
+            // === Top bar: palette toggle + themes + refresh + close ===
             Rectangle {
-                id: filterBar
+                id: topBar
                 anchors.top: parent.top
                 anchors.topMargin: panel.shouldShow ? Math.round(40 * panel.sp) : Math.round(-100 * panel.sp)
                 anchors.horizontalCenter: parent.horizontalCenter
                 z: 20
 
                 height: Math.round(56 * panel.sp)
-                width: filterRow.width + Math.round(24 * panel.sp)
+                width: topBarRow.width + Math.round(24 * panel.sp)
                 radius: Math.round(14 * panel.sp)
 
                 color: Qt.rgba(Core.Theme.bgBase.r, Core.Theme.bgBase.g, Core.Theme.bgBase.b, 0.90)
@@ -395,7 +206,7 @@ Variants {
                 Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
 
                 Row {
-                    id: filterRow
+                    id: topBarRow
                     anchors.centerIn: parent
                     spacing: Math.round(12 * panel.sp)
 
@@ -432,133 +243,91 @@ Variants {
                         }
                     }
 
-                    // === Theme selector (visible when applyTheme is ON) ===
-                    Repeater {
-                        model: Services.Wallpapers.applyTheme ? Services.Wallpapers.themes : []
+                    // Theme selector (scrollable when many themes)
+                    Flickable {
+                        width: Math.min(themeRepeaterRow.width, Math.round(600 * panel.sp))
+                        height: Math.round(36 * panel.sp)
+                        anchors.verticalCenter: parent.verticalCenter
+                        contentWidth: themeRepeaterRow.width
+                        clip: true
+                        flickableDirection: Flickable.HorizontalFlick
+                        visible: Services.Wallpapers.applyTheme
 
-                        delegate: Rectangle {
-                            required property var modelData
-                            readonly property bool isActive: modelData.name === Services.Wallpapers.activeTheme
+                        Row {
+                            id: themeRepeaterRow
+                            spacing: Math.round(8 * panel.sp)
 
-                            width: themeRow.width + Math.round(12 * panel.sp)
-                            height: Math.round(36 * panel.sp)
-                            radius: Math.round(10 * panel.sp)
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: isActive
-                                ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.2)
-                                : (themeMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
-                            border.color: isActive ? Core.Theme.accent
-                                : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
-                            border.width: isActive ? 2 : 1
+                            Repeater {
+                                model: Services.Wallpapers.themes
 
-                            Behavior on color { ColorAnimation { duration: 300 } }
-                            Behavior on border.color { ColorAnimation { duration: 300 } }
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    readonly property bool isActive: modelData.name === Services.Wallpapers.activeTheme
 
-                            Row {
-                                id: themeRow
-                                anchors.centerIn: parent
-                                spacing: Math.round(4 * panel.sp)
+                                    width: themeRow.width + Math.round(12 * panel.sp)
+                                    height: Math.round(36 * panel.sp)
+                                    radius: Math.round(10 * panel.sp)
+                                    color: isActive
+                                        ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.2)
+                                        : (themeMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
+                                    border.color: isActive ? Core.Theme.accent
+                                        : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                                    border.width: isActive ? 2 : 1
 
-                                // Theme name
-                                Text {
-                                    text: modelData.name
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    font.family: Core.Theme.fontUI
-                                    font.pixelSize: Math.round(11 * panel.sp)
-                                    font.weight: isActive ? Font.Bold : Font.Normal
-                                    color: isActive ? Core.Theme.accent : Core.Theme.fgDim
-                                }
+                                    Behavior on color { ColorAnimation { duration: 300 } }
+                                    Behavior on border.color { ColorAnimation { duration: 300 } }
 
-                                // Color palette swatches (5 key colors)
-                                Row {
-                                    spacing: Math.round(2 * panel.sp)
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Row {
+                                        id: themeRow
+                                        anchors.centerIn: parent
+                                        spacing: Math.round(4 * panel.sp)
 
-                                    Repeater {
-                                        model: {
-                                            var p = modelData.palette || {}
-                                            var colors = []
-                                            if (p.bg_normal) colors.push(p.bg_normal)
-                                            if (p.fg_focus) colors.push(p.fg_focus)
-                                            if (p.border_color_active) colors.push(p.border_color_active)
-                                            if (p.bg_urgent) colors.push(p.bg_urgent)
-                                            if (p.widget_cpu_color) colors.push(p.widget_cpu_color)
-                                            return colors.slice(0, 5)
+                                        Text {
+                                            text: modelData.name
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            font.family: Core.Theme.fontUI
+                                            font.pixelSize: Math.round(11 * panel.sp)
+                                            font.weight: isActive ? Font.Bold : Font.Normal
+                                            color: isActive ? Core.Theme.accent : Core.Theme.fgDim
                                         }
 
-                                        Rectangle {
-                                            required property string modelData
-                                            width: Math.round(10 * panel.sp)
-                                            height: width
-                                            radius: width / 2
-                                            color: modelData
-                                            border.color: Qt.rgba(1, 1, 1, 0.2)
-                                            border.width: 1
+                                        Row {
+                                            spacing: Math.round(2 * panel.sp)
+                                            anchors.verticalCenter: parent.verticalCenter
+
+                                            Repeater {
+                                                model: {
+                                                    var p = modelData.palette || {}
+                                                    var colors = []
+                                                    if (p.bg_normal) colors.push(p.bg_normal)
+                                                    if (p.fg_focus) colors.push(p.fg_focus)
+                                                    if (p.border_color_active) colors.push(p.border_color_active)
+                                                    if (p.bg_urgent) colors.push(p.bg_urgent)
+                                                    if (p.widget_cpu_color) colors.push(p.widget_cpu_color)
+                                                    return colors.slice(0, 5)
+                                                }
+
+                                                Rectangle {
+                                                    required property string modelData
+                                                    width: Math.round(10 * panel.sp)
+                                                    height: width
+                                                    radius: width / 2
+                                                    color: modelData
+                                                    border.color: Qt.rgba(1, 1, 1, 0.2)
+                                                    border.width: 1
+                                                }
+                                            }
                                         }
                                     }
+
+                                    MouseArea {
+                                        id: themeMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Services.Wallpapers.switchTheme(modelData.name)
+                                    }
                                 }
-                            }
-
-                            MouseArea {
-                                id: themeMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: Services.Wallpapers.switchTheme(modelData.name)
-                            }
-                        }
-                    }
-
-                    // Separator
-                    Rectangle {
-                        width: 1; height: Math.round(28 * panel.sp)
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
-                    }
-
-                    // Filter buttons (All + color circles)
-                    Repeater {
-                        model: panel.filterData
-
-                        delegate: Item {
-                            width: modelData.hex === "" ? Math.max(filterBtnText.contentWidth + Math.round(16 * panel.sp), Math.round(44 * panel.sp)) : Math.round(36 * panel.sp)
-                            height: Math.round(36 * panel.sp)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: Math.round(10 * panel.sp)
-                                color: modelData.hex === ""
-                                    ? (panel.currentFilter === modelData.name ? Core.Theme.surfaceContainerHigh : "transparent")
-                                    : modelData.hex
-                                border.color: panel.currentFilter === modelData.name
-                                    ? Core.Theme.fgMain
-                                    : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.4)
-                                border.width: panel.currentFilter === modelData.name ? 2 : 1
-                                scale: panel.currentFilter === modelData.name ? 1.15 : (filterBtnMa.containsMouse ? 1.08 : 1.0)
-
-                                Behavior on scale { NumberAnimation { duration: 400; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
-                                Behavior on border.color { ColorAnimation { duration: 300 } }
-
-                                // "All" or other text label
-                                Text {
-                                    id: filterBtnText
-                                    visible: modelData.hex === ""
-                                    text: modelData.label || modelData.name
-                                    anchors.centerIn: parent
-                                    color: panel.currentFilter === modelData.name ? Core.Theme.fgMain : Core.Theme.fgDim
-                                    font.family: Core.Theme.fontUI
-                                    font.pixelSize: Math.round(12 * panel.sp)
-                                    font.weight: panel.currentFilter === modelData.name ? Font.Bold : Font.Normal
-                                }
-                            }
-
-                            MouseArea {
-                                id: filterBtnMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: panel.currentFilter = modelData.name
                             }
                         }
                     }
@@ -615,6 +384,352 @@ Variants {
                             id: closePanelMa; anchors.fill: parent
                             hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: Core.Panels.close("wallpapers")
+                        }
+                    }
+                }
+            }
+
+            // === Carousel (between top bar and tag bar) ===
+            ListView {
+                id: view
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: topBar.bottom
+                anchors.topMargin: Math.round(30 * panel.sp)
+                anchors.bottom: tagBar.top
+                anchors.bottomMargin: Math.round(16 * panel.sp)
+                spacing: 0
+                orientation: ListView.Horizontal
+                clip: false
+                cacheBuffer: 2000
+                focus: true
+
+                highlightRangeMode: ListView.StrictlyEnforceRange
+                preferredHighlightBegin: (width / 2) - ((panel.itemWidth * 1.5 + panel.itemSpacing) / 2)
+                preferredHighlightEnd: (width / 2) + ((panel.itemWidth * 1.5 + panel.itemSpacing) / 2)
+                highlightMoveDuration: panel.initialFocusSet ? 500 : 0
+
+                header: Item { width: Math.max(0, (view.width / 2) - ((panel.itemWidth * 1.5) / 2)) }
+                footer: Item { width: Math.max(0, (view.width / 2) - ((panel.itemWidth * 1.5) / 2)) }
+
+                model: Services.Wallpapers.wallpapers
+
+                add: Transition {
+                    enabled: panel.initialFocusSet
+                    ParallelAnimation {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 400; easing.type: Easing.OutCubic }
+                        NumberAnimation { property: "scale"; from: 0.5; to: 1; duration: 400; easing.type: Easing.OutBack }
+                    }
+                }
+                addDisplaced: Transition {
+                    enabled: panel.initialFocusSet
+                    NumberAnimation { property: "x"; duration: 400; easing.type: Easing.OutCubic }
+                }
+
+                // Mouse wheel navigation
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.NoButton
+
+                    onWheel: (wheel) => {
+                        if (scrollThrottle.running) { wheel.accepted = true; return }
+
+                        var dx = wheel.angleDelta.x
+                        var dy = wheel.angleDelta.y
+                        var delta = Math.abs(dx) > Math.abs(dy) ? dx : dy
+                        panel.scrollAccum += delta
+
+                        if (Math.abs(panel.scrollAccum) >= panel.scrollThreshold) {
+                            panel.stepToNext(panel.scrollAccum > 0 ? -1 : 1)
+                            panel.scrollAccum = 0
+                            scrollThrottle.start()
+                        }
+                        wheel.accepted = true
+                    }
+                }
+
+                delegate: Item {
+                    id: delegateRoot
+
+                    readonly property string safeFileName: modelData.name || ""
+                    readonly property string filePath: modelData.path || ""
+                    readonly property bool isCurrent: ListView.isCurrentItem
+
+                    readonly property real targetWidth: isCurrent ? (panel.itemWidth * 1.5) : (panel.itemWidth * 0.5)
+                    readonly property real targetHeight: isCurrent ? (panel.itemHeight + 30) : panel.itemHeight
+
+                    width: targetWidth + panel.itemSpacing
+                    height: targetHeight
+                    opacity: isCurrent ? 1.0 : 0.6
+
+                    anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+                    anchors.verticalCenterOffset: 15
+
+                    z: isCurrent ? 10 : 1
+
+                    Behavior on width { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
+                    Behavior on height { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
+                    Behavior on opacity { enabled: panel.initialFocusSet; NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
+
+                    Item {
+                        anchors.centerIn: parent
+                        anchors.horizontalCenterOffset: ((panel.itemHeight - height) / 2) * panel.skewFactor
+                        width: parent.width > 0 ? parent.width * (delegateRoot.targetWidth / (delegateRoot.targetWidth + panel.itemSpacing)) : 0
+                        height: parent.height
+
+                        transform: Matrix4x4 {
+                            property real s: panel.skewFactor
+                            matrix: Qt.matrix4x4(1, s, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                view.currentIndex = index
+                                Services.Wallpapers.setWallpaper(delegateRoot.filePath)
+                            }
+                        }
+
+                        // Outer blurry border image
+                        Image {
+                            anchors.fill: parent
+                            source: delegateRoot.filePath ? "file://" + delegateRoot.filePath : ""
+                            sourceSize: Qt.size(1, 1)
+                            fillMode: Image.Stretch
+                            asynchronous: true
+                        }
+
+                        // Inner clipped image with inverse skew
+                        Item {
+                            anchors.fill: parent
+                            anchors.margins: panel.borderWidth
+                            clip: true
+
+                            Rectangle { anchors.fill: parent; color: "black" }
+
+                            Image {
+                                anchors.centerIn: parent
+                                anchors.horizontalCenterOffset: -50
+                                width: (panel.itemWidth * 1.5) + ((panel.itemHeight + 30) * Math.abs(panel.skewFactor)) + 50
+                                height: panel.itemHeight + 30
+                                fillMode: Image.PreserveAspectCrop
+                                source: {
+                                    if (!delegateRoot.filePath) return ""
+                                    var thumbUrl = Services.Wallpapers.thumbDirUrl + "/" + delegateRoot.safeFileName
+                                    return thumbUrl
+                                }
+                                onStatusChanged: {
+                                    if (status === Image.Error && delegateRoot.filePath) {
+                                        source = "file://" + delegateRoot.filePath
+                                    }
+                                }
+                                asynchronous: true
+
+                                transform: Matrix4x4 {
+                                    property real s: -panel.skewFactor
+                                    matrix: Qt.matrix4x4(1, s, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === Tag selector bar (just above filmstrip) ===
+            Rectangle {
+                id: tagBar
+                anchors.bottom: filmstrip.top
+                anchors.bottomMargin: Math.round(8 * panel.sp)
+                anchors.horizontalCenter: parent.horizontalCenter
+                z: 20
+
+                height: Math.round(44 * panel.sp)
+                width: tagRow.width + Math.round(20 * panel.sp)
+                radius: Math.round(12 * panel.sp)
+
+                color: Qt.rgba(Core.Theme.bgBase.r, Core.Theme.bgBase.g, Core.Theme.bgBase.b, 0.85)
+                border.color: Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                border.width: 1
+
+                visible: Services.Wallpapers.tagList.length > 0
+
+                opacity: panel.shouldShow ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+
+                Row {
+                    id: tagRow
+                    anchors.centerIn: parent
+                    spacing: Math.round(6 * panel.sp)
+
+                    Repeater {
+                        model: Services.Wallpapers.tagList
+
+                        delegate: Rectangle {
+                            required property string modelData
+                            readonly property bool isSelected: modelData === Services.Wallpapers.selectedTag
+                            readonly property bool hasOverride: {
+                                var ov = Services.Wallpapers.overrides
+                                return ov && ov[modelData] !== undefined
+                            }
+
+                            width: Math.round(36 * panel.sp)
+                            height: Math.round(32 * panel.sp)
+                            radius: Math.round(8 * panel.sp)
+                            color: isSelected
+                                ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.25)
+                                : (tagMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
+                            border.color: isSelected ? Core.Theme.accent
+                                : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                            border.width: isSelected ? 2 : 1
+
+                            Behavior on color { ColorAnimation { duration: 200 } }
+                            Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: modelData
+                                font.family: Core.Theme.fontUI
+                                font.pixelSize: Math.round(13 * panel.sp)
+                                font.weight: isSelected ? Font.Bold : Font.Normal
+                                color: isSelected ? Core.Theme.accent : Core.Theme.fgDim
+                            }
+
+                            // Override indicator dot
+                            Rectangle {
+                                visible: hasOverride
+                                width: Math.round(6 * panel.sp)
+                                height: width
+                                radius: width / 2
+                                color: Core.Theme.accent
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.topMargin: Math.round(2 * panel.sp)
+                                anchors.rightMargin: Math.round(2 * panel.sp)
+                            }
+
+                            MouseArea {
+                                id: tagMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Services.Wallpapers.viewTag(modelData)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // === Bottom filmstrip (folder browser) — anchored to screen bottom ===
+            Rectangle {
+                id: filmstrip
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Math.round(6 * panel.sp)
+                anchors.horizontalCenter: parent.horizontalCenter
+                z: 20
+
+                height: Math.round(90 * panel.sp)
+                width: Math.min(filmstripList.contentWidth + Math.round(20 * panel.sp), parent.width * 0.9)
+                radius: Math.round(14 * panel.sp)
+
+                color: Qt.rgba(Core.Theme.bgBase.r, Core.Theme.bgBase.g, Core.Theme.bgBase.b, 0.85)
+                border.color: Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.3)
+                border.width: 1
+
+                visible: Services.Wallpapers.browseFolders.length > 0
+
+                opacity: panel.shouldShow ? 1.0 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+
+                ListView {
+                    id: filmstripList
+                    anchors.fill: parent
+                    anchors.margins: Math.round(8 * panel.sp)
+                    orientation: ListView.Horizontal
+                    spacing: Math.round(8 * panel.sp)
+                    clip: true
+
+                    model: Services.Wallpapers.browseFolders
+
+                    delegate: Item {
+                        required property var modelData
+                        readonly property bool isActive: modelData.path === Services.Wallpapers.activeFolder
+
+                        width: Math.round(120 * panel.sp)
+                        height: filmstripList.height
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Math.round(8 * panel.sp)
+                            color: isActive
+                                ? Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.15)
+                                : (folderMa.containsMouse ? Core.Theme.surfaceContainerHigh : "transparent")
+                            border.color: isActive ? Core.Theme.accent
+                                : Qt.rgba(Core.Theme.fgMuted.r, Core.Theme.fgMuted.g, Core.Theme.fgMuted.b, 0.2)
+                            border.width: isActive ? 2 : 1
+
+                            Behavior on color { ColorAnimation { duration: 200 } }
+                            Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                            // Folder preview thumbnail (first wallpaper from scan)
+                            Image {
+                                id: folderThumb
+                                anchors.top: parent.top
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: Math.round(4 * panel.sp)
+                                height: parent.height - folderLabel.height - Math.round(10 * panel.sp)
+                                fillMode: Image.PreserveAspectCrop
+                                sourceSize: Qt.size(160, 100)
+                                asynchronous: true
+                                // Use firstImage from browse folder model if available
+                                source: modelData.firstImage ? "file://" + modelData.firstImage : ""
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: "transparent"
+                                    radius: Math.round(4 * panel.sp)
+                                    border.color: Qt.rgba(0, 0, 0, 0.1)
+                                    border.width: 1
+                                }
+                            }
+
+                            // Folder name
+                            Text {
+                                id: folderLabel
+                                anchors.bottom: parent.bottom
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottomMargin: Math.round(3 * panel.sp)
+                                text: modelData.name
+                                font.family: Core.Theme.fontUI
+                                font.pixelSize: Math.round(10 * panel.sp)
+                                font.weight: isActive ? Font.Bold : Font.Normal
+                                color: isActive ? Core.Theme.accent : Core.Theme.fgDim
+                                elide: Text.ElideRight
+                                width: parent.width - Math.round(8 * panel.sp)
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            // Theme badge
+                            Rectangle {
+                                visible: modelData.isTheme
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.topMargin: Math.round(2 * panel.sp)
+                                anchors.rightMargin: Math.round(2 * panel.sp)
+                                width: Math.round(8 * panel.sp)
+                                height: width
+                                radius: width / 2
+                                color: Core.Theme.accent
+                            }
+
+                            MouseArea {
+                                id: folderMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Services.Wallpapers.scanFolder(modelData.path)
+                            }
                         }
                     }
                 }

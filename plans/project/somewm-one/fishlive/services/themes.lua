@@ -283,8 +283,9 @@ function themes.switch(theme_name)
 	local wp_service = require("fishlive.services.wallpaper")
 	local wppath = themes_dir .. theme_name .. "/wallpapers/"
 
-	-- Update wallpaper service base path
+	-- Update wallpaper service paths (wallpapers/ and user-wallpapers/)
 	wp_service._wppath = wppath
+	wp_service._user_wppath = wppath:gsub("wallpapers/$", "user-wallpapers/")
 	-- Clear overrides (they belonged to the previous theme)
 	wp_service._overrides = {}
 

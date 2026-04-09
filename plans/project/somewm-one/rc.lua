@@ -491,7 +491,11 @@ screen.connect_signal("request::desktop_decoration", function(s)
         .. "themes/" .. themeName .. "/wallpapers/"
 
     local wp_service = require("fishlive.services.wallpaper")
-    wp_service.init(s, wppath, "1.jpg")
+    wp_service.init(s, wppath, "1.jpg", {
+        browse_dirs = {
+            os.getenv("HOME") .. "/Pictures/wallpapers",
+        }
+    })
 end)
 
 -- }}}

@@ -205,4 +205,124 @@ describe("wallpaper service", function()
 			assert.is_function(wallpaper.apply)
 		end)
 	end)
+
+	describe("get_browse_dirs_json", function()
+		it("returns empty array when no browse dirs", function()
+			assert.equals("[]", wallpaper.get_browse_dirs_json())
+		end)
+
+		it("returns JSON array of dirs", function()
+			wallpaper._browse_dirs = { "/home/user/Pictures/wallpapers", "/opt/walls" }
+			local json = wallpaper.get_browse_dirs_json()
+			assert.truthy(json:match("/home/user/Pictures/wallpapers"))
+			assert.truthy(json:match("/opt/walls"))
+			-- Should be a valid JSON array
+			assert.equals("[", json:sub(1, 1))
+			assert.equals("]", json:sub(-1))
+		end)
+
+		it("escapes special characters in paths", function()
+			wallpaper._browse_dirs = { '/path/with"quotes' }
+			local json = wallpaper.get_browse_dirs_json()
+			assert.truthy(json:match('\\"'))
+		end)
+	end)
+
+	describe("get_tags_json", function()
+		it("returns empty array when no screen focused", function()
+			assert.equals("[]", wallpaper.get_tags_json())
+		end)
+
+		it("returns tag names from focused screen", function()
+			-- Mock awful.screen.focused to return a screen with tags
+			local awful = require("awful")
+			local old_focused = awful.screen.focused
+			awful.screen.focused = function()
+				return {
+					tags = {
+						{ name = "1" }, { name = "2" }, { name = "web" },
+					}
+				}
+			end
+			local json = wallpaper.get_tags_json()
+			assert.equals('["1","2","web"]', json)
+			awful.screen.focused = old_focused
+		end)
+	end)
+
+	describe("get_theme_wallpapers_dir", function()
+		it("returns empty when not initialized", function()
+			assert.equals("", wallpaper.get_theme_wallpapers_dir())
+		end)
+
+		it("returns wppath when set", function()
+			wallpaper._wppath = "test_wallpapers/themes/default/wallpapers/"
+			assert.equals("test_wallpapers/themes/default/wallpapers/", wallpaper.get_theme_wallpapers_dir())
+		end)
+	end)
+
+	describe("_resolve 4-tier chain", function()
+		it("user-wallpapers takes priority over theme wallpapers", function()
+			wallpaper._user_wppath = "test_wallpapers/user/"
+			wallpaper._wppath = "test_wallpapers/theme/"
+			wallpaper._default = "1.jpg"
+			-- Both dirs match test_wallpapers/ pattern in mock
+			local result = wallpaper._resolve("1")
+			assert.equals("test_wallpapers/user/1.jpg", result)
+		end)
+
+		it("override takes priority over user-wallpapers", function()
+			wallpaper._overrides["1"] = "test_wallpapers/override.jpg"
+			wallpaper._user_wppath = "test_wallpapers/user/"
+			wallpaper._wppath = "test_wallpapers/theme/"
+			wallpaper._default = "1.jpg"
+			local result = wallpaper._resolve("1")
+			assert.equals("test_wallpapers/override.jpg", result)
+		end)
+
+		it("falls to default wallpapers when user-wallpapers missing", function()
+			wallpaper._user_wppath = "/nonexistent/user/"
+			wallpaper._wppath = "test_wallpapers/theme/"
+			wallpaper._default = "1.jpg"
+			local result = wallpaper._resolve("1")
+			assert.equals("test_wallpapers/theme/1.jpg", result)
+		end)
+
+		it("falls to global default when theme wallpapers missing", function()
+			wallpaper._user_wppath = "/nonexistent/user/"
+			wallpaper._wppath = "/nonexistent/theme/"
+			wallpaper._default_wppath = "test_wallpapers/default/"
+			wallpaper._default = "1.jpg"
+			local result = wallpaper._resolve("1")
+			assert.equals("test_wallpapers/default/1.jpg", result)
+		end)
+	end)
+
+	describe("save_to_theme path traversal", function()
+		it("rejects tag names with slashes", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.save_to_theme("../etc", "test_wallpapers/img.jpg"))
+		end)
+
+		it("rejects tag names with backslashes", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.save_to_theme("..\\etc", "test_wallpapers/img.jpg"))
+		end)
+
+		it("rejects dotdot tag names", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.save_to_theme("..", "test_wallpapers/img.jpg"))
+		end)
+
+		it("rejects single dot tag names", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.save_to_theme(".", "test_wallpapers/img.jpg"))
+		end)
+	end)
+
+	describe("view_tag", function()
+		it("is a public function", function()
+			assert.is_function(wallpaper.view_tag)
+		end)
+	end)
 end)
