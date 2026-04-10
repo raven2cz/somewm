@@ -289,7 +289,7 @@ function themes.switch(theme_name)
 	-- Clear overrides (they belonged to the previous theme)
 	wp_service._overrides = {}
 
-	-- Re-apply wallpapers for all screens using public apply wrapper
+	-- Re-apply wallpapers and rebuild slide cache for all screens
 	for scr in screen do
 		scr._wppath = wppath
 		local sel = scr.selected_tag
@@ -299,6 +299,18 @@ function themes.switch(theme_name)
 				-- Clear cached path so apply() doesn't skip as redundant
 				scr._current_wallpaper = nil
 				wp_service.apply(scr, wp)
+			end
+		end
+		-- Rebuild tag_slide animation cache with new theme's resolved paths
+		if root.wallpaper_cache_clear then root.wallpaper_cache_clear() end
+		if root.wallpaper_cache_preload then
+			local paths = {}
+			for _, tag in ipairs(scr.tags) do
+				local wp = wp_service._resolve(tag.name)
+				if wp then table.insert(paths, wp) end
+			end
+			if #paths > 0 then
+				root.wallpaper_cache_preload(paths, scr, { fit = "cover" })
 			end
 		end
 	end
