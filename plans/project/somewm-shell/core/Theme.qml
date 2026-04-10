@@ -173,5 +173,46 @@ Singleton {
         }
     }
 
+    // Force-reload: reads file via Process (bypasses FileView cache)
+    function forceReload() {
+        themeReadProc.running = true
+    }
+
+    Process {
+        id: themeReadProc
+        command: ["cat", Quickshell.env("HOME") + "/.config/somewm/themes/default/theme.json"]
+        stdout: StdioCollector {
+            onStreamFinished: root._applyJson(text)
+        }
+    }
+
+    function _applyJson(raw) {
+        if (!raw || !raw.trim()) return
+        try {
+            var data = JSON.parse(raw)
+            if (!data) return
+            if (data.bg_base)        root.bgBase = data.bg_base
+            if (data.bg_surface)     root.bgSurface = data.bg_surface
+            if (data.bg_overlay)     root.bgOverlay = data.bg_overlay
+            if (data.fg_main)        root.fgMain = data.fg_main
+            if (data.fg_dim)         root.fgDim = data.fg_dim
+            if (data.fg_muted)       root.fgMuted = data.fg_muted
+            if (data.accent)         root.accent = data.accent
+            if (data.accent_dim)     root.accentDim = data.accent_dim
+            if (data.urgent)         root.urgent = data.urgent
+            if (data.green)          root.green = data.green
+            if (data.font_ui)        root.fontUI = data.font_ui
+            if (data.font_mono)      root.fontMono = data.font_mono
+            if (data.widget_cpu)     root.widgetCpu = data.widget_cpu
+            if (data.widget_gpu)     root.widgetGpu = data.widget_gpu
+            if (data.widget_memory)  root.widgetMemory = data.widget_memory
+            if (data.widget_disk)    root.widgetDisk = data.widget_disk
+            if (data.widget_network) root.widgetNetwork = data.widget_network
+            if (data.widget_volume)  root.widgetVolume = data.widget_volume
+        } catch (e) {
+            console.error("Theme parse error:", e)
+        }
+    }
+
     Component.onCompleted: loadTheme()
 }

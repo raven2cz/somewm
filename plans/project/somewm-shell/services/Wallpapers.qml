@@ -400,6 +400,17 @@ Singleton {
     Process {
         id: themeExportProc
         command: [Quickshell.shellDir + "/theme-export.sh"]
+        onRunningChanged: {
+            // After export finishes, force Theme reload via Process (cat)
+            // because FileView inotify may miss the change
+            if (!running) themeReloadTimer.restart()
+        }
+    }
+
+    Timer {
+        id: themeReloadTimer
+        interval: 200
+        onTriggered: Core.Theme.forceReload()
     }
 
     // Set wallpaper for a specific tag
@@ -524,6 +535,13 @@ Singleton {
                 root.refreshThemes()
             }
         }
+    }
+
+    // IPC: external theme switching (e.g. from terminal)
+    IpcHandler {
+        target: "somewm-shell:wallpapers"
+        function switchTheme(name: string): void { root.switchTheme(name) }
+        function reloadTheme(): void             { themeExportProc.running = true }
     }
 
     Component.onCompleted: {
