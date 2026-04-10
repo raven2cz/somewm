@@ -195,7 +195,7 @@ Variants {
                 anchors.horizontalCenter: parent.horizontalCenter
                 z: 20
 
-                height: Math.round(60 * panel.sp)
+                height: Math.round(68 * panel.sp)
                 width: topBarRow.width + Math.round(24 * panel.sp)
                 radius: Math.round(14 * panel.sp)
 
@@ -215,7 +215,7 @@ Variants {
                     // Theme selector — gradient cards (scrollable)
                     Flickable {
                         width: Math.min(themeRepeaterRow.width, Math.round(800 * panel.sp))
-                        height: Math.round(48 * panel.sp)
+                        height: Math.round(56 * panel.sp)
                         anchors.verticalCenter: parent.verticalCenter
                         contentWidth: themeRepeaterRow.width
                         clip: true
@@ -232,17 +232,15 @@ Variants {
                                     required property var modelData
                                     readonly property bool isActive: modelData.name === Services.Wallpapers.activeTheme
                                     readonly property var pal: modelData.palette || {}
+                                    readonly property color accentColor: pal.border_color_active || "#ffffff"
 
-                                    width: Math.round(120 * panel.sp)
-                                    height: Math.round(48 * panel.sp)
+                                    width: Math.round(200 * panel.sp)
+                                    height: Math.round(56 * panel.sp)
                                     radius: Math.round(12 * panel.sp)
-                                    opacity: isActive ? 1.0 : (themeMa.containsMouse ? 0.95 : 0.8)
-                                    border.width: isActive ? 2 : 1
-                                    border.color: isActive
-                                        ? (pal.border_color_active || Core.Theme.accent)
-                                        : Qt.rgba(1, 1, 1, 0.15)
+                                    opacity: isActive ? 1.0 : (themeMa.containsMouse ? 1.0 : 0.8)
+                                    clip: true
 
-                                    // Gradient background from theme's own colors
+                                    // Gradient background from theme's own colors (no border — overlay handles it)
                                     gradient: Gradient {
                                         orientation: Gradient.Horizontal
                                         GradientStop { position: 0.0; color: pal.bg_normal || "#181818" }
@@ -250,14 +248,65 @@ Variants {
                                     }
 
                                     Behavior on opacity { NumberAnimation { duration: 300 } }
-                                    Behavior on border.color { ColorAnimation { duration: 300 } }
 
+                                    // Inner accent glow on hover
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: parent.radius
+                                        color: accentColor
+                                        opacity: themeMa.containsMouse && !isActive ? 0.08 : 0
+                                        Behavior on opacity { NumberAnimation { duration: 300 } }
+                                    }
+
+                                    // Logo in right part with diagonal tinted area
+                                    Item {
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
+                                        anchors.bottom: parent.bottom
+                                        width: parent.width * 0.45
+                                        clip: true
+
+                                        // Diagonal tinted background
+                                        Canvas {
+                                            anchors.fill: parent
+                                            onPaint: {
+                                                var ctx = getContext("2d")
+                                                ctx.clearRect(0, 0, width, height)
+                                                ctx.beginPath()
+                                                ctx.moveTo(width * 0.4, 0)
+                                                ctx.lineTo(width, 0)
+                                                ctx.lineTo(width, height)
+                                                ctx.lineTo(0, height)
+                                                ctx.closePath()
+                                                ctx.fillStyle = Qt.rgba(0, 0, 0, 0.18)
+                                                ctx.fill()
+                                            }
+                                        }
+
+                                        // Logo image — right-aligned, large
+                                        Image {
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: Math.round(8 * panel.sp)
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: Math.round(44 * panel.sp)
+                                            height: Math.round(44 * panel.sp)
+                                            source: (width > 0 && height > 0 && modelData.path)
+                                                ? "file://" + modelData.path + "logo.png" : ""
+                                            fillMode: Image.PreserveAspectFit
+                                            opacity: 0.75
+                                            sourceSize: Qt.size(256, 256)
+                                            asynchronous: true
+                                        }
+                                    }
+
+                                    // Text + swatches (left-aligned)
                                     Column {
-                                        anchors.centerIn: parent
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: Math.round(10 * panel.sp)
+                                        anchors.verticalCenter: parent.verticalCenter
                                         spacing: Math.round(4 * panel.sp)
 
                                         Text {
-                                            anchors.horizontalCenter: parent.horizontalCenter
                                             text: modelData.name
                                             font.family: Core.Theme.fontUI
                                             font.pixelSize: Math.round(13 * panel.sp)
@@ -266,7 +315,6 @@ Variants {
                                         }
 
                                         Row {
-                                            anchors.horizontalCenter: parent.horizontalCenter
                                             spacing: Math.round(4 * panel.sp)
 
                                             Repeater {
@@ -294,6 +342,21 @@ Variants {
                                                 }
                                             }
                                         }
+                                    }
+
+                                    // Border overlay — highest z-order, always on top
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: parent.radius
+                                        color: "transparent"
+                                        border.width: isActive || themeMa.containsMouse ? 2 : 1
+                                        border.color: isActive
+                                            ? accentColor
+                                            : themeMa.containsMouse
+                                                ? Qt.rgba(Qt.color(accentColor).r, Qt.color(accentColor).g, Qt.color(accentColor).b, 0.6)
+                                                : Qt.rgba(1, 1, 1, 0.15)
+                                        Behavior on border.color { ColorAnimation { duration: 300 } }
+                                        Behavior on border.width { NumberAnimation { duration: 200 } }
                                     }
 
                                     MouseArea {
