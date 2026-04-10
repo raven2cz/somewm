@@ -369,10 +369,29 @@ function M.init(opts)
 		awful.button({}, 3, function() awesome.emit_signal("exit_screen::close") end)
 	))
 
-	-- Signals
-	awesome.connect_signal("exit_screen::open", open)
-	awesome.connect_signal("exit_screen::close", close)
-	awesome.connect_signal("exit_screen::toggle", toggle)
+	-- Signals (register only once — guard against duplicate handlers on rebuild)
+	if not M._state._signals_connected then
+		M._state._signals_connected = true
+		awesome.connect_signal("exit_screen::open", open)
+		awesome.connect_signal("exit_screen::close", close)
+		awesome.connect_signal("exit_screen::toggle", toggle)
+
+		-- Rebuild exit screen on theme switch (fresh beautiful.* colors)
+		local broker = require("fishlive.broker")
+		broker.connect_signal("data::theme", function()
+			if M._state.exit_wb then
+				M._state.exit_wb.visible = false
+				M._state.exit_wb = nil
+			end
+			if M._state.grabber then
+				M._state.grabber:stop()
+				M._state.grabber = nil
+			end
+			M._state.initialized = false
+			M._state.cfg = {}
+			M.init()
+		end)
+	end
 end
 
 return M

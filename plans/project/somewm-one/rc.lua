@@ -197,42 +197,55 @@ end
 -- Keyboard map indicator and switcher
 mykeyboardlayout = awful.widget.keyboardlayout()
 
--- Create a textclock widget — bright time, dimmer date
-local markup = require("gears.string").xml_escape and "" or nil -- just need lgi.markup below
-mytextclock = wibox.widget.textclock(
-    '<span foreground="#b0b0b0" font="Geist 10"> %a %d %b</span>' ..
-    '<span foreground="#e2b55a" font="Geist SemiBold 11"> %H:%M </span>', 60
-)
+-- Create a textclock widget — bright time, dimmer date (dynamic theme colors)
+local function clock_format()
+    return '<span foreground="' .. (beautiful.fg_normal or "#b0b0b0")
+        .. '" font="Geist 10"> %a %d %b</span>'
+        .. '<span foreground="' .. (beautiful.border_color_active or "#e2b55a")
+        .. '" font="Geist SemiBold 11"> %H:%M </span>'
+end
+mytextclock = wibox.widget.textclock(clock_format(), 60)
 
--- Calendar popup on clock click
-local cal_popup = awful.widget.calendar_popup.month({
-    start_sunday = false,
-    long_weekdays = true,
-    style_month = {
-        bg_color     = "#181818f0",
-        border_color = "#e2b55a",
-        border_width = 1,
-        padding      = dpi(10),
-    },
-    style_header = {
-        fg_color     = "#e2b55a",
-        font         = "Geist SemiBold 12",
-    },
-    style_weekday = {
-        fg_color     = "#888888",
-        font         = "Geist 10",
-    },
-    style_normal = {
-        fg_color     = "#d4d4d4",
-        font         = "Geist 10",
-    },
-    style_focus = {
-        fg_color     = "#181818",
-        bg_color     = "#e2b55a",
-        font         = "Geist Bold 10",
-        shape        = gears.shape.circle,
-    },
-})
+-- Calendar popup on clock click (dynamic theme colors)
+local function create_cal_popup()
+    return awful.widget.calendar_popup.month({
+        start_sunday = false,
+        long_weekdays = true,
+        style_month = {
+            bg_color     = (beautiful.bg_normal or "#181818") .. "f0",
+            border_color = beautiful.border_color_active or "#e2b55a",
+            border_width = 1,
+            padding      = dpi(10),
+        },
+        style_header = {
+            fg_color     = beautiful.border_color_active or "#e2b55a",
+            font         = "Geist SemiBold 12",
+        },
+        style_weekday = {
+            fg_color     = beautiful.fg_normal or "#888888",
+            font         = "Geist 10",
+        },
+        style_normal = {
+            fg_color     = beautiful.fg_focus or "#d4d4d4",
+            font         = "Geist 10",
+        },
+        style_focus = {
+            fg_color     = beautiful.bg_normal or "#181818",
+            bg_color     = beautiful.border_color_active or "#e2b55a",
+            font         = "Geist Bold 10",
+            shape        = gears.shape.circle,
+        },
+    })
+end
+local cal_popup = create_cal_popup()
+
+-- Refresh clock + calendar on theme switch
+local broker = require("fishlive.broker")
+broker.connect_signal("data::theme", function()
+    mytextclock:set_format(clock_format())
+    cal_popup = create_cal_popup()
+end)
+
 -- Show calendar on click, on the screen where the mouse is
 mytextclock:connect_signal("button::press", function(_, _, _, button)
     if button == 1 then

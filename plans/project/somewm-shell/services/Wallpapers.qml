@@ -527,6 +527,7 @@ Singleton {
     }
 
     Component.onCompleted: {
+        themeExportProc.running = true  // sync theme.json from compositor
         refresh()
     }
 }
