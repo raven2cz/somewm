@@ -214,7 +214,7 @@ Variants {
 
                     // Theme selector — gradient cards (scrollable)
                     Flickable {
-                        width: Math.min(themeRepeaterRow.width, Math.round(1200 * panel.sp))
+                        width: Math.min(themeRepeaterRow.width, Math.round(1500 * panel.sp))
                         height: Math.round(56 * panel.sp)
                         anchors.verticalCenter: parent.verticalCenter
                         contentWidth: themeRepeaterRow.width
