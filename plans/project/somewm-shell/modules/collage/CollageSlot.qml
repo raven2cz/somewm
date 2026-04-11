@@ -28,25 +28,35 @@ Item {
 	width: _imageWidth
 	height: Math.round(maxHeight * sp)
 
-	// Computed image dimensions (preserve aspect ratio)
+	// Computed image dimensions (preserve aspect ratio, use active image)
 	property real _imageWidth: {
-		if (imgFront.sourceSize.width > 0 && imgFront.sourceSize.height > 0) {
-			var ratio = imgFront.sourceSize.width / imgFront.sourceSize.height
+		var img = _useFront ? imgFront : imgBack
+		if (img.sourceSize.width > 0 && img.sourceSize.height > 0) {
+			var ratio = img.sourceSize.width / img.sourceSize.height
 			return Math.round(height * ratio)
+		}
+		// Fallback: try the other image
+		var other = _useFront ? imgBack : imgFront
+		if (other.sourceSize.width > 0 && other.sourceSize.height > 0) {
+			var ratio2 = other.sourceSize.width / other.sourceSize.height
+			return Math.round(height * ratio2)
 		}
 		// Default aspect ratio before image loads
 		return Math.round(height * 0.667)
 	}
 
-	property string _currentPath: Services.Portraits.getImage(collectionName, imageIndex)
+	property string _currentPath: ""
 
 	// === Crossfade: two stacked images ===
 
 	property bool _useFront: true
 
-	onImageIndexChanged: {
+	onImageIndexChanged: _loadImage()
+	onCollectionNameChanged: _loadImage()
+
+	function _loadImage() {
 		var newPath = Services.Portraits.getImage(collectionName, imageIndex)
-		if (newPath === "") return
+		if (newPath === "" || newPath === _currentPath) return
 
 		if (_useFront) {
 			imgBack.source = "file://" + newPath
@@ -55,6 +65,15 @@ Item {
 		}
 		_useFront = !_useFront
 		_currentPath = newPath
+	}
+
+	Component.onCompleted: {
+		// Initial image load
+		var path = Services.Portraits.getImage(collectionName, imageIndex)
+		if (path !== "") {
+			_currentPath = path
+			imgFront.source = "file://" + path
+		}
 	}
 
 	// Shadow + rounded corners container
@@ -106,7 +125,7 @@ Item {
 			fillMode: Image.PreserveAspectFit
 			cache: true
 			sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
-			source: root._currentPath ? "file://" + root._currentPath : ""
+			source: ""  // Set imperatively by _loadImage() / onCompleted
 			opacity: root._useFront ? 1.0 : 0.0
 
 			Behavior on opacity {
@@ -156,6 +175,7 @@ Item {
 		MouseArea {
 			id: resizeMa
 			anchors.fill: parent
+			preventStealing: true
 			hoverEnabled: true
 			cursorShape: Qt.SizeFDiagCursor
 			property real _startY: 0
@@ -170,6 +190,7 @@ Item {
 				var currentY = mouse.y + resizeHandle.y + root.y
 				var delta = (currentY - _startY) / root.sp
 				var newH = Math.max(100, _startHeight + delta)
+				root.maxHeight = Math.round(newH)
 				root.slotResized(Math.round(newH))
 			}
 		}

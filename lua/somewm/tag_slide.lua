@@ -279,6 +279,8 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 
 	if dur <= 0 then
 		cancel_and_snap(s)
+		-- Ensure slideEnd is sent even with zero duration
+		awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideEnd"})
 		return
 	end
 

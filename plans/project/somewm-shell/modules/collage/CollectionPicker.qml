@@ -45,7 +45,7 @@ Item {
 	Components.GlassCard {
 		id: card
 		x: Math.min(root.anchorX, root.parent.width - root.pickerWidth - Core.Theme.spacing.md)
-		y: Math.min(root.anchorY, root.parent.height - pickerContent.implicitHeight - Core.Theme.spacing.md)
+		y: Math.min(root.anchorY, root.parent.height - height - Core.Theme.spacing.md)
 		width: root.pickerWidth
 		height: Math.min(pickerContent.implicitHeight, root.pickerMaxHeight)
 

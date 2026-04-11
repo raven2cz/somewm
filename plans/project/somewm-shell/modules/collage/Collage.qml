@@ -74,7 +74,7 @@ Variants {
 			if (tagActive && !sliding) {
 				_startFadeIn()
 			} else {
-				_showOpacity = 0.0
+				_instantHide()
 			}
 		}
 
@@ -360,6 +360,8 @@ Variants {
 			if (!layoutData[tag] || !layoutData[tag].slots[slotIndex]) return
 			layoutData[tag].slots[slotIndex][key] = value
 			_dirty = true
+			// Force binding re-evaluation for properties that depend on layoutData
+			layoutData = Object.assign({}, layoutData)
 		}
 
 		function _setCollection(name) {
@@ -367,28 +369,43 @@ Variants {
 			if (!layoutData[tag]) return
 			layoutData[tag].collection = name
 			_dirty = true
+			layoutData = Object.assign({}, layoutData)
 		}
 
 		// === Edit mode management ===
 
+		property bool _desiredOverlay: false
+
 		function _enterEditMode() {
 			panel.editMode = true
-			// Block desktop scroll-to-switch-tags
-			overlayGuardProc.command = ["somewm-client", "eval",
-				"_somewm_shell_overlay = true"]
-			overlayGuardProc.running = true
+			_pushOverlayGuard(true)
 		}
 
 		function _exitEditMode() {
 			panel.editMode = false
 			_saveLayout()
-			// Unblock desktop scroll
+			_pushOverlayGuard(false)
+		}
+
+		function _pushOverlayGuard(val) {
+			_desiredOverlay = val
+			if (overlayGuardProc.running) return  // will drain in onRunningChanged
 			overlayGuardProc.command = ["somewm-client", "eval",
-				"_somewm_shell_overlay = false"]
+				"_somewm_shell_overlay = " + (_desiredOverlay ? "true" : "false")]
 			overlayGuardProc.running = true
 		}
 
-		Process { id: overlayGuardProc }
+		Process {
+			id: overlayGuardProc
+			onRunningChanged: {
+				if (!running) {
+					// If desired state changed while running, push again
+					var current = overlayGuardProc.command[2].indexOf("true") >= 0
+					if (current !== panel._desiredOverlay)
+						panel._pushOverlayGuard(panel._desiredOverlay)
+				}
+			}
+		}
 
 		// === IPC handler ===
 
@@ -404,7 +421,8 @@ Variants {
 			}
 
 			function slideStart(newTag: string): void {
-				// Force exit edit mode if active
+				// Force exit edit mode and close picker if active
+				if (collectionPicker.shown) collectionPicker.close()
 				if (panel.editMode) panel._exitEditMode()
 				panel._instantHide()
 				panel.sliding = true
