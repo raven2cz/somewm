@@ -15,7 +15,7 @@ Item {
 	property bool editMode: false
 
 	// Signals to parent
-	signal imageIndexChanged(int newIndex)
+	signal indexPersist(int newIndex)
 	signal slotMoved(real newX, real newY)
 	signal slotResized(real newMaxHeight)
 	signal middleClicked(real globalX, real globalY)

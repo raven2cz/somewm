@@ -57,8 +57,16 @@ Variants {
 			top: true; bottom: true; left: true; right: true
 		}
 
-		// Input mask: only slot areas in view mode, full screen in edit mode
-		mask: Region { item: interactiveArea }
+		// Input mask: slot areas in view, full screen in edit/picker mode
+		mask: Region {
+			item: (panel.editMode || collectionPicker.shown)
+				? fullMask : interactiveArea
+		}
+
+		Item {
+			id: fullMask
+			anchors.fill: parent
+		}
 
 		// === Fade-in / hide logic ===
 
@@ -152,7 +160,7 @@ Variants {
 
 					// === Interaction handlers ===
 
-					onImageIndexChanged: (newIndex) => {
+					onIndexPersist: (newIndex) => {
 						_updateSlot(index, "imageIndex", newIndex)
 					}
 					onSlotMoved: (newX, newY) => {
@@ -190,6 +198,7 @@ Variants {
 								newIdx = ((newIdx % imgs.length) + imgs.length) % imgs.length
 							}
 							parent.imageIndex = newIdx
+							parent.indexPersist(newIdx)
 							saveBounce.restart()
 							wheel.accepted = true
 						}
@@ -312,12 +321,14 @@ Variants {
 		function _drainSaveQueue() {
 			if (saveProc.running || _saveQueue.length === 0) return
 			var json = _saveQueue.shift()
-			// Escape JSON for shell: encode as base64 to avoid any escaping issues
-			var b64 = Qt.btoa(json)
-			saveProc.command = ["bash", "-c",
-				"mkdir -p ~/.config/quickshell/somewm && " +
-				"echo '" + b64 + "' | base64 -d > " +
-				"~/.config/quickshell/somewm/collage-layouts.json"]
+			var layoutPath = Quickshell.env("HOME") +
+				"/.config/quickshell/somewm/collage-layouts.json"
+			// Write via python3 with sys.argv — no shell escaping needed
+			saveProc.command = ["python3", "-c",
+				"import sys,os;d=os.path.dirname(sys.argv[1]);" +
+				"os.makedirs(d,exist_ok=True);" +
+				"open(sys.argv[1],'w').write(sys.argv[2])",
+				layoutPath, json]
 			panel._ignoreFileChange = true
 			saveProc.running = true
 		}
@@ -325,6 +336,8 @@ Variants {
 			id: saveProc
 			onRunningChanged: {
 				if (!running) {
+					if (saveProc.exitCode !== 0)
+						console.error("Collage layout save failed, exit code:", saveProc.exitCode)
 					// Brief delay before re-enabling file watch to skip echo
 					ignoreTimer.restart()
 					panel._drainSaveQueue()
@@ -402,6 +415,9 @@ Variants {
 
 			function slideEnd(): void {
 				panel.sliding = false
+				// Always start fade-in — tagActive is checked by
+				// the visible binding, and activeTag may already be
+				// set by slideStart's pre-set
 				if (panel.tagActive) {
 					panel._startFadeIn()
 				}
