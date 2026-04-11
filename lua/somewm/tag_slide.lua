@@ -279,8 +279,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 
 	if dur <= 0 then
 		cancel_and_snap(s)
-		-- Ensure slideEnd is sent even with zero duration
-		awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideEnd"})
+		capi.awesome.emit_signal("tag_slide::end", s)
 		return
 	end
 
@@ -333,8 +332,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 			local ac2 = get_anim_client()
 			if ac2 then ac2._tag_slide_active = false end
 
-			-- Notify QuickShell collage that slide is done
-			awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideEnd"})
+			capi.awesome.emit_signal("tag_slide::end", s)
 
 		end
 	)
@@ -375,11 +373,9 @@ local function animated_viewidx(i, s)
 	end
 	st.new_wp = new_wp
 
-	-- 3b. Notify QuickShell collage to hide before slide starts
+	-- 3b. Signal slide start (consumers like shell overlays can hide)
 	local new_tag_name = predict_tag_name(s, i)
-	if new_tag_name then
-		awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideStart", new_tag_name})
-	end
+	capi.awesome.emit_signal("tag_slide::start", s, new_tag_name)
 
 	-- 4. Execute real tag switch.
 	--    The rc.lua tag handler fires synchronously and changes the

@@ -1466,6 +1466,18 @@ tag.connect_signal("property::selected", function(t)
             "somewm-shell:compositor", "setTag", t.name or tostring(t.index)})
     end
 end)
+
+-- Tag slide signals → QuickShell collage IPC
+awesome.connect_signal("tag_slide::start", function(_, new_tag_name)
+    if new_tag_name then
+        awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+            "somewm-shell:collage", "slideStart", new_tag_name})
+    end
+end)
+awesome.connect_signal("tag_slide::end", function()
+    awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+        "somewm-shell:collage", "slideEnd"})
+end)
 -- }}}
 
 -- SceneFX visual effects are configured via anim_client.enable() below.
