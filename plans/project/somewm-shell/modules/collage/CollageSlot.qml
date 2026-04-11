@@ -86,7 +86,7 @@ Item {
 
 	Component.onCompleted: _loadImage()
 
-	// Shadow + rounded corners container
+	// Shadow layer — renders rounded content into FBO, shadow follows shape
 	Item {
 		id: frameContainer
 		anchors.fill: parent
@@ -94,67 +94,59 @@ Item {
 		layer.enabled: true
 		layer.effect: MultiEffect {
 			shadowEnabled: true
-			shadowColor: Qt.rgba(0, 0, 0, 0.55)
-			shadowVerticalOffset: Math.round(6 * root.sp)
-			shadowHorizontalOffset: Math.round(2 * root.sp)
-			shadowBlur: 0.7
-			maskEnabled: true
-			maskThresholdMin: 0.5
-			maskSource: ShaderEffectSource {
-				sourceItem: Rectangle {
-					width: frameContainer.width
-					height: frameContainer.height
-					radius: Core.Theme.radius.lg
-				}
-			}
+			shadowColor: Qt.rgba(0, 0, 0, 0.65)
+			shadowVerticalOffset: Math.round(10 * root.sp)
+			shadowHorizontalOffset: Math.round(4 * root.sp)
+			shadowBlur: 1.0
 		}
 
-		// Back image (crossfade target)
-		Image {
-			id: imgBack
-			anchors.fill: parent
-			asynchronous: true
-			fillMode: Image.PreserveAspectFit
-			cache: true
-			sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
-			opacity: root._useFront ? 0.0 : 1.0
-
-			Behavior on opacity {
-				NumberAnimation {
-					duration: Core.Anims.duration.normal
-					easing.type: Core.Anims.ease.standard
-				}
-			}
-		}
-
-		// Front image (initial / crossfade source)
-		Image {
-			id: imgFront
-			anchors.fill: parent
-			asynchronous: true
-			fillMode: Image.PreserveAspectFit
-			cache: true
-			sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
-			source: ""  // Set imperatively by _loadImage() / onCompleted
-			opacity: root._useFront ? 1.0 : 0.0
-
-			Behavior on opacity {
-				NumberAnimation {
-					duration: Core.Anims.duration.normal
-					easing.type: Core.Anims.ease.standard
-				}
-			}
-		}
-
-		// Placeholder while loading
+		// Rounded corners via clip — images clipped to rounded rect
 		Rectangle {
+			id: clipFrame
 			anchors.fill: parent
 			radius: Core.Theme.radius.lg
-			color: Core.Theme.glass2
-			visible: imgFront.status !== Image.Ready && imgBack.status !== Image.Ready
+			clip: true
+			color: Core.Theme.glass2  // Visible as placeholder
+
+			// Back image (crossfade target)
+			Image {
+				id: imgBack
+				anchors.fill: parent
+				asynchronous: true
+				fillMode: Image.PreserveAspectCrop
+				cache: true
+				sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
+				opacity: root._useFront ? 0.0 : 1.0
+
+				Behavior on opacity {
+					NumberAnimation {
+						duration: Core.Anims.duration.normal
+						easing.type: Core.Anims.ease.standard
+					}
+				}
+			}
+
+			// Front image (initial / crossfade source)
+			Image {
+				id: imgFront
+				anchors.fill: parent
+				asynchronous: true
+				fillMode: Image.PreserveAspectCrop
+				cache: true
+				sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
+				source: ""  // Set imperatively by _loadImage() / onCompleted
+				opacity: root._useFront ? 1.0 : 0.0
+
+				Behavior on opacity {
+					NumberAnimation {
+						duration: Core.Anims.duration.normal
+						easing.type: Core.Anims.ease.standard
+					}
+				}
+			}
 		}
 
-		// Edit mode border
+		// Edit mode border (outside clip, inside shadow layer)
 		Rectangle {
 			anchors.fill: parent
 			radius: Core.Theme.radius.lg

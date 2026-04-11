@@ -103,18 +103,30 @@ Variants {
 			onTriggered: fadeInAnim.start()
 		}
 
-		NumberAnimation {
+		property real _showScale: 1.0
+
+		ParallelAnimation {
 			id: fadeInAnim
-			target: panel
-			property: "_showOpacity"
-			from: 0.0; to: 1.0
-			duration: Core.Anims.duration.normal
-			easing.type: Core.Anims.ease.decel
+			NumberAnimation {
+				target: panel
+				property: "_showOpacity"
+				from: 0.0; to: 1.0
+				duration: Core.Anims.duration.normal
+				easing.type: Core.Anims.ease.decel
+			}
+			NumberAnimation {
+				target: panel
+				property: "_showScale"
+				from: 0.96; to: 1.0
+				duration: Core.Anims.duration.normal
+				easing.type: Core.Anims.ease.decel
+			}
 		}
 
 		function _startFadeIn() {
 			fadeInAnim.stop()
 			panel._showOpacity = 0.0
+			panel._showScale = 0.96
 			fadeInDelay.restart()
 		}
 
@@ -122,6 +134,7 @@ Variants {
 			fadeInDelay.stop()
 			fadeInAnim.stop()
 			panel._showOpacity = 0.0
+			panel._showScale = 0.96
 		}
 
 		// === Interactive area (mask source) ===
@@ -147,6 +160,8 @@ Variants {
 			id: content
 			anchors.fill: parent
 			opacity: panel._showOpacity
+			scale: panel._showScale
+			transformOrigin: Item.Center
 			focus: panel.editMode
 
 			Keys.onEscapePressed: {
