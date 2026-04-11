@@ -32,7 +32,7 @@ ShellRoot {
 
     Modules.ModuleLoader {
         moduleName: "collage"
-        sourceComponent: Component { CollageModule.CollagePanel {} }
+        sourceComponent: Component { CollageModule.Collage {} }
     }
 
     // Control panel — quick volume/mic/brightness popout

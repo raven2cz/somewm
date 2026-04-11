@@ -11,5 +11,8 @@
   },
   "wallpapers": {
     "applyTheme": true
+  },
+  "collage": {
+    "portraitBasePath": ""
   }
 }

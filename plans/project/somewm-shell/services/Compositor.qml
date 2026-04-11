@@ -11,6 +11,8 @@ Singleton {
     property string focusedClient: ""
     // Set by screenProc on startup, then updated by rc.lua screen::focus signal.
     property string focusedScreenName: ""
+    // Active tag name — pushed from rc.lua on tag::selected signal
+    property string activeTag: ""
 
     // Check if a given screen is the focused one.
     // Used by all panel modules to target the correct monitor.
@@ -136,6 +138,8 @@ Singleton {
         function invalidate(): void { root._refreshState() }
         // Focused screen tracking (pushed from rc.lua screen::focus signal)
         function setScreen(name: string): void { root.focusedScreenName = name }
+        // Active tag tracking (pushed from rc.lua tag::selected signal)
+        function setTag(name: string): void { root.activeTag = name }
         // No eval() exposed! Only typed commands.
         function focus(cls: string): void { root.focusClientByClass(cls) }
         function spawn(cmd: string): void { root.spawn(cmd) }
