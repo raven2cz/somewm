@@ -164,6 +164,22 @@ end
 -- Filters hidden tags to match awful.tag.viewidx cycling behavior.
 -- Uses wallpaper service _resolve() when available, falls back to
 -- s._wppath + tag_name + ".jpg" for backwards compatibility.
+--- Predict the tag name at offset from current (for IPC signals).
+-- Reuses the same hidden-tag filtering as awful.tag.viewidx.
+local function predict_tag_name(s, offset)
+	local tags = {}
+	for _, t in ipairs(s.tags) do
+		if not t.hide then tags[#tags + 1] = t end
+	end
+	local sel = s.selected_tag
+	if not sel or #tags == 0 then return nil end
+	local idx
+	for i, t in ipairs(tags) do if t == sel then idx = i; break end end
+	if not idx then return nil end
+	local ni = ((idx - 1 + offset) % #tags) + 1
+	return tags[ni].name
+end
+
 local function predict_wp_path(s, offset)
 	-- Filter to visible (non-hidden) tags, same as awful.tag.viewidx
 	local tags = {}
@@ -263,6 +279,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 
 	if dur <= 0 then
 		cancel_and_snap(s)
+		capi.awesome.emit_signal("tag_slide::end", s)
 		return
 	end
 
@@ -314,6 +331,9 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 
 			local ac2 = get_anim_client()
 			if ac2 then ac2._tag_slide_active = false end
+
+			capi.awesome.emit_signal("tag_slide::end", s)
+
 		end
 	)
 end
@@ -352,6 +372,10 @@ local function animated_viewidx(i, s)
 		end
 	end
 	st.new_wp = new_wp
+
+	-- 3b. Signal slide start (consumers like shell overlays can hide)
+	local new_tag_name = predict_tag_name(s, i)
+	capi.awesome.emit_signal("tag_slide::start", s, new_tag_name)
 
 	-- 4. Execute real tag switch.
 	--    The rc.lua tag handler fires synchronously and changes the

@@ -71,6 +71,7 @@ REQUIRED_FILES=(
     services/Wallpapers.qml
     services/Network.qml
     services/CavaService.qml
+    services/Portraits.qml
     services/qmldir
     components/Anim.qml
     components/CAnim.qml
@@ -120,9 +121,9 @@ REQUIRED_FILES=(
     modules/wallpapers/WallpaperPanel.qml
     modules/wallpapers/WallpaperGrid.qml
     modules/wallpapers/Preview.qml
-    modules/collage/CollagePanel.qml
-    modules/collage/MasonryGrid.qml
-    modules/collage/Lightbox.qml
+    modules/collage/Collage.qml
+    modules/collage/CollageSlot.qml
+    modules/collage/CollectionPicker.qml
 )
 
 for f in "${REQUIRED_FILES[@]}"; do
@@ -194,7 +195,7 @@ for f in Theme Anims Config Panels Constants; do
 done
 
 # All services/ singletons
-for f in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService; do
+for f in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService Portraits; do
     qml="$SHELL_DIR/services/$f.qml"
     if [[ ! -f "$qml" ]]; then
         fail "services/$f.qml" "file missing"
@@ -223,7 +224,7 @@ done
 
 # services/qmldir should register all 8 singletons
 services_qmldir="$SHELL_DIR/services/qmldir"
-for name in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService; do
+for name in Compositor SystemStats Audio Media Brightness Weather Wallpapers Network CavaService Portraits; do
     if grep -q "singleton $name" "$services_qmldir" 2>/dev/null; then
         pass "services/qmldir registers singleton $name"
     else
@@ -581,13 +582,19 @@ section "16. rc.lua Shell Keybindings"
 
 RC_LUA="/home/box/git/github/somewm/plans/project/somewm-one/rc.lua"
 if [[ -f "$RC_LUA" ]]; then
-    for panel in dashboard wallpapers collage; do
+    for panel in dashboard wallpapers; do
         if grep -q "toggle $panel" "$RC_LUA"; then
             pass "rc.lua has keybinding for $panel"
         else
             fail "rc.lua" "missing keybinding for $panel"
         fi
     done
+    # Collage uses its own IPC handler (not Panels.toggle)
+    if grep -q "somewm-shell:collage editToggle" "$RC_LUA"; then
+        pass "rc.lua has keybinding for collage editToggle"
+    else
+        fail "rc.lua" "missing keybinding for collage editToggle"
+    fi
     # sidebar/media are routed through dashboard tabs via Panels.toggle()
     # Their keybindings still exist but target the old panel names which route to dashboard
     for panel in sidebar media; do
@@ -796,12 +803,14 @@ else
     fail "QuickSettings.qml" "BT state hardcoded, not initialized from system"
 fi
 
-# Lightbox fade-out animation
-if grep -q 'closeAnim.running' "$SHELL_DIR/modules/collage/Lightbox.qml"; then
-    pass "Lightbox.qml has close fade-out animation"
-else
-    fail "Lightbox.qml" "close animation never plays (visible is instant)"
-fi
+# Collage v2: old files removed (CollagePanel, MasonryGrid, Lightbox)
+for old_file in CollagePanel.qml MasonryGrid.qml Lightbox.qml; do
+    if [[ ! -f "$SHELL_DIR/modules/collage/$old_file" ]]; then
+        pass "Old collage file removed: $old_file"
+    else
+        fail "modules/collage/$old_file" "old modal prototype file should be deleted"
+    fi
+done
 
 # NotifHistory has import Quickshell (needed for IpcHandler)
 if grep -q 'import Quickshell$' "$NOTIF_FILE" || \
@@ -1175,7 +1184,6 @@ fi
 # FIX-6: Wheel event consumption on panels
 for panel_file in \
     "$SHELL_DIR/modules/wallpapers/WallpaperPanel.qml" \
-    "$SHELL_DIR/modules/collage/CollagePanel.qml" \
     "$SHELL_DIR/modules/dashboard/Dashboard.qml"; do
     panel_name="$(basename "$panel_file")"
     if grep -q 'onWheel.*wheel.accepted.*true' "$panel_file"; then
@@ -1334,6 +1342,123 @@ if [[ -f "$RC_LUA" ]]; then
     else
         fail "rc.lua" "lock screen should be Super+Shift+L (Super+L reserved for resize)"
     fi
+fi
+
+# ============================================================
+section "31. Collage v2 — Desktop Portrait Decorations"
+# ============================================================
+
+# Collage.qml uses WlrLayer.Bottom (not Overlay)
+if grep -q 'WlrLayer.Bottom' "$SHELL_DIR/modules/collage/Collage.qml"; then
+    pass "Collage.qml uses WlrLayer.Bottom"
+else
+    fail "Collage.qml" "must use WlrLayer.Bottom (above wallpaper, below windows)"
+fi
+
+# Collage.qml uses Variants for multi-screen
+if grep -q 'Variants' "$SHELL_DIR/modules/collage/Collage.qml"; then
+    pass "Collage.qml uses Variants (multi-screen support)"
+else
+    fail "Collage.qml" "missing Variants { model: Quickshell.screens }"
+fi
+
+# Collage.qml has IPC handler with slideStart/slideEnd
+if grep -q 'somewm-shell:collage' "$SHELL_DIR/modules/collage/Collage.qml" && \
+   grep -q 'function slideStart' "$SHELL_DIR/modules/collage/Collage.qml" && \
+   grep -q 'function slideEnd' "$SHELL_DIR/modules/collage/Collage.qml"; then
+    pass "Collage.qml has slideStart/slideEnd IPC handlers"
+else
+    fail "Collage.qml" "missing slide IPC handlers"
+fi
+
+# Collage.qml has editToggle IPC
+if grep -q 'function editToggle' "$SHELL_DIR/modules/collage/Collage.qml"; then
+    pass "Collage.qml has editToggle IPC handler"
+else
+    fail "Collage.qml" "missing editToggle IPC handler"
+fi
+
+# Collage.qml default keyboard focus is None (not Exclusive)
+if grep -q 'WlrKeyboardFocus.None' "$SHELL_DIR/modules/collage/Collage.qml"; then
+    pass "Collage.qml default keyboard focus is None"
+else
+    fail "Collage.qml" "must default to WlrKeyboardFocus.None (no input steal)"
+fi
+
+# CollageSlot.qml has dual-image crossfade
+if grep -q 'imgFront' "$SHELL_DIR/modules/collage/CollageSlot.qml" && \
+   grep -q 'imgBack' "$SHELL_DIR/modules/collage/CollageSlot.qml"; then
+    pass "CollageSlot.qml has dual-image crossfade"
+else
+    fail "CollageSlot.qml" "missing dual-image crossfade (imgFront/imgBack)"
+fi
+
+# CollageSlot.qml has sourceSize constraint (GPU memory optimization)
+if grep -q 'sourceSize.height' "$SHELL_DIR/modules/collage/CollageSlot.qml"; then
+    pass "CollageSlot.qml constrains sourceSize.height"
+else
+    fail "CollageSlot.qml" "missing sourceSize constraint — full-res GPU memory waste"
+fi
+
+# shell.qml references Collage (not CollagePanel)
+if grep -q 'CollageModule.Collage' "$SHELL_DIR/shell.qml" && \
+   ! grep -q 'CollagePanel' "$SHELL_DIR/shell.qml"; then
+    pass "shell.qml uses CollageModule.Collage (v2)"
+else
+    fail "shell.qml" "still references old CollagePanel"
+fi
+
+# collage/qmldir registers Collage and CollageSlot
+COLLAGE_QMLDIR="$SHELL_DIR/modules/collage/qmldir"
+if grep -q 'Collage Collage.qml' "$COLLAGE_QMLDIR" && \
+   grep -q 'CollageSlot CollageSlot.qml' "$COLLAGE_QMLDIR"; then
+    pass "collage/qmldir registers Collage and CollageSlot"
+else
+    fail "collage/qmldir" "missing Collage/CollageSlot registration"
+fi
+
+# tag_slide.lua has slideStart and slideEnd IPC calls
+TAG_SLIDE="/home/box/git/github/somewm/lua/somewm/tag_slide.lua"
+if grep -q 'slideStart' "$TAG_SLIDE" && grep -q 'slideEnd' "$TAG_SLIDE"; then
+    pass "tag_slide.lua has slideStart/slideEnd IPC"
+else
+    fail "tag_slide.lua" "missing slideStart/slideEnd IPC calls"
+fi
+
+# rc.lua has setTag IPC push on tag::selected
+if grep -q 'setTag' "$RC_LUA" && grep -q 'property::selected' "$RC_LUA"; then
+    pass "rc.lua pushes setTag IPC on tag::selected"
+else
+    fail "rc.lua" "missing setTag IPC push on tag change"
+fi
+
+# Panels.qml exclusive list does NOT include collage (collage is independent)
+if ! grep -q '"collage"' "$SHELL_DIR/core/Panels.qml"; then
+    pass "Panels.qml: collage removed from exclusive list"
+else
+    fail "Panels.qml" "collage should not be in exclusive panel list"
+fi
+
+# Portraits service has IPC handler
+if grep -q 'somewm-shell:portraits' "$SHELL_DIR/services/Portraits.qml"; then
+    pass "Portraits.qml has IPC handler"
+else
+    fail "Portraits.qml" "missing IPC handler"
+fi
+
+# config.default.json has collage section
+if python3 -c "import json; d=json.load(open('$SHELL_DIR/config.default.json')); assert 'collage' in d" 2>/dev/null; then
+    pass "config.default.json has 'collage' section"
+else
+    fail "config.default.json" "missing 'collage' section"
+fi
+
+# Compositor.qml has activeTag property and setTag function
+if grep -q 'activeTag' "$SHELL_DIR/services/Compositor.qml" && \
+   grep -q 'function setTag' "$SHELL_DIR/services/Compositor.qml"; then
+    pass "Compositor.qml has activeTag + setTag"
+else
+    fail "Compositor.qml" "missing activeTag property or setTag function"
 fi
 
 # ============================================================

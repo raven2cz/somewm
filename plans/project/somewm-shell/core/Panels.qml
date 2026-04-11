@@ -35,7 +35,7 @@ Singleton {
     // Track whether any overlay panel is open (for compositor scroll-guard)
     readonly property bool anyOverlayOpen: {
         var panels = openPanels
-        var exclusive = ["dashboard", "wallpapers", "collage", "weather", "ai-chat"]
+        var exclusive = ["dashboard", "wallpapers", "weather", "ai-chat"]
         for (var i = 0; i < exclusive.length; i++) {
             if (panels[exclusive[i]] === true) return true
         }
@@ -68,7 +68,7 @@ Singleton {
 
         var state = Object.assign({}, openPanels)
         // Mutual exclusion: close overlapping panels
-        var exclusive = ["dashboard", "wallpapers", "collage", "weather", "ai-chat"]
+        var exclusive = ["dashboard", "wallpapers", "weather", "ai-chat"]
         if (!state[name] && exclusive.indexOf(name) >= 0) {
             exclusive.forEach(function(p) { state[p] = false })
         }

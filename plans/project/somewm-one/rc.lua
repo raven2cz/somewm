@@ -587,8 +587,8 @@ awful.keyboard.append_global_keybindings({
         awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle wallpapers")
     end, { description = "toggle wallpaper picker", group = "shell" }),
     awful.key({ modkey, "Shift" }, "o", function()
-        awful.spawn("qs ipc -c somewm call somewm-shell:panels toggle collage")
-    end, { description = "toggle collage viewer", group = "shell" }),
+        awful.spawn("qs ipc -c somewm call somewm-shell:collage editToggle")
+    end, { description = "toggle collage edit mode", group = "shell" }),
     awful.key({ modkey }, "c", function()
         awful.spawn("qs ipc -c somewm call somewm-shell:panels closeAll")
     end, { description = "close all shell panels", group = "shell" }),
@@ -1456,6 +1456,27 @@ awesome.connect_signal("screen::focus", function()
             function() end
         )
     end
+end)
+
+-- Active tag tracking (for collage per-tag visibility)
+-- Only push on select (signal fires for both select and deselect)
+tag.connect_signal("property::selected", function(t)
+    if t.selected then
+        awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+            "somewm-shell:compositor", "setTag", t.name or tostring(t.index)})
+    end
+end)
+
+-- Tag slide signals → QuickShell collage IPC
+awesome.connect_signal("tag_slide::start", function(_, new_tag_name)
+    if new_tag_name then
+        awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+            "somewm-shell:collage", "slideStart", new_tag_name})
+    end
+end)
+awesome.connect_signal("tag_slide::end", function()
+    awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+        "somewm-shell:collage", "slideEnd"})
 end)
 -- }}}
 
