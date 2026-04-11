@@ -14,7 +14,9 @@ function M.create(screen, config)
 	end)
 
 	widget:buttons(awful.util.table.join(
-		awful.button({}, 1, function()
+		awful.button({}, 1, function() awful.spawn("pavucontrol") end),
+		awful.button({}, 2, function() awful.spawn("helvum") end),
+		awful.button({}, 3, function()
 			awful.spawn.with_shell("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle &")
 		end),
 		awful.button({}, 4, function()

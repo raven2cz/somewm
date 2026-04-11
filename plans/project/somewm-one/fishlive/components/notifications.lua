@@ -1,9 +1,14 @@
 ---------------------------------------------------------------------------
---- Notifications component — naughty config + display with rubato fade-in.
+--- Notifications component — naughty config + display with anim_client fade-in.
 --
 -- Auto-initializes on require (like services). All theme values are read
 -- dynamically from beautiful at display time, so colorscheme changes
 -- take effect immediately for new notifications.
+--
+-- Features:
+--   - Notification history (global _somewm_notif_history, last 50)
+--   - Shell IPC push on each notification
+--   - Fade-in animation via anim_client (gracefully skipped if unavailable)
 --
 -- Usage from rc.lua:
 --   require("fishlive.components.notifications")
@@ -13,13 +18,13 @@
 -- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
-local naughty   = require("naughty")
-local wibox     = require("wibox")
-local gears     = require("gears")
+local awful    = require("awful")
+local naughty  = require("naughty")
+local wibox    = require("wibox")
+local gears    = require("gears")
 local beautiful = require("beautiful")
-local ruled     = require("ruled")
-local rubato    = require("fishlive.rubato")
-local dpi       = beautiful.xresources.apply_dpi
+local ruled    = require("ruled")
+local dpi      = beautiful.xresources.apply_dpi
 
 local M = {}
 
@@ -34,86 +39,6 @@ local function resolve_icon(n)
 		return beautiful.notification_icon_default
 	end
 	return icon
-end
-
---- Create rubato fade-in animation for a notification popup.
-local function fade_in(popup, config)
-	config = config or {}
-	local duration = config.fade_in_duration or 0.225
-	local intro = config.fade_in_intro or 0.06
-
-	popup.opacity = 0
-
-	local anim = rubato.timed {
-		pos            = 0,
-		rate           = 60,
-		duration       = duration,
-		intro          = intro,
-		easing         = rubato.easing.quadratic,
-		clamp_position = true,
-		subscribed     = function(pos)
-			if popup.valid ~= false then
-				popup.opacity = pos
-			end
-		end,
-	}
-	anim.target = 1
-	return anim
-end
-
---- Build the widget template for notification display.
--- Reads beautiful.* dynamically (called per notification).
-local function build_widget_template(display_icon)
-	return {
-		{
-			{
-				{
-					{
-						{
-							image          = display_icon,
-							resize         = true,
-							upscale        = true,
-							forced_width   = dpi(128),
-							forced_height  = dpi(128),
-							clip_shape     = function(cr, w, h)
-								gears.shape.rounded_rect(cr, w, h, dpi(4))
-							end,
-							widget         = wibox.widget.imagebox,
-						},
-						halign = "center",
-						valign = "center",
-						widget = wibox.container.place,
-					},
-					forced_width  = dpi(128),
-					forced_height = dpi(128),
-					widget        = wibox.container.constraint,
-				},
-				{
-					{
-						{
-							align  = "left",
-							font   = beautiful.font or "sans bold 14",
-							widget = naughty.widget.title,
-						},
-						{
-							align  = "left",
-							widget = naughty.widget.message,
-						},
-						spacing = dpi(4),
-						layout  = wibox.layout.fixed.vertical,
-					},
-					top    = dpi(8),
-					widget = wibox.container.margin,
-				},
-				spacing = dpi(16),
-				layout  = wibox.layout.fixed.horizontal,
-			},
-			margins = dpi(16),
-			widget  = wibox.container.margin,
-		},
-		id     = "background_role",
-		widget = naughty.container.background,
-	}
 end
 
 ---------------------------------------------------------------------------
@@ -166,6 +91,7 @@ ruled.notification.connect_signal("request::rules", function()
 			position         = "top_middle",
 			implicit_timeout = 10,
 			icon_size        = dpi(360),
+			opacity          = 0.9,
 		}
 	}
 	ruled.notification.append_rule {
@@ -178,35 +104,91 @@ ruled.notification.connect_signal("request::rules", function()
 			position         = "top_middle",
 			implicit_timeout = 8,
 			icon_size        = dpi(360),
+			opacity          = 0.9,
 		}
 	}
 end)
 
--- Display handler with rubato fade-in
+-- Notification history for somewm-shell sidebar
+_somewm_notif_history = _somewm_notif_history or {}
+
+-- Display handler with fade-in animation
 naughty.connect_signal("request::display", function(n)
+	-- Record notification in history table (for shell sidebar)
+	table.insert(_somewm_notif_history, {
+		title    = n.title or "",
+		message  = n.message or "",
+		app_name = n.app_name or "",
+	})
+	-- Keep last 50 entries
+	while #_somewm_notif_history > 50 do
+		table.remove(_somewm_notif_history, 1)
+	end
+	-- Push refresh to somewm-shell
+	awful.spawn.with_shell("qs ipc -c somewm call somewm-shell:notifications refresh")
+
+	-- Pick icon for display without modifying n.icon (avoids signal loops)
 	local display_icon = resolve_icon(n)
 
 	local popup = naughty.layout.box {
 		notification = n,
+		border_width = 0,
+		maximum_width = dpi(700),
 		shape = function(cr, w, h)
 			gears.shape.rounded_rect(cr, w, h, dpi(6))
 		end,
-		widget_template = build_widget_template(display_icon),
+		widget_template = {
+			{
+				{
+					{
+						image          = display_icon,
+						resize         = true,
+						upscale        = true,
+						forced_width   = dpi(138),
+						forced_height  = dpi(170),
+						clip_shape     = function(cr, w, h)
+							gears.shape.rounded_rect(cr, w, h, dpi(4))
+						end,
+						widget         = wibox.widget.imagebox,
+					},
+					{
+						{
+							{
+								align  = "left",
+								markup = n.title and ('<span font="Geist SemiBold 13" color="#e2b55a">'
+									.. gears.string.xml_escape(n.title) .. '</span>') or "",
+								widget = wibox.widget.textbox,
+							},
+							{
+								align  = "left",
+								font   = "CommitMono Nerd Font Propo 12",
+								widget = naughty.widget.message,
+							},
+							spacing = dpi(6),
+							layout  = wibox.layout.fixed.vertical,
+						},
+						top    = dpi(8),
+						widget = wibox.container.margin,
+					},
+					spacing = dpi(12),
+					layout  = wibox.layout.fixed.horizontal,
+				},
+				margins = dpi(20),
+				widget  = wibox.container.margin,
+			},
+			id     = "background_role",
+			widget = naughty.container.background,
+		},
 	}
 
-	if popup then
-		-- Set opacity to 0 immediately, then start fade-in on next tick
-		-- (ensures naughty finished its popup initialization)
-		popup.opacity = 0
-		gears.timer.delayed_call(function()
-			fade_in(popup)
-		end)
+	-- FadeIn animation (uses compositor frame-synced animation engine)
+	local anim_ok, anim = pcall(require, "anim_client")
+	if anim_ok and anim.fade_notification then
+		anim.fade_notification(popup)
 	end
 end)
 
 -- Export internals for testing
 M._resolve_icon = resolve_icon
-M._fade_in = fade_in
-M._build_widget_template = build_widget_template
 
 return M
