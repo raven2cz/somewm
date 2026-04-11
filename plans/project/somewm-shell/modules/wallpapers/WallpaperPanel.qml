@@ -579,7 +579,9 @@ Variants {
 
                             Image {
                                 anchors.centerIn: parent
-                                anchors.horizontalCenterOffset: -50
+                                // Shift left to compensate inverse skew pushing bottom-right:
+                                // at y=clipHeight, image shifts right by skew*height pixels
+                                anchors.horizontalCenterOffset: -(parent.height + panel.borderWidth) * Math.abs(panel.skewFactor) / 2
                                 width: (panel.itemWidth * 1.5) + ((panel.itemHeight + 30) * Math.abs(panel.skewFactor)) + 50
                                 height: panel.itemHeight + 30
                                 fillMode: Image.PreserveAspectCrop
