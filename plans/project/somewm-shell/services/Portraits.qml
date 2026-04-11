@@ -25,6 +25,9 @@ Singleton {
 	// Loading flag
 	property bool loading: false
 
+	// Emitted when a collection's image list becomes available
+	signal collectionScanned()
+
 	// === Public API ===
 
 	function getImagesForCollection(name) {
@@ -165,6 +168,7 @@ Singleton {
 				cache[root._pendingScanCollection] = result
 				root._imageCache = cache
 				root._pendingScanCollection = ""
+				root.collectionScanned()
 
 				// Process next in queue
 				if (root._scanQueue.length > 0) {

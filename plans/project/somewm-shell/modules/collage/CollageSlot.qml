@@ -54,9 +54,25 @@ Item {
 	onImageIndexChanged: _loadImage()
 	onCollectionNameChanged: _loadImage()
 
+	// Retry image load when portrait cache updates (async scan may not be ready
+	// at Component.onCompleted time)
+	Connections {
+		target: Services.Portraits
+		function onCollectionScanned() {
+			if (root._currentPath === "") root._loadImage()
+		}
+	}
+
 	function _loadImage() {
 		var newPath = Services.Portraits.getImage(collectionName, imageIndex)
 		if (newPath === "" || newPath === _currentPath) return
+
+		// First load: set directly without crossfade
+		if (_currentPath === "") {
+			imgFront.source = "file://" + newPath
+			_currentPath = newPath
+			return
+		}
 
 		if (_useFront) {
 			imgBack.source = "file://" + newPath
@@ -67,14 +83,7 @@ Item {
 		_currentPath = newPath
 	}
 
-	Component.onCompleted: {
-		// Initial image load
-		var path = Services.Portraits.getImage(collectionName, imageIndex)
-		if (path !== "") {
-			_currentPath = path
-			imgFront.source = "file://" + path
-		}
-	}
+	Component.onCompleted: _loadImage()
 
 	// Shadow + rounded corners container
 	Item {

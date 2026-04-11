@@ -128,6 +128,15 @@ Variants {
 			id: content
 			anchors.fill: parent
 			opacity: panel._showOpacity
+			focus: panel.editMode
+
+			Keys.onEscapePressed: {
+				if (collectionPicker.shown) {
+					collectionPicker.close()
+				} else if (panel.editMode) {
+					panel._exitEditMode()
+				}
+			}
 
 			// Collage slots
 			Repeater {
@@ -266,24 +275,15 @@ Variants {
 			}
 		}
 
-		// === Keyboard handling (edit mode) ===
-
-		Keys.onEscapePressed: {
-			if (collectionPicker.shown) {
-				collectionPicker.close()
-			} else if (editMode) {
-				_exitEditMode()
-			}
-		}
-
 		// === Layout JSON persistence ===
 
 		FileView {
 			id: layoutFile
 			path: Quickshell.env("HOME") + "/.config/quickshell/somewm/collage-layouts.json"
 			watchChanges: true
-			onFileChanged: {
-				// Ignore echoes from our own saves
+			onTextChanged: {
+				// Fires on initial async load AND external file changes.
+				// Ignore echoes from our own saves.
 				if (!panel._ignoreFileChange) panel._loadLayout()
 			}
 		}
@@ -466,7 +466,6 @@ Variants {
 		}
 
 		Component.onCompleted: {
-			_loadLayout()
 			initTagProc.running = true
 		}
 	}
