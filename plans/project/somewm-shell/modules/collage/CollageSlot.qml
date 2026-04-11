@@ -58,8 +58,9 @@ Item {
 	// at Component.onCompleted time)
 	Connections {
 		target: Services.Portraits
-		function onCollectionScanned() {
-			if (root._currentPath === "") root._loadImage()
+		function onCollectionScanned(name) {
+			if (name === root.collectionName && root._currentPath === "")
+				root._loadImage()
 		}
 	}
 

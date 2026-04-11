@@ -25,8 +25,8 @@ Singleton {
 	// Loading flag
 	property bool loading: false
 
-	// Emitted when a collection's image list becomes available
-	signal collectionScanned()
+	// Emitted when a specific collection's image list becomes available
+	signal collectionScanned(string name)
 
 	// === Public API ===
 
@@ -167,8 +167,9 @@ Singleton {
 				var cache = Object.assign({}, root._imageCache)
 				cache[root._pendingScanCollection] = result
 				root._imageCache = cache
+				var scannedName = root._pendingScanCollection
 				root._pendingScanCollection = ""
-				root.collectionScanned()
+				root.collectionScanned(scannedName)
 
 				// Process next in queue
 				if (root._scanQueue.length > 0) {

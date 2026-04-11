@@ -20,30 +20,37 @@ Variants {
 		// === Layout data from JSON ===
 
 		property var layoutData: ({})
+
+		// Display tag: decoupled from Services.Compositor.activeTag
+		// to avoid Repeater rebuilds during slide animation.
+		// Updated only when it's safe (not sliding).
+		property string _displayTag: ""
+
 		property var currentTagSlots: {
-			var tag = Services.Compositor.activeTag
-			var entry = layoutData[tag]
+			var entry = layoutData[_displayTag]
 			return entry && entry.slots ? entry.slots : []
 		}
 		property string currentCollection: {
-			var tag = Services.Compositor.activeTag
-			var entry = layoutData[tag]
+			var entry = layoutData[_displayTag]
 			return entry && entry.collection ? entry.collection : ""
 		}
 
 		// === Visibility ===
 
 		property bool tagActive: {
-			var tag = Services.Compositor.activeTag
-			return tag !== "" && layoutData[tag] !== undefined
+			return _displayTag !== "" && layoutData[_displayTag] !== undefined
 		}
 		property bool sliding: false
 		property bool editMode: false
 		property real _showOpacity: 0.0
 
-		visible: (tagActive && !sliding) ||
+		// Surface is fullscreen only when showing content.
+		// When hidden, anchors are disabled to shrink the layer surface
+		// and remove compositing overhead on NVIDIA.
+		property bool _surfaceActive: (tagActive && !sliding) ||
 			fadeInAnim.running || _showOpacity > 0
 
+		visible: _surfaceActive
 		color: "transparent"
 		focusable: editMode
 
@@ -54,7 +61,8 @@ Variants {
 		WlrLayershell.exclusionMode: ExclusionMode.Ignore
 
 		anchors {
-			top: true; bottom: true; left: true; right: true
+			top: _surfaceActive; bottom: _surfaceActive
+			left: _surfaceActive; right: _surfaceActive
 		}
 
 		// Input mask: slot areas in view, full screen in edit/picker mode
@@ -66,6 +74,17 @@ Variants {
 		Item {
 			id: fullMask
 			anchors.fill: parent
+		}
+
+		// === Display tag management ===
+
+		// Sync _displayTag from activeTag when not sliding
+		Connections {
+			target: Services.Compositor
+			function onActiveTagChanged() {
+				if (!panel.sliding)
+					panel._displayTag = Services.Compositor.activeTag
+			}
 		}
 
 		// === Fade-in / hide logic ===
@@ -356,7 +375,7 @@ Variants {
 		property bool _dirty: false
 
 		function _updateSlot(slotIndex, key, value) {
-			var tag = Services.Compositor.activeTag
+			var tag = panel._displayTag
 			if (!layoutData[tag] || !layoutData[tag].slots[slotIndex]) return
 			layoutData[tag].slots[slotIndex][key] = value
 			_dirty = true
@@ -365,7 +384,7 @@ Variants {
 		}
 
 		function _setCollection(name) {
-			var tag = Services.Compositor.activeTag
+			var tag = panel._displayTag
 			if (!layoutData[tag]) return
 			layoutData[tag].collection = name
 			_dirty = true
@@ -426,16 +445,17 @@ Variants {
 				if (panel.editMode) panel._exitEditMode()
 				panel._instantHide()
 				panel.sliding = true
-				// Pre-set active tag atomically (setTag IPC is idempotent)
+				// Do NOT update _displayTag here — defer to slideEnd
+				// to avoid Repeater rebuild during slide animation.
+				// activeTag is set globally for other consumers.
 				if (newTag && newTag !== "")
 					Services.Compositor.activeTag = newTag
 			}
 
 			function slideEnd(): void {
+				// Apply the pending tag now (after slide animation completes)
+				panel._displayTag = Services.Compositor.activeTag
 				panel.sliding = false
-				// Always start fade-in — tagActive is checked by
-				// the visible binding, and activeTag may already be
-				// set by slideStart's pre-set
 				if (panel.tagActive) {
 					panel._startFadeIn()
 				}
@@ -454,6 +474,7 @@ Variants {
 					var tag = panel._ipcValue(text)
 					if (tag && tag !== "") {
 						Services.Compositor.activeTag = tag
+						panel._displayTag = tag
 					}
 				}
 			}
