@@ -139,6 +139,9 @@ theme.menu_border_width = dpi(1)
 theme.menu_submenu_icon = themes_path.."default/submenu.png"
 theme.menu_height = dpi(22)
 theme.menu_width  = dpi(180)
+theme.menu_radius       = dpi(8)
+theme.menu_item_height  = dpi(28)
+theme.menu_icon_font    = "Symbols Nerd Font Mono 14"
 
 -- Generate taglist squares:
 local taglist_square_size = dpi(4)

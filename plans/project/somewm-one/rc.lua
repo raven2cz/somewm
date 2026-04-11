@@ -122,23 +122,79 @@ awesome._set_keyboard_setting("numlock", true)
 
 -- {{{ Menu
 -- @DOC_MENU@
--- Create a launcher widget and a main menu
-myawesomemenu = {
-   { "hotkeys", function() hotkeys_popup.show_help(nil, awful.screen.focused()) end },
-   { "manual", terminal .. " -e man awesome" },
-   { "edit config", editor_cmd .. " " .. awesome.conffile },
-   { "cold restart", awesome.cold_restart },
-   { "rebuild & restart", awesome.rebuild_restart },
-   { "quit", function() awesome.quit() end },
-}
+local fmenu = require("fishlive.menu")
 
-mymainmenu = awful.menu({ items = { { "awesome", myawesomemenu, beautiful.awesome_icon },
-                                    { "open terminal", terminal }
-                                  }
-                        })
+-- Start menu
+local start_menu = fmenu.new({
+    items = {
+        { icon = "󰌌", label = "Hotkeys",
+          on_activate = function() hotkeys_popup.show_help(nil, awful.screen.focused()) end },
+        { icon = "󰏫", label = "Edit Config",
+          on_activate = function() awful.spawn(editor_cmd .. " " .. awesome.conffile) end },
+        { icon = "󰆍", label = "Terminal",
+          on_activate = function() awful.spawn(terminal) end },
+        { separator = true },
+        { icon = "󰑓", label = "Rebuild & Restart",
+          on_activate = function() awesome.rebuild_restart() end },
+        { icon = "󰗼", label = "Quit",
+          on_activate = function() awesome.quit() end },
+    },
+    close_on = "escape",
+    placement = "under_mouse",
+    width = dpi(220),
+})
 
-mylauncher = awful.widget.launcher({ image = beautiful.awesome_icon,
-                                     menu = mymainmenu })
+-- Desktop right-click context menu
+local desktop_menu = fmenu.new({
+    items = {
+        { icon = "󰆍", label = "Terminal",
+          on_activate = function() awful.spawn(terminal) end },
+        { icon = "󰝰", label = "File Manager",
+          on_activate = function() awful.spawn("dolphin") end },
+        { icon = "󰖟", label = "Browser",
+          on_activate = function() awful.spawn("firefox-developer-edition") end },
+        { separator = true },
+        { icon = "󰹑", label = "Screenshot",
+          on_activate = function()
+              awful.spawn.with_shell("grim ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png")
+          end },
+        { icon = "󰩬", label = "Screenshot (select)",
+          on_activate = function()
+              awful.spawn.with_shell("grim -g \"$(slurp)\" ~/Pictures/screenshot-$(date +%Y%m%d-%H%M%S).png")
+          end },
+        { separator = true },
+        { icon = "󰑊", label = "Start Recording",
+          on_activate = function()
+              -- Uses same logic as Super+Alt+r keybinding
+              local pid_file = "/tmp/gpu-screen-recorder.pid"
+              local f = io.open(pid_file, "r")
+              if f then f:close()
+                  awful.spawn.with_shell("kill -INT $(cat " .. pid_file .. ") && rm -f " .. pid_file)
+                  naughty.notify({ title = "Recording", text = "Stopped & saved", timeout = 3 })
+              else
+                  local outfile = os.getenv("HOME") .. "/Videos/rec-" .. os.date("%Y%m%d-%H%M%S") .. ".mkv"
+                  awful.spawn.with_shell(
+                      "gpu-screen-recorder -w DP-3 -f 144 -k hevc"
+                      .. " -ac opus -a default_output"
+                      .. " -o " .. outfile
+                      .. " & echo $! > " .. pid_file)
+                  naughty.notify({ title = "Recording", text = "Started: " .. outfile, timeout = 3 })
+              end
+          end },
+        { separator = true },
+        { icon = "󰜉", label = "Restart", on_activate = awesome.restart },
+        { icon = "󰗼", label = "Quit", on_activate = awesome.quit },
+    },
+    close_on = "escape",
+    placement = "under_mouse",
+    width = dpi(260),
+})
+
+-- Launcher icon (original awesome logo) — opens start menu on click
+mylauncher = awful.widget.launcher({
+    image = beautiful.awesome_icon,
+    menu = start_menu,
+})
 
 -- Menubar configuration
 menubar.utils.terminal = terminal -- Set the terminal for applications that require it
@@ -367,48 +423,6 @@ screen.connect_signal("request::desktop_decoration", function(s)
     -- Create a promptbox for each screen
     s.mypromptbox = awful.widget.prompt()
 
-    -- Layout selector popup (click layoutbox to pick layout)
-    local layout_popup = awful.popup {
-        widget = awful.widget.layoutlist {
-            screen = s,
-            base_layout = wibox.layout.flex.vertical,
-            style = {
-                font            = "Geist 10",
-                bg_normal       = "#181818",
-                bg_selected     = "#e2b55a",
-                fg_normal       = "#d4d4d4",
-                fg_selected     = "#181818",
-            },
-        },
-        bg           = "#181818f0",
-        border_color = "#c49a3a",
-        border_width = 1,
-        placement    = function(d)
-            awful.placement.under_mouse(d)
-            awful.placement.no_offscreen(d)
-        end,
-        shape        = function(cr, w, h) gears.shape.rounded_rect(cr, w, h, dpi(4)) end,
-        maximum_width  = dpi(200),
-        maximum_height = dpi(500),
-        visible      = false,
-        ontop        = true,
-    }
-    -- Hide on mouse leave
-    layout_popup:connect_signal("mouse::leave", function() layout_popup.visible = false end)
-
-    -- Create layoutbox with popup on click
-    s.mylayoutbox = awful.widget.layoutbox {
-        screen  = s,
-        buttons = {
-            awful.button({ }, 1, function ()
-                layout_popup.screen = awful.screen.focused()
-                layout_popup.visible = not layout_popup.visible
-            end),
-            awful.button({ }, 4, function () awful.layout.inc(-1) end),
-            awful.button({ }, 5, function () awful.layout.inc( 1) end),
-        }
-    }
-
     -- Create a taglist widget
     s.mytaglist = awful.widget.taglist {
         screen  = s,
@@ -520,7 +534,7 @@ _somewm_shell_overlay = false
 -- {{{ Mouse bindings
 -- @DOC_ROOT_BUTTONS@
 awful.mouse.append_global_mousebindings({
-    -- right-click menu removed (clean desktop)
+    awful.button({ }, 3, function() desktop_menu:toggle() end),
     awful.button({ }, 4, function() if not _somewm_shell_overlay then awful.tag.viewprev() end end),
     awful.button({ }, 5, function() if not _somewm_shell_overlay then awful.tag.viewnext() end end),
     awful.button({ modkey, altkey }, 4, function()
@@ -541,7 +555,7 @@ awful.keyboard.append_global_keybindings({
               {description="show help", group="awesome"}),
     awful.key({ modkey }, "s", function() awful.spawn("rofi -show-icons -modi window,drun -show drun") end,
               { description = "show rofi drun", group = "launcher" }),              
-    awful.key({ modkey,           }, "w", function () mymainmenu:show() end,
+    awful.key({ modkey,           }, "w", function () start_menu:toggle() end,
               {description = "show main menu", group = "awesome"}),
     awful.key({ modkey, "Shift"   }, "r", awesome.restart,
               {description = "reload configuration", group = "awesome"}),
