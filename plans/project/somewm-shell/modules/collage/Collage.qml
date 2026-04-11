@@ -127,6 +127,7 @@ Variants {
 				model: panel.currentTagSlots
 
 				CollageSlot {
+					id: slotDelegate
 					required property var modelData
 					required property int index
 
@@ -137,13 +138,14 @@ Variants {
 					collectionName: panel.currentCollection
 					editMode: panel.editMode
 
-					// View mode: scroll area mask
+					// View mode: scroll area mask (matches slot position + size)
 					Rectangle {
+						id: slotMask
 						parent: interactiveArea
-						x: Math.round((modelData.x || 0) * panel.sp)
-						y: Math.round((modelData.y || 0) * panel.sp)
-						width: parent.parent ? parent.parent.width : 0
-						height: Math.round((modelData.maxHeight || 400) * panel.sp)
+						x: slotDelegate.x
+						y: slotDelegate.y
+						width: slotDelegate.width
+						height: slotDelegate.height
 						color: "transparent"
 						visible: !panel.editMode
 					}
@@ -167,7 +169,9 @@ Variants {
 						var path = Services.Portraits.getImage(
 							panel.currentCollection, modelData.imageIndex || 0)
 						if (path) {
-							Services.Compositor.spawn("qimgv '" + path + "'")
+							// Sanitize path: escape single quotes for shell
+							var safePath = path.replace(/'/g, "'\\''")
+							Services.Compositor.spawn("qimgv '" + safePath + "'")
 						}
 					}
 
@@ -186,7 +190,6 @@ Variants {
 								newIdx = ((newIdx % imgs.length) + imgs.length) % imgs.length
 							}
 							parent.imageIndex = newIdx
-							parent.imageIndexChanged(newIdx)
 							saveBounce.restart()
 							wheel.accepted = true
 						}
@@ -270,8 +273,13 @@ Variants {
 			id: layoutFile
 			path: Quickshell.env("HOME") + "/.config/quickshell/somewm/collage-layouts.json"
 			watchChanges: true
-			onFileChanged: panel._loadLayout()
+			onFileChanged: {
+				// Ignore echoes from our own saves
+				if (!panel._ignoreFileChange) panel._loadLayout()
+			}
 		}
+
+		property bool _ignoreFileChange: false
 
 		function _loadLayout() {
 			var raw = layoutFile.text()
@@ -304,35 +312,48 @@ Variants {
 		function _drainSaveQueue() {
 			if (saveProc.running || _saveQueue.length === 0) return
 			var json = _saveQueue.shift()
+			// Escape JSON for shell: encode as base64 to avoid any escaping issues
+			var b64 = Qt.btoa(json)
 			saveProc.command = ["bash", "-c",
 				"mkdir -p ~/.config/quickshell/somewm && " +
-				"printf '%s' '" + json.replace(/'/g, "'\\''") + "' > " +
+				"echo '" + b64 + "' | base64 -d > " +
 				"~/.config/quickshell/somewm/collage-layouts.json"]
+			panel._ignoreFileChange = true
 			saveProc.running = true
 		}
 		Process {
 			id: saveProc
-			onRunningChanged: if (!running) panel._drainSaveQueue()
+			onRunningChanged: {
+				if (!running) {
+					// Brief delay before re-enabling file watch to skip echo
+					ignoreTimer.restart()
+					panel._drainSaveQueue()
+				}
+			}
+		}
+		Timer {
+			id: ignoreTimer
+			interval: 500
+			onTriggered: panel._ignoreFileChange = false
 		}
 
 		// === Slot data mutation helpers ===
+		// Mutate in place — don't reassign layoutData (avoids Repeater rebuild).
+		// The _dirty flag ensures save captures the latest state.
+		property bool _dirty: false
 
 		function _updateSlot(slotIndex, key, value) {
 			var tag = Services.Compositor.activeTag
-			if (!layoutData[tag]) return
-			var data = JSON.parse(JSON.stringify(layoutData))
-			if (data[tag].slots[slotIndex]) {
-				data[tag].slots[slotIndex][key] = value
-			}
-			layoutData = data
+			if (!layoutData[tag] || !layoutData[tag].slots[slotIndex]) return
+			layoutData[tag].slots[slotIndex][key] = value
+			_dirty = true
 		}
 
 		function _setCollection(name) {
 			var tag = Services.Compositor.activeTag
 			if (!layoutData[tag]) return
-			var data = JSON.parse(JSON.stringify(layoutData))
-			data[tag].collection = name
-			layoutData = data
+			layoutData[tag].collection = name
+			_dirty = true
 		}
 
 		// === Edit mode management ===
@@ -374,6 +395,9 @@ Variants {
 				if (panel.editMode) panel._exitEditMode()
 				panel._instantHide()
 				panel.sliding = true
+				// Pre-set active tag atomically (setTag IPC is idempotent)
+				if (newTag && newTag !== "")
+					Services.Compositor.activeTag = newTag
 			}
 
 			function slideEnd(): void {

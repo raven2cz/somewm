@@ -89,10 +89,11 @@ Singleton {
 	// Count images per collection via a single find call
 	function _countProc_start() {
 		countProc.command = ["bash", "-c",
-			"for d in " + root.basePath + "/*/; do " +
+			"for d in \"$1\"/*/; do " +
 			"n=$(find -L \"$d\" -maxdepth 1 -type f " +
 			"\\( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' -o -name '*.webp' \\) " +
-			"| wc -l); echo \"$(basename \"$d\") $n\"; done"]
+			"| wc -l); echo \"$(basename \"$d\") $n\"; done",
+			"--", root.basePath]
 		countProc.running = true
 	}
 
@@ -123,10 +124,24 @@ Singleton {
 	}
 
 	// === Per-collection image scanning ===
-
+	// Queue to handle one scan at a time (Process is not reentrant)
+	property var _scanQueue: []
 	property string _pendingScanCollection: ""
 
 	function _scanCollection(name) {
+		// Already cached or already queued
+		if (_imageCache[name]) return
+		if (_pendingScanCollection === name) return
+		if (_scanQueue.indexOf(name) >= 0) return
+
+		if (imageScanProc.running) {
+			_scanQueue.push(name)
+			return
+		}
+		_startScan(name)
+	}
+
+	function _startScan(name) {
 		var colPath = root.basePath + "/" + name
 		root._pendingScanCollection = name
 		imageScanProc.command = ["find", "-L", colPath,
@@ -149,6 +164,13 @@ Singleton {
 				var cache = Object.assign({}, root._imageCache)
 				cache[root._pendingScanCollection] = result
 				root._imageCache = cache
+				root._pendingScanCollection = ""
+
+				// Process next in queue
+				if (root._scanQueue.length > 0) {
+					var next = root._scanQueue.shift()
+					root._startScan(next)
+				}
 			}
 		}
 	}

@@ -1462,10 +1462,8 @@ end)
 -- Only push on select (signal fires for both select and deselect)
 tag.connect_signal("property::selected", function(t)
     if t.selected then
-        awful.spawn.easy_async(
-            "qs ipc -c somewm call somewm-shell:compositor setTag " .. (t.name or tostring(t.index)),
-            function() end
-        )
+        awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+            "somewm-shell:compositor", "setTag", t.name or tostring(t.index)})
     end
 end)
 -- }}}

@@ -332,7 +332,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 			if ac2 then ac2._tag_slide_active = false end
 
 			-- Notify QuickShell collage that slide is done
-			awful.spawn("qs ipc -c somewm call somewm-shell:collage slideEnd")
+			awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideEnd"})
 
 		end
 	)
@@ -376,7 +376,7 @@ local function animated_viewidx(i, s)
 	-- 3b. Notify QuickShell collage to hide before slide starts
 	local new_tag_name = predict_tag_name(s, i)
 	if new_tag_name then
-		awful.spawn("qs ipc -c somewm call somewm-shell:collage slideStart " .. new_tag_name)
+		awful.spawn({"qs", "ipc", "-c", "somewm", "call", "somewm-shell:collage", "slideStart", new_tag_name})
 	end
 
 	-- 4. Execute real tag switch.
