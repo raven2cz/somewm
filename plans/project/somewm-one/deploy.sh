@@ -22,6 +22,12 @@ if [[ -f "$TARGET/rc.lua" ]]; then
     cp "$TARGET/rc.lua" "$TARGET/rc.lua.bak"
 fi
 
+# Snapshot pre-deploy state for crash diagnosis
+SNAPSHOT_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/somewm-snapshot.sh"
+if [[ -x "$SNAPSHOT_SCRIPT" ]]; then
+    "$SNAPSHOT_SCRIPT" && echo "Pre-deploy snapshot saved" || true
+fi
+
 # Sync (exclude deploy.sh itself)
 rsync -av --delete --exclude 'deploy.sh' --exclude 'themes/*/user-wallpapers/' "$SCRIPT_DIR/" "$TARGET/"
 

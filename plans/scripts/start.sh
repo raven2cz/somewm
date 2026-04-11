@@ -2,6 +2,9 @@
 # Start somewm with debug logging
 mkdir -p ~/.local/log
 
+# Rotate previous session log (keep last 5)
+"$(dirname "$0")/somewm-log-rotate.sh" 2>/dev/null || true
+
 # Clean stale Quickshell instance locks from previous sessions.
 # Without this, awful.spawn.once() may think QS is already running
 # after a compositor crash/restart.
