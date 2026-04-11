@@ -86,7 +86,59 @@ Item {
 
 	Component.onCompleted: _loadImage()
 
-	// Shadow layer — renders rounded content into FBO, shadow follows shape
+	// Crossfade container (hidden, used as source for single MultiEffect mask)
+	Item {
+		id: crossfadeSource
+		anchors.fill: parent
+		visible: false
+		layer.enabled: true
+
+		Image {
+			id: imgBack
+			anchors.fill: parent
+			asynchronous: true
+			fillMode: Image.PreserveAspectCrop
+			cache: true
+			sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
+			opacity: root._useFront ? 0.0 : 1.0
+
+			Behavior on opacity {
+				NumberAnimation {
+					duration: Core.Anims.duration.normal
+					easing.type: Core.Anims.ease.standard
+				}
+			}
+		}
+
+		Image {
+			id: imgFront
+			anchors.fill: parent
+			asynchronous: true
+			fillMode: Image.PreserveAspectCrop
+			cache: true
+			sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
+			source: ""  // Set imperatively by _loadImage()
+			opacity: root._useFront ? 1.0 : 0.0
+
+			Behavior on opacity {
+				NumberAnimation {
+					duration: Core.Anims.duration.normal
+					easing.type: Core.Anims.ease.standard
+				}
+			}
+		}
+	}
+
+	// Rounded corner mask
+	Item {
+		id: roundedMask
+		anchors.fill: parent
+		visible: false
+		layer.enabled: true
+		Rectangle { anchors.fill: parent; radius: Core.Theme.radius.lg }
+	}
+
+	// Shadow + rounded corners
 	Item {
 		id: frameContainer
 		anchors.fill: parent
@@ -95,58 +147,31 @@ Item {
 		layer.effect: MultiEffect {
 			shadowEnabled: true
 			shadowColor: Qt.rgba(0, 0, 0, 0.65)
-			shadowVerticalOffset: Math.round(10 * root.sp)
-			shadowHorizontalOffset: Math.round(4 * root.sp)
+			shadowVerticalOffset: Math.round(14 * root.sp)
+			shadowHorizontalOffset: Math.round(6 * root.sp)
 			shadowBlur: 1.0
 		}
 
-		// Rounded corners via clip — images clipped to rounded rect
+		// Placeholder while active image loads
 		Rectangle {
-			id: clipFrame
 			anchors.fill: parent
 			radius: Core.Theme.radius.lg
-			clip: true
-			color: Core.Theme.glass2  // Visible as placeholder
-
-			// Back image (crossfade target)
-			Image {
-				id: imgBack
-				anchors.fill: parent
-				asynchronous: true
-				fillMode: Image.PreserveAspectCrop
-				cache: true
-				sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
-				opacity: root._useFront ? 0.0 : 1.0
-
-				Behavior on opacity {
-					NumberAnimation {
-						duration: Core.Anims.duration.normal
-						easing.type: Core.Anims.ease.standard
-					}
-				}
-			}
-
-			// Front image (initial / crossfade source)
-			Image {
-				id: imgFront
-				anchors.fill: parent
-				asynchronous: true
-				fillMode: Image.PreserveAspectCrop
-				cache: true
-				sourceSize.height: Math.round(root.maxHeight * root.sp * 2)
-				source: ""  // Set imperatively by _loadImage() / onCompleted
-				opacity: root._useFront ? 1.0 : 0.0
-
-				Behavior on opacity {
-					NumberAnimation {
-						duration: Core.Anims.duration.normal
-						easing.type: Core.Anims.ease.standard
-					}
-				}
+			color: Core.Theme.glass2
+			visible: {
+				var active = root._useFront ? imgFront : imgBack
+				return active.status !== Image.Ready
 			}
 		}
 
-		// Edit mode border (outside clip, inside shadow layer)
+		// Single masked output (crossfade happens inside source)
+		MultiEffect {
+			anchors.fill: parent
+			source: crossfadeSource
+			maskEnabled: true
+			maskSource: roundedMask
+		}
+
+		// Edit mode border
 		Rectangle {
 			anchors.fill: parent
 			radius: Core.Theme.radius.lg
