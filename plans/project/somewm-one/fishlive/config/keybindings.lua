@@ -27,6 +27,14 @@ local recording = require("fishlive.config.recording")
 
 local M = {}
 
+--- Register all global and client keybindings + mouse bindings.
+-- @tparam table args
+-- @tparam string args.modkey Primary modifier key (e.g. "Mod4")
+-- @tparam string args.altkey Alt modifier key (e.g. "Mod1")
+-- @tparam string args.terminal Terminal emulator command
+-- @tparam string args.editor_cmd Editor launch command
+-- @tparam table args.start_menu fishlive.menu instance for Super+W
+-- @tparam table args.desktop_menu fishlive.menu instance for right-click
 function M.setup(args)
 	local modkey = args.modkey
 	local altkey = args.altkey
@@ -36,8 +44,9 @@ function M.setup(args)
 	local desktop_menu = args.desktop_menu
 
 	-- somewm-shell overlay state (set via IPC from Quickshell Panels.qml)
-	-- When true, desktop scroll-to-switch-tags is suppressed
-	_somewm_shell_overlay = false
+	-- When true, desktop scroll-to-switch-tags is suppressed.
+	-- Stored on awesome global to avoid polluting _G.
+	awesome._shell_overlay = awesome._shell_overlay or false
 
 	---------------------------------------------------------------------------
 	-- Mouse bindings
@@ -45,8 +54,8 @@ function M.setup(args)
 
 	awful.mouse.append_global_mousebindings({
 		awful.button({ }, 3, function() desktop_menu:toggle() end),
-		awful.button({ }, 4, function() if not _somewm_shell_overlay then awful.tag.viewprev() end end),
-		awful.button({ }, 5, function() if not _somewm_shell_overlay then awful.tag.viewnext() end end),
+		awful.button({ }, 4, function() if not awesome._shell_overlay then awful.tag.viewprev() end end),
+		awful.button({ }, 5, function() if not awesome._shell_overlay then awful.tag.viewnext() end end),
 		awful.button({ modkey, altkey }, 4, function()
 			awful.spawn("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
 		end),

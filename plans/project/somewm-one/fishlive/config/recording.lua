@@ -2,7 +2,7 @@
 --- Screen recording — gpu-screen-recorder start/stop/pause helpers.
 --
 -- Shared by keybindings (Super+Alt+R) and desktop menu.
--- Uses DP-3 (Dell 4K@144Hz). Output: ~/Videos/rec-YYYYMMDD-HHMMSS.mkv
+-- Auto-detects focused output name. Output: ~/Videos/rec-YYYYMMDD-HHMMSS.mkv
 --
 -- @module fishlive.config.recording
 -- @author Antonin Fischer (raven2cz) & Claude
@@ -15,6 +15,12 @@ local naughty = require("naughty")
 local M = {}
 
 local pid_file = "/tmp/gpu-screen-recorder.pid"
+
+--- Get the output name (e.g. "DP-3") of the currently focused screen.
+local function focused_output()
+	local s = awful.screen.focused()
+	return s and s.output and s.output.name or "screen"
+end
 
 function M.is_running()
 	local f = io.open(pid_file, "r")
@@ -32,10 +38,11 @@ function M.toggle()
 		awful.spawn.with_shell("kill -INT $(cat " .. pid_file .. ") && rm -f " .. pid_file)
 		naughty.notify({ title = "Recording", text = "Stopped & saved", timeout = 3 })
 	else
+		local output = focused_output()
 		local outfile = os.getenv("HOME") .. "/Videos/rec-" .. os.date("%Y%m%d-%H%M%S") .. ".mkv"
 		awful.spawn.with_shell(
 			"gpu-screen-recorder"
-			.. " -w DP-3"
+			.. " -w " .. output
 			.. " -f 144"
 			.. " -k hevc"
 			.. " -q very_high"
@@ -49,7 +56,7 @@ function M.toggle()
 			.. " -o " .. outfile
 			.. " & echo $! > " .. pid_file
 		)
-		naughty.notify({ title = "Recording", text = "Started: " .. outfile, timeout = 3 })
+		naughty.notify({ title = "Recording", text = "Started (" .. output .. "): " .. outfile, timeout = 3 })
 	end
 end
 

@@ -31,8 +31,8 @@ Item {
         var count = root.notifications.length
         var luaIdx = count - idx
         dismissProc.command = ["somewm-client", "eval",
-            "if _somewm_notif_history and #_somewm_notif_history >= " + luaIdx +
-            " then table.remove(_somewm_notif_history, " + luaIdx + ") end; return 'ok'"]
+            "if awesome._notif_history and #awesome._notif_history >= " + luaIdx +
+            " then table.remove(awesome._notif_history, " + luaIdx + ") end; return 'ok'"]
         dismissProc.running = true
     }
 
@@ -51,8 +51,8 @@ Item {
             "local function esc(s) return s:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"'):gsub('\\n','\\\\n'):gsub('\\t','\\\\t'):gsub('\\r','') end " +
             "local json='[' local sep='' " +
             "local all = {} " +
-            "if _somewm_notif_history and #_somewm_notif_history > 0 then " +
-            "for _,v in ipairs(_somewm_notif_history) do all[#all+1]=v end " +
+            "if awesome._notif_history and #awesome._notif_history > 0 then " +
+            "for _,v in ipairs(awesome._notif_history) do all[#all+1]=v end " +
             "else " +
             "for _,v in ipairs(n.active or {}) do all[#all+1]=v end " +
             "end " +
@@ -80,7 +80,7 @@ Item {
     Process {
         id: clearProc
         command: ["somewm-client", "eval",
-            "_somewm_notif_history = {}; " +
+            "awesome._notif_history = {}; " +
             "for _,n in ipairs(require('naughty').active or {}) do n:destroy() end; return 'ok'"]
         onRunningChanged: {
             if (!running) {

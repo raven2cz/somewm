@@ -6,7 +6,7 @@
 -- take effect immediately for new notifications.
 --
 -- Features:
---   - Notification history (global _somewm_notif_history, last 50)
+--   - Notification history (global awesome._notif_history, last 50)
 --   - Shell IPC push on each notification
 --   - Fade-in animation via anim_client (gracefully skipped if unavailable)
 --
@@ -109,20 +109,20 @@ ruled.notification.connect_signal("request::rules", function()
 	}
 end)
 
--- Notification history for somewm-shell sidebar
-_somewm_notif_history = _somewm_notif_history or {}
+-- Notification history for somewm-shell sidebar (stored on awesome to avoid _G pollution)
+awesome._notif_history = awesome._notif_history or {}
 
 -- Display handler with fade-in animation
 naughty.connect_signal("request::display", function(n)
 	-- Record notification in history table (for shell sidebar)
-	table.insert(_somewm_notif_history, {
+	table.insert(awesome._notif_history, {
 		title    = n.title or "",
 		message  = n.message or "",
 		app_name = n.app_name or "",
 	})
 	-- Keep last 50 entries
-	while #_somewm_notif_history > 50 do
-		table.remove(_somewm_notif_history, 1)
+	while #awesome._notif_history > 50 do
+		table.remove(awesome._notif_history, 1)
 	end
 	-- Push refresh to somewm-shell
 	awful.spawn.with_shell("qs ipc -c somewm call somewm-shell:notifications refresh")

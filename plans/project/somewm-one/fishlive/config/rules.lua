@@ -15,6 +15,8 @@
 
 local awful = require("awful")
 local ruled = require("ruled")
+local lgi_ok, lgi = pcall(require, "lgi")
+local cairo = lgi_ok and lgi.cairo or _G.cairo
 
 ruled.client.connect_signal("request::rules", function()
 	-- All clients will match this rule.

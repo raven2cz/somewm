@@ -26,12 +26,16 @@ local factory = require("fishlive.factory")
 
 local M = {}
 
--- Default wibar right-side components (theme can override via beautiful)
+-- Default wibar right-side components (theme can override via beautiful.wibar_components)
 local default_components = {
 	"keyboard", "updates", "cpu", "gpu", "memory",
 	"disk", "network", "volume", "systray", "clock", "layoutbox",
 }
 
+--- Set up screen decorations: tags, taglist, tasklist, wibar, wallpaper.
+-- @tparam table args
+-- @tparam string args.modkey Primary modifier key (default "Mod4")
+-- @tparam widget args.launcher Wibar launcher widget (from menus.setup)
 function M.setup(args)
 	args = args or {}
 	local launcher = args.launcher

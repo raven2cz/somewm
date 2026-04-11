@@ -429,7 +429,7 @@ Variants {
 			_desiredOverlay = val
 			if (overlayGuardProc.running) return  // will drain in onRunningChanged
 			overlayGuardProc.command = ["somewm-client", "eval",
-				"_somewm_shell_overlay = " + (_desiredOverlay ? "true" : "false")]
+				"awesome._shell_overlay = " + (_desiredOverlay ? "true" : "false")]
 			overlayGuardProc.running = true
 		}
 

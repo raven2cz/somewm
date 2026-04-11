@@ -5,7 +5,6 @@
 --   local menus = require("fishlive.config.menus").setup({
 --       terminal     = terminal,
 --       editor_cmd   = editor_cmd,
---       modkey       = modkey,
 --   })
 --   -- menus.start_menu, menus.desktop_menu, menus.launcher
 --
@@ -16,7 +15,6 @@
 
 local awful = require("awful")
 local beautiful = require("beautiful")
-local naughty = require("naughty")
 local hotkeys_popup = require("awful.hotkeys_popup")
 local menubar = require("menubar")
 local dpi = require("beautiful.xresources").apply_dpi
@@ -25,6 +23,11 @@ local recording = require("fishlive.config.recording")
 
 local M = {}
 
+--- Create start menu, desktop context menu, and wibar launcher widget.
+-- @tparam table args
+-- @tparam string args.terminal Terminal emulator command
+-- @tparam string args.editor_cmd Editor launch command (e.g. "ghostty -e nvim")
+-- @treturn table {start_menu, desktop_menu, launcher}
 function M.setup(args)
 	local terminal = args.terminal
 	local editor_cmd = args.editor_cmd

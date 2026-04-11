@@ -1042,10 +1042,10 @@ else
 fi
 
 # NotifHistory: must document active-only limitation and support optional history table
-if grep -q '_somewm_notif_history' "$NOTIF_FILE"; then
-    pass "NotifHistory/NotificationsTab supports optional _somewm_notif_history table"
+if grep -q 'awesome._notif_history' "$NOTIF_FILE"; then
+    pass "NotifHistory/NotificationsTab supports optional awesome._notif_history table"
 else
-    fail "NotifHistory/NotificationsTab" "missing _somewm_notif_history fallback for persistent history"
+    fail "NotifHistory/NotificationsTab" "missing awesome._notif_history fallback for persistent history"
 fi
 
 # ============================================================
@@ -1154,10 +1154,10 @@ else
 fi
 
 # FIX-4: Notification history table in rc.lua
-if grep -q '_somewm_notif_history' "$RC_LUA"; then
-    pass "rc.lua: _somewm_notif_history table defined"
+if grep -q 'awesome._notif_history' "$RC_LUA"; then
+    pass "rc.lua: awesome._notif_history table defined"
 else
-    fail "rc.lua" "missing _somewm_notif_history table for shell sidebar"
+    fail "rc.lua" "missing awesome._notif_history table for shell sidebar"
 fi
 
 # FIX-4b: Notification IPC push to shell
@@ -1201,10 +1201,10 @@ else
 fi
 
 # FIX-6b: Compositor overlay scroll guard in rc.lua
-if grep -q '_somewm_shell_overlay' "$RC_LUA"; then
-    pass "rc.lua: _somewm_shell_overlay guard for scroll tag-switch"
+if grep -q 'awesome._shell_overlay' "$RC_LUA"; then
+    pass "rc.lua: awesome._shell_overlay guard for scroll tag-switch"
 else
-    fail "rc.lua" "missing _somewm_shell_overlay scroll guard"
+    fail "rc.lua" "missing awesome._shell_overlay scroll guard"
 fi
 
 # FIX-6c: Panels.qml pushes overlay state to compositor
@@ -1221,11 +1221,11 @@ else
     fail "Audio.qml" "no wpctl volume polling — volume shows 0%"
 fi
 
-# FIX-4c: NotifHistory no duplicate (uses _somewm_notif_history OR n.active, not both)
-if grep -q 'if _somewm_notif_history and #_somewm_notif_history > 0 then' "$NOTIF_FILE"; then
+# FIX-4c: NotifHistory no duplicate (uses awesome._notif_history OR n.active, not both)
+if grep -q 'if awesome._notif_history and #awesome._notif_history > 0 then' "$NOTIF_FILE"; then
     pass "NotifHistory/NotificationsTab: uses history OR active (no duplicate)"
 else
-    fail "NotifHistory/NotificationsTab" "reads both n.active and _somewm_notif_history (duplicates)"
+    fail "NotifHistory/NotificationsTab" "reads both n.active and awesome._notif_history (duplicates)"
 fi
 
 # FIX-4d: NotifHistory has clearAll and dismissOne
