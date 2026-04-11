@@ -233,6 +233,10 @@ Variants {
 						propagateComposedEvents: true
 
 						onWheel: (wheel) => {
+							if (!panel.editMode) {
+								wheel.accepted = false
+								return
+							}
 							var delta = wheel.angleDelta.y > 0 ? -1 : 1
 							var newIdx = (parent.imageIndex + delta)
 							var imgs = Services.Portraits.getImagesForCollection(
@@ -279,7 +283,7 @@ Variants {
 				visible: panel.editMode
 				anchors.top: parent.top
 				anchors.horizontalCenter: parent.horizontalCenter
-				anchors.topMargin: Core.Theme.spacing.lg
+				anchors.topMargin: Math.round(40 * panel.sp)
 				text: "EDIT MODE  —  drag to move  |  scroll to cycle  |  middle-click for collection  |  Escape to save"
 				font.family: Core.Theme.fontUI
 				font.pixelSize: Core.Theme.fontSize.sm
