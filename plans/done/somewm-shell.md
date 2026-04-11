@@ -1,9 +1,9 @@
 # somewm-shell — Quickshell Desktop Shell for somewm
 
-Branch: `feat/somewm-web-widgets`
-Date: 2026-04-05
+Branch: `feat/somewm-web-widgets` → merged to `main`
+Date: 2026-04-05 — 2026-04-11
 Authors: raven2cz, Claude Opus 4.6
-Status: ARCHITECTURE v2.3 (post-review round 4)
+Status: COMPLETE (Phases 1–3 implemented, Phase 4 deferred)
 
 ## Vision
 
@@ -805,39 +805,50 @@ end, { description = "close all shell panels", group = "shell" }),
 
 ## Implementation Phases
 
-### Phase 1: Core + Dashboard
-- [ ] Directory structure + deploy.sh + theme-export.sh
-- [ ] Theme.qml (with fallback JSON committed)
-- [ ] Anims.qml (curves, durations, scale)
-- [ ] Config.qml (config.json with defaults)
-- [ ] Panels.qml (keyed visibility, mutual exclusion)
-- [ ] GlassCard, ClickableCard, StyledText, StyledRect, MaterialIcon
-- [ ] SlidePanel (Translate-based) + FadeLoader
-- [ ] Compositor.qml (push IPC — add signals to rc.lua)
-- [ ] SystemStats.qml (FileView /proc, no process spawn)
-- [ ] Dashboard module (clock, stats, client list) with Variants per-screen
-- [ ] rc.lua keybinding integration
-- [ ] Multi-monitor from day one
+### Phase 1: Core + Dashboard — COMPLETE
+- [x] Directory structure + deploy.sh + theme-export.sh
+- [x] Theme.qml (218 lines, with fallback JSON committed)
+- [x] Anims.qml (65 lines, curves, durations, scale)
+- [x] Config.qml (84 lines, config.json with defaults)
+- [x] Panels.qml (99 lines, keyed visibility, mutual exclusion)
+- [x] GlassCard, ClickableCard, StyledText, StyledRect, MaterialIcon
+- [x] SlidePanel (Translate-based) + FadeLoader
+- [x] Compositor.qml (146 lines, push IPC — signals in rc.lua)
+- [x] SystemStats.qml (255 lines, FileView /proc, no process spawn)
+- [x] Dashboard module (387 lines + 5 bonus tabs: Home, Media, Notifications, Performance, Calendar)
+- [x] rc.lua keybinding integration
+- [x] Multi-monitor from day one (Variants per-screen)
 
-### Phase 2: Sidebar + Media
-- [ ] Audio.qml (PipeWire built-in)
-- [ ] Media.qml (MPRIS built-in)
-- [ ] Brightness.qml (brightnessctl)
-- [ ] Sidebar module (notification history via IPC, quick settings, calendar)
-- [ ] Media module (album art, controls, progress, volume)
-- [ ] OSD module (volume/brightness popup)
+### Phase 2: Sidebar + Media — COMPLETE
+- [x] Audio.qml (123 lines, PipeWire built-in)
+- [x] Media.qml (90 lines, MPRIS built-in)
+- [x] Brightness.qml (69 lines, brightnessctl)
+- [x] Sidebar module (notification history 309 lines, quick settings 300 lines, calendar 162 lines)
+- [x] Media module (album art, controls, progress, volume — 6 files)
+- [x] OSD module (112 lines + volume/brightness stubs)
 
-### Phase 3: Weather + Wallpapers + Collage
-- [ ] Weather.qml (XMLHttpRequest to wttr.in)
-- [ ] Wallpapers.qml (directory scan)
-- [ ] Weather module (current + forecast)
-- [ ] Wallpaper picker module (grid, preview, set)
-- [ ] Collage module (masonry grid, lightbox)
+### Phase 3: Weather + Wallpapers + Collage — COMPLETE
+- [x] Weather.qml (137 lines, XMLHttpRequest to wttr.in)
+- [x] Wallpapers.qml (639 lines, directory scan + resolved tag-state view + IPC)
+- [x] Weather module (current 111 lines + forecast 69 lines)
+- [x] Wallpaper picker module (893 lines carousel + grid + preview + tag labels + override badges)
+- [x] Collage module (masonry grid 100 lines, lightbox 137 lines)
 
-### Phase 4: AI Integration (exploratory, separate sub-project)
+### Phase 4: AI Integration — DEFERRED (separate sub-project)
 - [ ] Ollama HTTP from QML
 - [ ] AI chat module (separate `plans/project/somewm-shell-ai/`)
 - [ ] MCP server for somewm
+
+### Bonus implementations (beyond original plan)
+- [x] Dock module (960 lines) + DockApps service (303 lines)
+- [x] ControlPanel module (465 lines)
+- [x] HotEdges module (166 lines)
+- [x] BorderFrame module (103 lines)
+- [x] CavaService (131 lines, audio visualization)
+- [x] 6 bonus components: ArcGauge, ConcaveShape, FrequencyVisualizer, SectionHeader, TabBar, WallpaperCarousel
+- [x] Dashboard expanded with 5 tabs (Home 581, Media 306, Notifications 440, Performance 367, Calendar 189 lines)
+
+### Final stats: 93 QML files, 60/60 planned + 33 bonus
 
 ## Dependencies
 
