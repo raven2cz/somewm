@@ -62,6 +62,12 @@ package.preload["wibox.widget.imagebox"] = function()
 	return require("wibox").widget.imagebox
 end
 
+-- Stub global root (compositor C-level object, needed by update_slide_cache)
+_G.root = {
+	wallpaper_cache_preload = nil,
+	wallpaper_cache_clear = nil,
+}
+
 -- Stub global screen iterator (for scr in screen do ... end)
 -- __call is used directly as the iterator by `for`, so it receives the
 -- previous value and must return the next screen or nil.
@@ -317,6 +323,134 @@ describe("wallpaper service", function()
 		it("rejects single dot tag names", function()
 			wallpaper._user_wppath = "test_wallpapers/"
 			assert.is_false(wallpaper.save_to_theme(".", "test_wallpapers/img.jpg"))
+		end)
+	end)
+
+	describe("get_resolved_json", function()
+		it("returns empty array when no screen focused", function()
+			assert.equals("[]", wallpaper.get_resolved_json())
+		end)
+
+		it("returns resolved wallpaper per tag with isUserOverride", function()
+			local awful = require("awful")
+			local old_focused = awful.screen.focused
+			awful.screen.focused = function()
+				return {
+					tags = {
+						{ name = "1" }, { name = "2" }, { name = "3" },
+					}
+				}
+			end
+			wallpaper._wppath = "test_wallpapers/theme/"
+			wallpaper._user_wppath = "/nonexistent/user/"
+			wallpaper._default = "1.jpg"
+			local json = wallpaper.get_resolved_json()
+			-- All should resolve to theme wallpapers, none are user overrides
+			assert.truthy(json:match('"tag":"1"'))
+			assert.truthy(json:match('"tag":"2"'))
+			assert.truthy(json:match('"tag":"3"'))
+			assert.truthy(json:match('"isUserOverride":false'))
+			assert.is_nil(json:match('"isUserOverride":true'))
+			awful.screen.focused = old_focused
+		end)
+
+		it("detects user-wallpaper overrides", function()
+			local awful = require("awful")
+			local old_focused = awful.screen.focused
+			awful.screen.focused = function()
+				return {
+					tags = {
+						{ name = "1" }, { name = "2" },
+					}
+				}
+			end
+			wallpaper._wppath = "test_wallpapers/theme/"
+			wallpaper._user_wppath = "test_wallpapers/user/"
+			wallpaper._default = "1.jpg"
+			-- Both dirs match test_wallpapers/ mock, so user-wallpapers exists
+			local json = wallpaper.get_resolved_json()
+			-- user-wallpapers found → isUserOverride:true
+			assert.truthy(json:match('"isUserOverride":true'))
+			awful.screen.focused = old_focused
+		end)
+
+		it("returns valid JSON array format", function()
+			local awful = require("awful")
+			local old_focused = awful.screen.focused
+			awful.screen.focused = function()
+				return { tags = { { name = "1" } } }
+			end
+			wallpaper._wppath = "test_wallpapers/"
+			wallpaper._default = "1.jpg"
+			local json = wallpaper.get_resolved_json()
+			assert.equals("[", json:sub(1, 1))
+			assert.equals("]", json:sub(-1))
+			awful.screen.focused = old_focused
+		end)
+	end)
+
+	describe("clear_user_wallpaper", function()
+		it("returns false when not initialized", function()
+			assert.is_false(wallpaper.clear_user_wallpaper("1"))
+		end)
+
+		it("returns false for empty tag name", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.clear_user_wallpaper(""))
+		end)
+
+		it("returns false for nil tag name", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.clear_user_wallpaper(nil))
+		end)
+
+		it("rejects path traversal in tag names", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.clear_user_wallpaper("../etc"))
+			assert.is_false(wallpaper.clear_user_wallpaper(".."))
+			assert.is_false(wallpaper.clear_user_wallpaper("."))
+			assert.is_false(wallpaper.clear_user_wallpaper("a/b"))
+			assert.is_false(wallpaper.clear_user_wallpaper("a\\b"))
+		end)
+
+		it("accepts valid alphanumeric tag names", function()
+			wallpaper._user_wppath = "/nonexistent/user-wp/"
+			-- Returns false because no files to remove, but doesn't error
+			local result = wallpaper.clear_user_wallpaper("1")
+			assert.is_false(result)
+		end)
+
+		it("clears in-memory override for the tag", function()
+			wallpaper._user_wppath = "/nonexistent/user-wp/"
+			wallpaper._wppath = "test_wallpapers/"
+			wallpaper._default = "1.jpg"
+			wallpaper._overrides["3"] = "test_wallpapers/custom.jpg"
+			wallpaper.clear_user_wallpaper("3")
+			assert.is_nil(wallpaper._overrides["3"])
+		end)
+
+		it("emits data::wallpaper signal", function()
+			wallpaper._user_wppath = "/nonexistent/user-wp/"
+			wallpaper._wppath = "test_wallpapers/"
+			wallpaper._default = "1.jpg"
+			mock_broker_signals = {}
+			wallpaper.clear_user_wallpaper("1")
+			assert.equals(1, #mock_broker_signals)
+			assert.equals("data::wallpaper", mock_broker_signals[1].name)
+		end)
+
+		it("rejects tag names with special chars", function()
+			wallpaper._user_wppath = "test_wallpapers/"
+			assert.is_false(wallpaper.clear_user_wallpaper("tag name"))
+			assert.is_false(wallpaper.clear_user_wallpaper("tag;rm"))
+			assert.is_false(wallpaper.clear_user_wallpaper("$(cmd)"))
+		end)
+
+		it("accepts tag names with dashes and underscores", function()
+			wallpaper._user_wppath = "/nonexistent/user-wp/"
+			-- Should not error, just return false (no files)
+			local result = wallpaper.clear_user_wallpaper("my-tag_1")
+			assert.is_false(result)
 		end)
 	end)
 

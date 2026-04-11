@@ -121,6 +121,15 @@ Variants {
         Shortcut { sequence: "9"; onActivated: Services.Wallpapers.viewTag("9") }
 
         // Folder navigation: Up/Down
+        function _navigateFolder(folder) {
+            if (folder.isTheme) {
+                Services.Wallpapers.activeFolder = folder.path
+                Services.Wallpapers.refreshResolvedWallpapers()
+            } else {
+                Services.Wallpapers.scanFolder(folder.path)
+            }
+        }
+
         Shortcut {
             sequence: "Up"
             onActivated: {
@@ -129,7 +138,7 @@ Variants {
                 var active = Services.Wallpapers.activeFolder
                 for (var i = 0; i < folders.length; i++) {
                     if (folders[i].path === active) {
-                        if (i > 0) Services.Wallpapers.scanFolder(folders[i - 1].path)
+                        if (i > 0) panel._navigateFolder(folders[i - 1])
                         return
                     }
                 }
@@ -143,10 +152,24 @@ Variants {
                 var active = Services.Wallpapers.activeFolder
                 for (var i = 0; i < folders.length; i++) {
                     if (folders[i].path === active) {
-                        if (i < folders.length - 1) Services.Wallpapers.scanFolder(folders[i + 1].path)
+                        if (i < folders.length - 1) panel._navigateFolder(folders[i + 1])
                         return
                     }
                 }
+            }
+        }
+
+        // Delete key: reset user-wallpaper override in theme view
+        Shortcut {
+            sequence: "Delete"
+            onActivated: {
+                if (!Services.Wallpapers.isThemeView) return
+                var model = Services.Wallpapers.wallpapers
+                var idx = view.currentIndex
+                if (idx < 0 || idx >= model.length) return
+                var item = model[idx]
+                if (item.isUserOverride && item.tag)
+                    Services.Wallpapers.clearUserWallpaper(item.tag)
             }
         }
 
@@ -517,9 +540,23 @@ Variants {
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                view.currentIndex = index
-                                Services.Wallpapers.setWallpaper(delegateRoot.filePath)
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: (mouse) => {
+                                if (mouse.button === Qt.RightButton) {
+                                    // Right-click: reset user-wallpaper in theme view
+                                    if (Services.Wallpapers.isThemeView &&
+                                        modelData.isUserOverride === true && modelData.tag) {
+                                        Services.Wallpapers.clearUserWallpaper(modelData.tag)
+                                    }
+                                } else if (Services.Wallpapers.isThemeView) {
+                                    // Theme view: left-click switches to this tag (no setWallpaper)
+                                    view.currentIndex = index
+                                    if (modelData.tag)
+                                        Services.Wallpapers.viewTag(modelData.tag)
+                                } else {
+                                    view.currentIndex = index
+                                    Services.Wallpapers.setWallpaper(delegateRoot.filePath)
+                                }
                             }
                         }
 
@@ -548,6 +585,9 @@ Variants {
                                 fillMode: Image.PreserveAspectCrop
                                 source: {
                                     if (!delegateRoot.filePath) return ""
+                                    // Theme view: use resolved path directly (thumbnails are from wrong dir)
+                                    if (Services.Wallpapers.isThemeView)
+                                        return "file://" + delegateRoot.filePath
                                     var thumbUrl = Services.Wallpapers.thumbDirUrl + "/" + delegateRoot.safeFileName
                                     return thumbUrl
                                 }
@@ -561,6 +601,79 @@ Variants {
                                 transform: Matrix4x4 {
                                     property real s: -panel.skewFactor
                                     matrix: Qt.matrix4x4(1, s, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+                                }
+                            }
+
+                            // Tag label pill (bottom-left, theme view only)
+                            Rectangle {
+                                visible: Services.Wallpapers.isThemeView && (modelData.tag || "") !== ""
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.margins: Math.round(8 * panel.sp)
+                                width: tagLabelText.width + Math.round(16 * panel.sp)
+                                height: Math.round(24 * panel.sp)
+                                radius: Math.round(12 * panel.sp)
+                                color: Qt.rgba(0, 0, 0, 0.65)
+
+                                Text {
+                                    id: tagLabelText
+                                    anchors.centerIn: parent
+                                    text: "Tag " + (modelData.tag || "")
+                                    font.family: Core.Theme.fontUI
+                                    font.pixelSize: Math.round(11 * panel.sp)
+                                    font.bold: true
+                                    color: "#ffffff"
+                                }
+                            }
+
+                            // User-override badge button (top-right, theme view only)
+                            // Click to reset user-wallpaper and revert to theme default
+                            Rectangle {
+                                id: overrideBadge
+                                visible: Services.Wallpapers.isThemeView && modelData.isUserOverride === true
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                anchors.margins: Math.round(8 * panel.sp)
+                                width: Math.round(28 * panel.sp)
+                                height: width
+                                radius: width / 2
+                                color: badgeMa.containsMouse
+                                    ? Core.Theme.urgent
+                                    : Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.85)
+                                scale: badgeMa.containsMouse ? 1.15 : 1.0
+                                z: 10
+
+                                Behavior on color { ColorAnimation { duration: 150 } }
+                                Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: badgeMa.containsMouse ? "\ue5cd" : "\ue3c9"
+                                    font.family: Core.Theme.fontIcon
+                                    font.pixelSize: Math.round(14 * panel.sp)
+                                    color: "#ffffff"
+                                }
+
+                                MouseArea {
+                                    id: badgeMa
+                                    anchors.fill: parent
+                                    anchors.margins: Math.round(-4 * panel.sp)
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (modelData.tag)
+                                            Services.Wallpapers.clearUserWallpaper(modelData.tag)
+                                    }
+                                    onContainsMouseChanged: {
+                                        if (containsMouse) badgeTooltip.show()
+                                        else badgeTooltip.hide()
+                                    }
+                                }
+
+                                Components.Tooltip {
+                                    id: badgeTooltip
+                                    target: overrideBadge
+                                    text: "Reset to default"
                                 }
                             }
                         }
@@ -760,7 +873,14 @@ Variants {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: Services.Wallpapers.scanFolder(modelData.path)
+                                onClicked: {
+                                    if (modelData.isTheme) {
+                                        Services.Wallpapers.activeFolder = modelData.path
+                                        Services.Wallpapers.refreshResolvedWallpapers()
+                                    } else {
+                                        Services.Wallpapers.scanFolder(modelData.path)
+                                    }
+                                }
                             }
                         }
                     }

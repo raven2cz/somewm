@@ -43,6 +43,10 @@ Singleton {
     property bool _themeWpDirReady: false
     property bool _subdirsReady: false
 
+    // Whether we're showing the virtual tag-state view (resolved wallpapers per tag)
+    property bool isThemeView: false
+
+
     // === Tag selector ===
 
     // Tag names from compositor: ["1","2",...,"9"]
@@ -53,6 +57,7 @@ Singleton {
     // === Scan folder for wallpapers ===
 
     function scanFolder(folderPath) {
+        root.isThemeView = false
         root.activeFolder = folderPath
         root.loading = true
         scanProc.command = ["find", "-L", folderPath,
@@ -78,6 +83,81 @@ Singleton {
                 root.loading = false
                 // Generate thumbnails for this folder
                 root._generateThumbnails(root.activeFolder)
+            }
+        }
+    }
+
+    // === Resolved wallpapers (virtual tag-state view) ===
+
+    property bool _pendingResolvedRefresh: false
+
+    function refreshResolvedWallpapers() {
+        root.isThemeView = true
+        root.loading = true
+        if (resolvedProc.running) {
+            // Process already in flight — schedule re-run after it completes
+            root._pendingResolvedRefresh = true
+            return
+        }
+        resolvedProc.running = true
+    }
+
+    Process {
+        id: resolvedProc
+        command: ["somewm-client", "eval",
+            "return require('fishlive.services.wallpaper').get_resolved_json()"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                // Guard: user may have switched to a real folder while IPC was in flight
+                if (!root.isThemeView) return
+                var raw = text.trim()
+                var nl = raw.indexOf("\n")
+                var json = nl >= 0 ? raw.substring(nl + 1) : raw
+                try {
+                    var items = JSON.parse(json)
+                    var result = items.filter(function(item) {
+                        return item.path && item.path !== ""
+                    }).map(function(item) {
+                        return {
+                            path: item.path,
+                            name: item.path.split("/").pop(),
+                            tag: item.tag,
+                            isUserOverride: item.isUserOverride
+                        }
+                    })
+                    root.wallpapers = result
+                } catch (e) {
+                    console.error("Resolved wallpapers parse error:", e)
+                    root.wallpapers = []
+                }
+                root.loading = false
+            }
+        }
+        onRunningChanged: {
+            // Re-run if a refresh was requested while we were busy
+            if (!running && root._pendingResolvedRefresh) {
+                root._pendingResolvedRefresh = false
+                root.refreshResolvedWallpapers()
+            }
+        }
+    }
+
+    // === Clear user-wallpaper (delete from disk, revert to default) ===
+
+    function clearUserWallpaper(tagName) {
+        var safe = _luaEscape(tagName)
+        clearUserWpProc.command = ["somewm-client", "eval",
+            "require('fishlive.services.wallpaper').clear_user_wallpaper('" + safe + "')"]
+        clearUserWpProc.running = true
+    }
+
+    Process {
+        id: clearUserWpProc
+        onRunningChanged: {
+            if (!running) {
+                root.refreshCurrent()
+                root.refreshOverrides()
+                if (root.isThemeView) root.refreshResolvedWallpapers()
             }
         }
     }
@@ -327,7 +407,12 @@ Singleton {
 
         // Auto-select first folder if none selected
         if (!root.activeFolder && folders.length > 0) {
-            root.scanFolder(folders[0].path)
+            root.activeFolder = folders[0].path
+            if (folders[0].isTheme) {
+                root.refreshResolvedWallpapers()
+            } else {
+                root.scanFolder(folders[0].path)
+            }
         }
     }
 
@@ -387,6 +472,7 @@ Singleton {
             onStreamFinished: {
                 root.refreshCurrent()
                 root.refreshOverrides()
+                if (root.isThemeView) root.refreshResolvedWallpapers()
             }
         }
         onRunningChanged: {
@@ -427,8 +513,9 @@ Singleton {
     Process {
         id: tagSetProc
         onRunningChanged: {
-            if (!running && root.applyTheme) {
-                themeExportProc.running = true
+            if (!running) {
+                if (root.applyTheme) themeExportProc.running = true
+                if (root.isThemeView) root.refreshResolvedWallpapers()
             }
         }
     }
@@ -530,6 +617,7 @@ Singleton {
                 // Re-export theme colors to JSON for shell
                 themeExportProc.running = true
                 // Refresh everything: theme dir changed, folder list needs rebuild
+                root.activeFolder = ""  // force folder rebuild to pick new theme dir
                 root.refreshThemeWpDir()
                 root.refreshCurrent()
                 root.refreshThemes()

@@ -18,6 +18,8 @@
 --   require('fishlive.services.wallpaper').get_browse_dirs_json()
 --   require('fishlive.services.wallpaper').get_tags_json()
 --   require('fishlive.services.wallpaper').get_theme_wallpapers_dir()
+--   require('fishlive.services.wallpaper').get_resolved_json()
+--   require('fishlive.services.wallpaper').clear_user_wallpaper(tag_name)
 --   require('fishlive.services.wallpaper').view_tag(tag_name)
 --
 -- @module fishlive.services.wallpaper
@@ -450,6 +452,62 @@ end
 -- @treturn string Path to active theme's wallpapers/ directory
 function wallpaper.get_theme_wallpapers_dir()
 	return wallpaper._wppath or ""
+end
+
+--- Get resolved wallpaper state for every tag on focused screen (for IPC).
+-- Returns the actual wallpaper displayed per tag (result of _resolve()),
+-- including whether it's a user-override or theme default.
+-- @treturn string JSON array of {tag, path, isUserOverride} objects
+function wallpaper.get_resolved_json()
+	local focused = awful.screen.focused()
+	if not focused then return "[]" end
+	local parts = {}
+	for _, tag in ipairs(focused.tags) do
+		local tag_name = tag.name
+		local path = wallpaper._resolve(tag_name)
+		-- A user-wallpaper file exists on disk for this tag (deletable via reset)
+		local is_user = find_in_dir(wallpaper._user_wppath, tag_name) ~= nil
+		local ep = (path or ""):gsub('\\', '\\\\'):gsub('"', '\\"')
+		local et = tag_name:gsub('\\', '\\\\'):gsub('"', '\\"')
+		table.insert(parts,
+			'{"tag":"' .. et .. '","path":"' .. ep ..
+			'","isUserOverride":' .. tostring(is_user) .. '}')
+	end
+	return "[" .. table.concat(parts, ",") .. "]"
+end
+
+--- Delete user-wallpaper file for a tag, reverting to theme default (for IPC).
+-- Only removes files from user-wallpapers/ directory. Theme defaults are protected.
+-- @tparam string tag_name Tag name to clear
+-- @treturn boolean True if a file was actually removed
+function wallpaper.clear_user_wallpaper(tag_name)
+	if not tag_name or tag_name == "" then return false end
+	if not tag_name:match("^[%w%-_]+$") then return false end
+	if not wallpaper._user_wppath then return false end
+
+	-- Remove user-wallpaper file for this tag (all extensions)
+	local removed = false
+	for _, ext in ipairs(IMG_EXTENSIONS) do
+		local path = wallpaper._user_wppath .. tag_name .. ext
+		if os.remove(path) then removed = true end
+	end
+
+	-- Also clear any in-memory override
+	wallpaper._overrides[tag_name] = nil
+
+	-- Re-resolve and apply on all screens showing this tag
+	local resolved = wallpaper._resolve(tag_name)
+	for scr in screen do
+		local sel = scr.selected_tag
+		if sel and sel.name == tag_name then
+			scr._current_wallpaper = nil  -- force re-apply
+			if resolved then apply_wallpaper(scr, resolved) end
+		end
+	end
+
+	if resolved then update_slide_cache(resolved) end
+	broker.emit_signal("data::wallpaper", wallpaper._get_state())
+	return removed
 end
 
 --- Switch to a specific tag on the focused screen (for IPC).

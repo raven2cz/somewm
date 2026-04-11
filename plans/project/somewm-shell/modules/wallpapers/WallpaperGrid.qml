@@ -60,7 +60,7 @@ Item {
                         }
                     }
 
-                    // Name overlay
+                    // Name overlay (shows tag prefix in theme view)
                     Rectangle {
                         anchors.bottom: parent.bottom
                         width: parent.width
@@ -70,13 +70,55 @@ Item {
 
                         Text {
                             anchors.centerIn: parent
-                            text: modelData.name
+                            text: Services.Wallpapers.isThemeView && (modelData.tag || "") !== ""
+                                ? "Tag " + modelData.tag + " — " + modelData.name
+                                : modelData.name
                             font.family: Core.Theme.fontUI
                             font.pixelSize: Core.Theme.fontSize.xs
                             color: Core.Theme.fgMain
                             elide: Text.ElideMiddle
                             width: parent.width - Core.Theme.spacing.sm * 2
                             horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+
+                    // User-override badge button (top-right, theme view only)
+                    Rectangle {
+                        id: gridBadge
+                        visible: Services.Wallpapers.isThemeView && modelData.isUserOverride === true
+                        anchors.top: parent.top
+                        anchors.right: parent.right
+                        anchors.margins: Math.round(4 * Core.Theme.dpiScale)
+                        width: Math.round(22 * Core.Theme.dpiScale)
+                        height: width
+                        radius: width / 2
+                        color: gridBadgeMa.containsMouse
+                            ? Core.Theme.urgent
+                            : Qt.rgba(Core.Theme.accent.r, Core.Theme.accent.g, Core.Theme.accent.b, 0.85)
+                        scale: gridBadgeMa.containsMouse ? 1.15 : 1.0
+                        z: 10
+
+                        Behavior on color { ColorAnimation { duration: 150 } }
+                        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: gridBadgeMa.containsMouse ? "\ue5cd" : "\ue3c9"
+                            font.family: Core.Theme.fontIcon
+                            font.pixelSize: Math.round(11 * Core.Theme.dpiScale)
+                            color: "#ffffff"
+                        }
+
+                        MouseArea {
+                            id: gridBadgeMa
+                            anchors.fill: parent
+                            anchors.margins: Math.round(-4 * Core.Theme.dpiScale)
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (modelData.tag)
+                                    Services.Wallpapers.clearUserWallpaper(modelData.tag)
+                            }
                         }
                     }
 
@@ -94,10 +136,17 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: (mouse) => {
-                            if (mouse.button === Qt.RightButton)
-                                root.previewRequested(modelData.path)
-                            else
+                            if (mouse.button === Qt.RightButton) {
+                                if (Services.Wallpapers.isThemeView) {
+                                    // Theme view: reset override if user-override, no-op otherwise
+                                    if (modelData.isUserOverride === true && modelData.tag)
+                                        Services.Wallpapers.clearUserWallpaper(modelData.tag)
+                                } else {
+                                    root.previewRequested(modelData.path)
+                                }
+                            } else {
                                 Services.Wallpapers.setWallpaper(modelData.path)
+                            }
                         }
                     }
                 }
