@@ -53,11 +53,15 @@ fishlive framework
 Widgets used to poll `/proc/stat` each on their own timer, which meant
 every new CPU meter added a subprocess. The broker reverses the flow:
 
-```
-service (one timer per data source)
-   ↓ broker.emit("data::cpu", { usage = 12 })
-   ↓
-many consumers (widgets) subscribed to "data::cpu"
+```text
+[ Service (Producer) ] ──(reads /proc/stat on a single timer)
+          │
+          ▼
+ broker.emit("data::cpu", { usage = 12 })
+          │
+          ├─► [ Consumer A (Wibar Widget) ]
+          ├─► [ Consumer B (Dashboard Widget) ]
+          └─► [ Consumer C (Notification) ]
 ```
 
 One service feeds N widgets. Adding a second CPU meter costs zero extra
@@ -271,9 +275,9 @@ changes that cross the boundary.
 
 1. Create `fishlive/components/mywidget.lua`.
 2. Implement `M.create(screen, config) -> wibox.widget`.
-3. Subscribe to broker signals inside `create`.
+3. Subscribe to broker signals inside the `create` function to keep the widget reactive.
 4. Use it from `fishlive/config/screen.lua` via `factory.create("mywidget", ...)`.
-5. Add a full LDoc header per [STYLE.md](STYLE.md).
+5. Add a full LDoc header per [STYLE.md](STYLE.md) outlining its public properties.
 
 ### Adding a keybinding
 

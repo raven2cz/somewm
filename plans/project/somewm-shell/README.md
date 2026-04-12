@@ -43,8 +43,8 @@ HTTP, no WebSocket. State flows over two well-defined channels:
   when their tab is visible.
 - **Single-owner notification store** — both sidebar and dashboard bind to
   one `NotifStore` singleton that owns the IPC and the 50-entry history.
-- **Reactive theme** — `theme.json` watched via `FileView`; changing the
-  wallpaper re-exports colors from Lua and the whole UI re-renders.
+- **Reactive theme** — `theme.json` is actively watched via Quickshell's `FileView`. Changing the
+  wallpaper automatically re-exports colors from Lua, instantly re-rendering the entire UI without a restart.
 
 ## Requirements
 
@@ -70,6 +70,13 @@ qs -c somewm
 
 `somewm-one` auto-spawns `qs -c somewm -n -d` from `rc.lua`, so once both
 are installed the shell comes up with the session.
+
+## Troubleshooting
+
+- **Shell fails to launch**: Run `qs -c somewm` manually in a terminal to check for QML syntax errors or missing Qt6 modules.
+- **Dock is empty**: Ensure your apps support the `foreign-toplevel-management` Wayland protocol. XWayland clients may have limited support.
+- **Volume/Brightness controls don't work**: Verify that `wpctl` (for audio) and `brightnessctl` (for backlight) are installed and functioning on your system.
+- **Theme changes don't apply**: Ensure `Core.Theme` is properly watching the generated `theme.json` file. Run `theme-export.sh` manually from `somewm-one` to force an update.
 
 ## Documentation
 

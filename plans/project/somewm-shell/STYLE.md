@@ -72,9 +72,11 @@ import QtQuick
 - **DPI scale everything.** Hard-coded pixel sizes go through
   `Math.round(N * Core.Theme.dpiScale)`. This includes widths, heights,
   spacing, radii and font sizes.
-- **Theme tokens only.** Colors come from `Core.Theme` (accent, fgMain,
-  surfaceContainer, …). No inline hex values. Widget-category colors
-  (`widgetCpu`, `widgetGpu`, …) match the wibar palette exactly.
+- **Theme tokens only.** All colors come from `Core.Theme` (`accent`, `fgMain`,
+  `surfaceContainer`, …). No inline hex values — if a color is missing from
+  the theme, add it to `theme.json` and `Theme.qml` rather than hard-coding.
+  Widget-category colors (`widgetCpu`, `widgetGpu`, …) must match the
+  compositor's wibar palette exactly for cross-surface consistency.
 - **Animations via `Core.Anims`.** All durations and easing curves come
   from there; honour `Core.Anims.scale` so `scale = 0` gives reduced
   motion. Prefer MD3 `BezierSpline` curves for premium animations

@@ -23,9 +23,9 @@ per-widget polling loops.
 - **A 210-line `rc.lua`** — pure orchestration, no 1500-line config
   spaghetti. All logic lives under `fishlive.config.*` with an explicit
   `.setup()` convention and a deterministic load order.
-- **The fishlive framework** — a pub/sub broker, reusable services
-  (producers) and components (widgets). One `/proc/stat` reader feeds N
-  CPU meters.
+- **The fishlive framework** — a lightweight pub/sub broker, reusable services
+  (producers), and reactive components (widgets). For example, a single `/proc/stat`
+  reader can feed multiple CPU meters across different screens with zero extra polling overhead.
 - **First-class shell integration** — ships the `somewm-client` bridge to
   [somewm-shell](https://github.com/raven2cz/somewm-shell), a modern
   Quickshell-based overlay shell (dashboard, dock, OSD, hot edges).
@@ -58,6 +58,12 @@ somewm-client reload
 
 Then launch `somewm` from a TTY (or your display manager). Default modkey
 is `Mod4` (Super).
+
+## Troubleshooting
+
+- **`somewm-client: command not found`**: Ensure the `somewm` compositor is built, installed, and present in your system's `$PATH`.
+- **Lua errors on startup**: Check the compositor logs in your TTY. Missing dependencies like `lua-lgi` or `gdk-pixbuf2` are the most common cause.
+- **Missing widgets**: Check that `fishlive/services/init.lua` has been required at startup and that each service registers its producer. A common symptom is a widget rendering but never updating — verify the corresponding service file is listed in the registry.
 
 ## Documentation
 

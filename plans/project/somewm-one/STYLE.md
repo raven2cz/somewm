@@ -55,10 +55,15 @@ so `somewm-client reload` is safe.
 **Load order is a property of `rc.lua`, not of `require` ordering.** The
 critical invariant is:
 
-```
-rules.setup()   ──►   titlebars.setup()
-                 └──► client_fixes.setup()
-                 └──► (other modules)
+```text
+rc.lua execution flow:
+  │
+  ├─► rules.setup()        (Must run first: defines matching criteria)
+  │
+  ├─► titlebars.setup()    (Relies on rules being active for classification)
+  ├─► client_fixes.setup() (Relies on rules being active for workarounds)
+  │
+  └─► (other modules)      (Order-independent)
 ```
 
 `titlebars` and `client_fixes` attach `request::titlebars` /
