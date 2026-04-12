@@ -1,12 +1,15 @@
 ---------------------------------------------------------------------------
 --- Titlebars — standard AwesomeWM titlebar request handler.
 --
--- Auto-initializes on require. Creates titlebars with icon, title,
--- and window control buttons, then hides them by default.
--- Toggle with Super+T (bound in keybindings.lua).
+-- Creates titlebars with icon, title, and window control buttons, then
+-- hides them by default. Toggle with Super+T (bound in keybindings.lua).
 --
 -- Usage from rc.lua:
---   require("fishlive.config.titlebars")
+--   require("fishlive.config.titlebars").setup()
+--
+-- Must run AFTER rules.setup() — rules.lua owns the `titlebars_enabled`
+-- property; the `request::titlebars` signal fires during client manage
+-- after rules apply.
 --
 -- @module fishlive.config.titlebars
 -- @author Antonin Fischer (raven2cz) & Claude
@@ -16,7 +19,13 @@
 local awful = require("awful")
 local wibox = require("wibox")
 
-client.connect_signal("request::titlebars", function(c)
+local M = { _initialized = false }
+
+function M.setup()
+	if M._initialized then return end
+	M._initialized = true
+
+	client.connect_signal("request::titlebars", function(c)
 	local buttons = {
 		awful.button({ }, 1, function()
 			c:activate { context = "titlebar", action = "mouse_move" }
@@ -51,6 +60,7 @@ client.connect_signal("request::titlebars", function(c)
 		layout = wibox.layout.align.horizontal
 	}
 	awful.titlebar.hide(c)
-end)
+	end)
+end
 
-return {}
+return M

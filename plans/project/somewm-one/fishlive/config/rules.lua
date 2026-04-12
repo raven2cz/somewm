@@ -2,11 +2,14 @@
 --- Client rules — ruled.client rule definitions.
 --
 -- All rules for client matching (floating, dialogs, tag assignments,
--- app-specific overrides). Called after screen/tag setup because some
--- rules reference screen[1].tags[...].
+-- app-specific overrides). References screen[1].tags[...], so call AFTER
+-- fishlive.config.screen.setup().
 --
 -- Usage from rc.lua:
---   require("fishlive.config.rules")
+--   require("fishlive.config.rules").setup()
+--
+-- Must run BEFORE titlebars.setup() and client_fixes.setup() — those
+-- modules attach signal handlers that assume the rule set is in place.
 --
 -- @module fishlive.config.rules
 -- @author Antonin Fischer (raven2cz) & Claude
@@ -18,7 +21,13 @@ local ruled = require("ruled")
 local lgi_ok, lgi = pcall(require, "lgi")
 local cairo = lgi_ok and lgi.cairo or _G.cairo
 
-ruled.client.connect_signal("request::rules", function()
+local M = { _initialized = false }
+
+function M.setup()
+	if M._initialized then return end
+	M._initialized = true
+
+	ruled.client.connect_signal("request::rules", function()
 	-- All clients will match this rule.
 	ruled.client.append_rule {
 		id         = "global",
@@ -162,6 +171,7 @@ ruled.client.connect_signal("request::rules", function()
 			shadow         = { enabled = false },
 		},
 	}
-end)
+	end)
+end
 
-return {}
+return M

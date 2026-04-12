@@ -1,4 +1,14 @@
+--  _ __ __ ___   _____ _ __
+-- | '__/ _` \ \ / / _ \ '_ \   Antonin Fischer (raven2cz)
+-- | | | (_| |\ V /  __/ | | |  https://fishlive.org/
+-- |_|  \__,_| \_/ \___|_| |_|  https://github.com/raven2cz/somewm
+--
+-- somewm-one — customized rc.lua for the somewm Wayland compositor.
+-- Orchestration only: framework init, theme load, keybindings/menus/screen/rules
+-- delegated to fishlive.config.*. See plans/project/somewm-one/ for the full tree.
+--
 -- awesome_mode: api-level=4:screen=on
+
 pcall(require, "luarocks.loader")
 
 -- Standard libraries
@@ -139,9 +149,12 @@ require("fishlive.config.keybindings").setup({
 -- }}}
 
 -- {{{ Rules, client fixes, titlebars, notifications
-require("fishlive.config.rules")
-require("fishlive.config.client_fixes")
-require("fishlive.config.titlebars")
+-- ORDER MATTERS: rules.setup() must run first. titlebars/client_fixes
+-- connect signals (request::titlebars, property::position/size) that
+-- only fire for clients already classified by the rule engine.
+require("fishlive.config.rules").setup()
+require("fishlive.config.titlebars").setup()
+require("fishlive.config.client_fixes").setup()
 require("fishlive.components.notifications")
 -- }}}
 
@@ -172,7 +185,7 @@ end)
 -- }}}
 
 -- {{{ Shell IPC (push state to QuickShell)
-require("fishlive.config.shell_ipc")
+require("fishlive.config.shell_ipc").setup()
 -- }}}
 
 -- {{{ Animations
