@@ -113,5 +113,7 @@ Singleton {
         function refresh(): void { root.refresh() }
     }
 
-    Component.onCompleted: refresh()
+    // No Component.onCompleted here — shell.qml drives the initial
+    // refresh as part of forcing singleton instantiation at startup.
+    // Avoids the double-refresh we had when both sides called it.
 }

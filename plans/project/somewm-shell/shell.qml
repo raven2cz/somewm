@@ -56,5 +56,7 @@ ShellRoot {
     // consumer panel is visible yet. Without this, the handler is lazy
     // and `qs ipc -c somewm call somewm-shell:notifications refresh`
     // returns "Target not found" until the sidebar/dashboard is opened.
+    // A method call is required — property access gets optimized away
+    // by the JS engine and leaves the singleton uninstantiated.
     Component.onCompleted: Core.NotifStore.refresh()
 }
