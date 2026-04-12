@@ -1,4 +1,10 @@
 pragma Singleton
+
+// Media — active MPRIS player tracking (title, artist, art, position).
+//
+// Picks the currently playing player, falls back to first available.
+// Re-evaluates on player list changes and every 2s to catch state flips.
+
 import QtQuick
 import Quickshell
 import Quickshell.Services.Mpris

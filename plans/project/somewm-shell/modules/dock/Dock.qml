@@ -1,3 +1,7 @@
+// Dock — advanced app launcher (bottom-left corner).
+//
+// Pinned favorites + running apps, multi-instance previews with live
+// thumbnails, hover zoom, pin/unpin via context menu.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes

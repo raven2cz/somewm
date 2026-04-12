@@ -1,7 +1,16 @@
 ---------------------------------------------------------------------------
 --- Arch updates service — official + AUR package counts.
 --
+-- Queries `checkupdates` for official repos and `paru -Qua` / `yay -Qua` for
+-- AUR. All failures degrade silently to zero (no network → no count, not an
+-- error).
+--
+-- Signal: data::updates — { official, aur, total, icon }
+-- Interval: 600s (10 min).
+--
 -- @module fishlive.services.updates
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

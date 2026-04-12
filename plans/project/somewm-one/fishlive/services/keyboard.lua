@@ -1,9 +1,16 @@
 ---------------------------------------------------------------------------
 --- Keyboard layout service — xkb event-driven, no polling.
 --
--- Uses somewm's native xkb::group_changed signal.
+-- Uses somewm's native xkb::group_changed signal to react the instant the
+-- active layout group changes. Parses xkb group names on start to populate
+-- layout codes (e.g. "pc+us+cz(qwerty):2+grp:alt_shift_toggle" → {us, cz}).
+--
+-- Signal: data::keyboard — { layout, layouts, icon }
+-- Interval: event-driven (no polling).
 --
 -- @module fishlive.services.keyboard
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local broker = require("fishlive.broker")

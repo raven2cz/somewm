@@ -1,3 +1,6 @@
+// MaterialIcon — Text glyph styled with the Material icon font.
+//
+// Accepts an `icon` codepoint and `size` (px); centered horizontally/vertically.
 import QtQuick
 import "../core" as Core
 

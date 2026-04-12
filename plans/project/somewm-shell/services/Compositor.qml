@@ -1,4 +1,11 @@
 pragma Singleton
+
+// Compositor — bridge to somewm: clients, tags, focused screen, active tag.
+//
+// Debounced refresh via `somewm-client eval`; compositor pushes invalidate /
+// setScreen / setTag signals from rc.lua. Typed focus/spawn — no raw eval.
+// IPC: somewm-shell:compositor { invalidate, setScreen, setTag, focus, spawn }
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

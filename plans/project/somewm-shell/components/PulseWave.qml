@@ -1,3 +1,7 @@
+// PulseWave — row of pulsing bars used as an "audio playing" indicator.
+//
+// Each bar runs a staggered SequentialAnimation on scale while `active`;
+// collapses to a short static bar when inactive.
 import QtQuick
 import "../core" as Core
 

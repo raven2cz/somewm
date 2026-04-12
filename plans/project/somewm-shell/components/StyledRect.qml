@@ -1,3 +1,6 @@
+// StyledRect — themed Rectangle (surface color + md radius + color anim).
+//
+// Convenience base used as the common styled background in the shell.
 import QtQuick
 import "../core" as Core
 import "." as Components

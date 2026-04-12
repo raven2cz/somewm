@@ -4,7 +4,12 @@
 -- Direct FFI calls to libnvidia-ml.so: ~0.7µs per poll vs 17ms nvidia-smi.
 -- Falls back to nvidia-smi subprocess if FFI unavailable.
 --
+-- Signal: data::gpu — { usage, temp, name, icon }
+-- Interval: 3s (FFI path) or 10s (nvidia-smi fallback).
+--
 -- @module fishlive.services.gpu
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

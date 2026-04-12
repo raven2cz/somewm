@@ -1,3 +1,7 @@
+// StateLayer — Material-style hover/pressed overlay MouseArea.
+//
+// Inherits its parent's radius so the tint stays within rounded corners;
+// color animated via CAnim for smooth state transitions.
 import QtQuick
 import "../core" as Core
 import "." as Components

@@ -1,3 +1,7 @@
+// HotEdges — invisible hover zones that trigger shell panels.
+//
+// Three bottom-edge zones on the focused screen: left corner, center strip,
+// right corner. Entering a zone toggles the matching panel via Panels IPC.
 import QtQuick
 import Quickshell
 import Quickshell.Wayland

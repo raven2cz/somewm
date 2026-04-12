@@ -1,3 +1,7 @@
+// GlassCard — surface container for panels; depth via color layering.
+//
+// Supports hovered / elevated / accent-tinted variants and exposes
+// color / border / radius aliases onto its inner rectangle.
 import QtQuick
 import "../core" as Core
 import "." as Components

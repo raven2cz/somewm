@@ -1,3 +1,7 @@
+// ArcGauge — 270-degree arc gauge driven by a 0..1 value.
+//
+// Renders a track + progress arc with antialiased Shape paths and an
+// expressive-spatial easing for the animated fill.
 import QtQuick
 import QtQuick.Shapes
 import "../core" as Core

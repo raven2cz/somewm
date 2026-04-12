@@ -1,3 +1,7 @@
+// ConcaveShape — dashboard top curve with inward arc and rounded corners.
+//
+// Drawn as a single filled QtQuick.Shapes path; the concave arc is the
+// signature "punch inward" dashboard look.
 import QtQuick
 import QtQuick.Shapes
 import "../core" as Core

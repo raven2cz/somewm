@@ -1,3 +1,6 @@
+// Separator — 1px horizontal (default) or vertical divider line.
+//
+// Toggle orientation with the `vertical` property; color from the theme.
 import QtQuick
 import "../core" as Core
 

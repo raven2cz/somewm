@@ -1,4 +1,10 @@
 pragma Singleton
+
+// CavaService — audio frequency bars via `cava` raw output.
+//
+// Lazy lifecycle: started only when `mediaTabActive` is set by MediaTab,
+// stopped otherwise. Writes a temporary cava config and streams `values[]`.
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

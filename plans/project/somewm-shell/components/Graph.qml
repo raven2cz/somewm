@@ -1,3 +1,7 @@
+// Graph — sparkline-style line+fill graph over a ring buffer of values.
+//
+// `addPoint(v)` pushes a 0..1 sample, trimming to `maxPoints`; repaints the
+// Canvas to draw the line and translucent fill area.
 import QtQuick
 import "../core" as Core
 

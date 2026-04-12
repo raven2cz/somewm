@@ -1,11 +1,15 @@
 pragma Singleton
+
+// DockApps — model for the dock: pinned favorites, running apps, icon lookup.
+//
+// Persists pin list to `dock-pins.json`, resolves icons from .desktop files,
+// and drives window activation/cycling via the compositor service.
+
 import QtQuick
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 
-// Dock application model — manages pinned favorites, running app tracking,
-// icon resolution, and window activation/cycling. Persists pin state to disk.
 Singleton {
     id: root
 

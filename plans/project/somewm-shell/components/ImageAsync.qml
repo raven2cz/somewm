@@ -1,3 +1,7 @@
+// ImageAsync — asynchronous Image with placeholder rectangle and fade-in.
+//
+// Wraps a cached, asynchronously-loaded Image and shows a tinted placeholder
+// until Image.Ready, then fades the image in.
 import QtQuick
 import "../core" as Core
 

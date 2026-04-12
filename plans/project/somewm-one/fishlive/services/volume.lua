@@ -3,8 +3,14 @@
 --
 -- Event-driven: pactl subscribe detects changes, wpctl reads state.
 -- Auto-restarts pactl if it dies (PipeWire restart).
+-- Filters subscribe stream to sink/server events only — ignores client chatter.
+--
+-- Signal: data::volume — { volume, muted, icon }
+-- Interval: event-driven (no polling).
 --
 -- @module fishlive.services.volume
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

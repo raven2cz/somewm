@@ -1,3 +1,9 @@
+// Collage — fullscreen wallpaper/photo viewer overlay with edit mode.
+//
+// Per-screen Variants PanelWindow; toggled by compositor tag/overlay state.
+// Edit mode lets the user reshuffle tiles.
+// IPC: somewm-shell:collage { editToggle }
+// Writes: awesome._shell_overlay
 import QtQuick
 import Quickshell
 import Quickshell.Io

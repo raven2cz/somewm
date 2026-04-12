@@ -1,3 +1,7 @@
+// ClickableCard — GlassCard with hover tracking, ripple, and `clicked` signal.
+//
+// Wraps a StateLayer MouseArea; an `active` flag switches the card to its
+// accent-tinted variant.
 import QtQuick
 import "../core" as Core
 
