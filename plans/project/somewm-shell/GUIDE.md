@@ -51,7 +51,32 @@ Dashboard (bottom-slide, full-width - margins)
     └── NotificationsTab ── urgency colors, swipe-to-dismiss, expand/collapse
 ```
 
-**CRITICAL: Lazy Polling** — All heavyweight data sources are gated by tab visibility:
+### Notification system (single-owner NotifStore)
+
+All notification UI binds to one QML singleton — `core/NotifStore.qml` —
+which owns the `somewm-shell:notifications` IpcHandler and the full IPC
+surface (`refresh`, `dismissOne`, `clearAll`, `copyToClipboard`). The
+sidebar widget (`modules/sidebar/NotifHistory.qml`) and the dashboard tab
+(`modules/dashboard/NotificationsTab.qml`) are display-only — they bind to
+`Core.NotifStore.notifications` and call its functions.
+
+```
+awesome._notif_history   (Lua-side ring buffer, 50 entries, auto-trimmed)
+    ↑ write (dismissOne/clearAll)        ↓ read (refresh)
+core/NotifStore.qml  (singleton, single IPC owner)
+    │
+    ├── sidebar/NotifHistory.qml     (display-only binding)
+    └── dashboard/NotificationsTab.qml (display-only binding)
+```
+
+`shell.qml` calls `Core.NotifStore.refresh()` in `Component.onCompleted`
+to force singleton instantiation at shell startup — otherwise the
+`IpcHandler` is lazy and `qs ipc call somewm-shell:notifications refresh`
+fails with *"Target not found"* until a consumer panel opens.
+
+### Lazy polling
+
+All heavyweight data sources are gated by tab visibility:
 - `SystemStats.perfTabActive` — GPU/temp/disk only poll when Performance tab is visible
 - `CavaService.mediaTabActive` — Cava process only runs when Media tab is visible
 - Base CPU/Memory polling stays always-on (wibar integration needs it)
@@ -368,7 +393,8 @@ plans/project/somewm-shell/
 │   ├── weather/               # Weather panel
 │   ├── wallpapers/            # Wallpaper picker (carousel + grid + preview)
 │   ├── collage/               # Image collage viewer
-│   ├── sidebar/ (DEPRECATED)  # Kept for test references, not loaded by shell.qml
+│   ├── sidebar/               # Deprecated panel; NotifHistory.qml lives here
+│   │   └── NotifHistory.qml   # Display-only binding to Core.NotifStore
 │   ├── media/ (DEPRECATED)    # Subcomponents still referenced by some tests
 │   └── qmldir
 │
@@ -920,3 +946,12 @@ qs ipc -c somewm call somewm-shell:panels toggle dashboard
 # Dock pins
 ~/.config/quickshell/somewm/dock-pins.json
 ```
+
+## Further reading
+
+- [STYLE.md](STYLE.md) — QML header templates, module-init conventions, IPC rules
+- [IPC.md](IPC.md) — full Lua ↔ Shell IPC catalogue (handlers + globals)
+- [../somewm-one/GUIDE.md](../somewm-one/GUIDE.md) — the Lua side
+  (rc.lua orchestration, fishlive framework, `.setup()` convention)
+- [../somewm-one/STYLE.md](../somewm-one/STYLE.md) — Lua headers and init rules
+
