@@ -144,12 +144,33 @@ See [GUIDE.md](GUIDE.md) for the full architecture.
 
 ## Credits
 
-- [Quickshell](https://quickshell.outfoxxed.me/) — the engine
-- [Caelestia shell](https://github.com/caelestia-dots/caelestia) — UX
-  inspiration for the notification, dashboard and swipe patterns
-- [Material Design 3](https://m3.material.io/) — motion language
-  (`BezierSpline` curves, emphasized/expressive tokens)
-- `ilyamiro` — isometric wallpaper-carousel idea
+Built by studying and adapting excellent prior work — all attributions
+below link to the original repositories:
+
+- **[Quickshell](https://quickshell.outfoxxed.me/)** by
+  [@outfoxxed](https://git.outfoxxed.me/outfoxxed) — the Qt/QML desktop
+  shell toolkit this project is built on.
+  Source: [git.outfoxxed.me/quickshell/quickshell](https://git.outfoxxed.me/quickshell/quickshell)
+  (GitHub mirror: [quickshell-mirror/quickshell](https://github.com/quickshell-mirror/quickshell)).
+- **[Caelestia shell](https://github.com/caelestia-dots/shell)** by
+  [@caelestia-dots](https://github.com/caelestia-dots) — the most
+  significant design and code inspiration. The dashboard (Home /
+  Performance / Media tabs), notification swipe-to-dismiss pattern,
+  progress-ring media player, resource bars, concave-edge panel shape
+  and MD3 animation taxonomy all trace back to Caelestia. Source files
+  across `modules/dashboard/`, `modules/border/` and
+  `core/Constants.qml` carry `Caelestia-inspired` attributions inline.
+- **[end_4 / dots-hyprland](https://github.com/end-4/dots-hyprland)** —
+  the Quickshell configuration that inspired Caelestia and, transitively,
+  this project. Worth studying if you want to see how far Quickshell can
+  be pushed.
+- **[ilyamiro / imperative-dots](https://github.com/ilyamiro/imperative-dots)**
+  ([profile](https://github.com/ilyamiro)) — the isometric-skew
+  wallpaper carousel in `components/WallpaperCarousel.qml` is a faithful
+  adaptation of ilyamiro's original concept.
+- **[Material Design 3](https://m3.material.io/)** — motion language
+  (`BezierSpline` curves, `emphasized` / `expressive` / `standard`
+  tokens) used throughout the animation system.
 
 ## License
 

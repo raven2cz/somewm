@@ -106,12 +106,20 @@ somewm-one/
 
 ## Credits
 
-- [AwesomeWM](https://awesomewm.org/) — the original Lua API, object
-  model and widget system this project tracks.
-- [somewm](https://github.com/trip-zip/somewm) (upstream) — the wlroots
-  port that made AwesomeWM-on-Wayland real.
-- [Quickshell](https://quickshell.outfoxxed.me/) — the engine behind the
-  companion shell.
+- **[AwesomeWM](https://github.com/awesomeWM/awesome)** — the original
+  Lua API, object model and widget system this project tracks. Website:
+  [awesomewm.org](https://awesomewm.org/).
+- **[somewm (upstream)](https://github.com/trip-zip/somewm)** — the
+  wlroots port that made AwesomeWM-on-Wayland real. Our fork:
+  [raven2cz/somewm](https://github.com/raven2cz/somewm).
+- **[layout-machi](https://github.com/xinhaoyuan/layout-machi)** by
+  [@xinhaoyuan](https://github.com/xinhaoyuan) — the interactive tiling
+  layout engine vendored under `layout-machi/`.
+- **[rubato](https://github.com/andOrlando/rubato)** by
+  [@andOrlando](https://github.com/andOrlando) — the Lua animation
+  library vendored under `fishlive/rubato/`.
+- **[Quickshell](https://quickshell.outfoxxed.me/)** — the engine behind
+  the companion [somewm-shell](https://github.com/raven2cz/somewm-shell).
 
 ## License
 
