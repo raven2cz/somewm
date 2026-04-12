@@ -4,3 +4,4 @@ singleton Anims Anims.qml
 singleton Config Config.qml
 singleton Panels Panels.qml
 singleton Constants Constants.qml
+singleton NotifStore NotifStore.qml

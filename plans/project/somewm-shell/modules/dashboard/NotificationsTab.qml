@@ -1,12 +1,14 @@
+// NotificationsTab — dashboard notification view (Caelestia-style).
+//
+// Display shell for Core.NotifStore. Swipe-to-dismiss, expand-on-click,
+// count badge + clear-all header. No IPC logic here — store owns it.
+
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Io
 import "../../core" as Core
 import "../../components" as Components
 
-// Caelestia-inspired Notifications tab
-// Scrollable list with swipe-to-dismiss, expand on click, header with count + clear
 Item {
     id: root
 
@@ -21,82 +23,16 @@ Item {
     implicitWidth: Math.round(500 * sp)
     implicitHeight: headerRow.implicitHeight + spacNorm + listArea.contentHeight + spacNorm
 
-    property var notifications: []
+    readonly property var notifications: Core.NotifStore.notifications
     property int expandedIndex: -1
 
-    function refresh() { fetchProc.running = true }
-    function clearAll() { clearProc.running = true }
-
-    function dismissOne(idx) {
-        var count = root.notifications.length
-        var luaIdx = count - idx
-        dismissProc.command = ["somewm-client", "eval",
-            "if awesome._notif_history and #awesome._notif_history >= " + luaIdx +
-            " then table.remove(awesome._notif_history, " + luaIdx + ") end; return 'ok'"]
-        dismissProc.running = true
+    function refresh() { Core.NotifStore.refresh() }
+    function clearAll() {
+        Core.NotifStore.clearAll()
+        root.expandedIndex = -1
     }
-
-    function copyToClipboard(title, message) {
-        var content = title
-        if (message) content += "\\n" + message
-        copyProc.command = ["sh", "-c", "printf '%s' '" + content.replace(/'/g, "'\\''") + "' | wl-copy"]
-        copyProc.running = true
-    }
-
-    // === Processes ===
-    Process {
-        id: fetchProc
-        command: ["somewm-client", "eval",
-            "local n = require('naughty'); " +
-            "local function esc(s) return s:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"'):gsub('\\n','\\\\n'):gsub('\\t','\\\\t'):gsub('\\r','') end " +
-            "local json='[' local sep='' " +
-            "local all = {} " +
-            "if awesome._notif_history and #awesome._notif_history > 0 then " +
-            "for _,v in ipairs(awesome._notif_history) do all[#all+1]=v end " +
-            "else " +
-            "for _,v in ipairs(n.active or {}) do all[#all+1]=v end " +
-            "end " +
-            "for i=#all,1,-1 do local v=all[i] " +
-            "json=json..sep..'{\"title\":\"'..esc(v.title or '')..'\",\"message\":\"'..esc(v.message or '')..'\",\"app\":\"'..esc(v.app_name or '')..'\",' " +
-            "..'\"urgency\":\"'..esc(tostring(v.urgency or 'normal'))..'\"}'  " +
-            "sep=',' end " +
-            "return json..']'"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    var raw = text.trim()
-                    var nl = raw.indexOf("\n")
-                    var jsonStr = nl >= 0 ? raw.substring(nl + 1) : raw
-                    var data = JSON.parse(jsonStr)
-                    root.notifications = data || []
-                } catch (e) {
-                    console.error("NotifTab parse error:", e)
-                    root.notifications = []
-                }
-            }
-        }
-    }
-
-    Process {
-        id: clearProc
-        command: ["somewm-client", "eval",
-            "awesome._notif_history = {}; " +
-            "for _,n in ipairs(require('naughty').active or {}) do n:destroy() end; return 'ok'"]
-        onRunningChanged: {
-            if (!running) {
-                root.notifications = []
-                root.expandedIndex = -1
-            }
-        }
-    }
-
-    Process { id: dismissProc; onRunningChanged: { if (!running) root.refresh() } }
-    Process { id: copyProc }
-
-    IpcHandler {
-        target: "somewm-shell:notifications"
-        function refresh(): void { root.refresh() }
-    }
+    function dismissOne(idx) { Core.NotifStore.dismissOne(idx) }
+    function copyToClipboard(title, message) { Core.NotifStore.copyToClipboard(title, message) }
 
     // === Header row ===
     RowLayout {
