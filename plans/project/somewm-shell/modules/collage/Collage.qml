@@ -2,7 +2,8 @@
 //
 // Per-screen Variants PanelWindow; toggled by compositor tag/overlay state.
 // Edit mode lets the user reshuffle tiles.
-// IPC: somewm-shell:collage { editToggle }
+// IPC: somewm-shell:collage { editToggle, slideStart, slideEnd } — one
+// handler at the root dispatches to the correct per-screen panel.
 // Writes: awesome._shell_overlay
 import QtQuick
 import Quickshell
@@ -12,14 +13,73 @@ import "../../core" as Core
 import "../../services" as Services
 import "../../components" as Components
 
-Variants {
-	model: Quickshell.screens
+Item {
+	id: root
 
-	PanelWindow {
-		id: panel
+	// Self-registered panel list (one entry per physical screen).
+	// Populated by each PanelWindow via Component.onCompleted/onDestruction
+	// so the single IpcHandler below can dispatch to the right one.
+	property var panels: []
 
-		required property var modelData
-		screen: modelData
+	function _findPanel(screenName) {
+		for (var i = 0; i < panels.length; i++) {
+			var p = panels[i]
+			if (p && p.modelData && p.modelData.name === screenName)
+				return p
+		}
+		return null
+	}
+
+	function _focusedPanel() {
+		return _findPanel(Services.Compositor.focusedScreenName)
+	}
+
+	IpcHandler {
+		target: "somewm-shell:collage"
+
+		// Toggle edit mode on the currently focused screen's panel only.
+		// Before this fix the handler lived inside Variants → N duplicate
+		// registrations, only one won, and on multi-monitor setups the wrong
+		// (Samsung TV) panel was the only one that could enter edit mode.
+		function editToggle(): void {
+			var p = root._focusedPanel()
+			if (!p) return
+			if (p.editMode) p._exitEditMode()
+			else if (p.tagActive) p._enterEditMode()
+		}
+
+		// Screen-aware slide signals. rc.lua sends the originating screen
+		// name so we only hide/reshow that monitor's collage, not all of
+		// them. Empty screenName falls back to focused screen for safety.
+		function slideStart(screenName: string, newTag: string): void {
+			var p = screenName ? root._findPanel(screenName) : root._focusedPanel()
+			if (!p) return
+			p._onSlideStart(newTag)
+		}
+
+		function slideEnd(screenName: string): void {
+			var p = screenName ? root._findPanel(screenName) : root._focusedPanel()
+			if (!p) return
+			p._onSlideEnd()
+		}
+	}
+
+	Variants {
+		model: Quickshell.screens
+
+		PanelWindow {
+			id: panel
+
+			required property var modelData
+			screen: modelData
+
+			// Unregister on destruction — registration happens in the
+			// existing Component.onCompleted handler further down (only
+			// one onCompleted is allowed per Item).
+			Component.onDestruction: {
+				var idx = root.panels.indexOf(panel)
+				if (idx >= 0) root.panels.splice(idx, 1)
+			}
 
 		readonly property real sp: Core.Theme.dpiScale
 
@@ -84,13 +144,17 @@ Variants {
 
 		// === Display tag management ===
 
-		// Sync _displayTag from activeTag when not sliding
-		Connections {
-			target: Services.Compositor
-			function onActiveTagChanged() {
-				if (!panel.sliding)
-					panel._displayTag = Services.Compositor.activeTag
-			}
+		// Per-screen active tag — each panel follows its own monitor's tag
+		// instead of mirroring the global focused-screen value. Falls back
+		// to the legacy activeTag when the per-screen map has no entry yet
+		// (first frame / single-monitor).
+		readonly property string screenActiveTag:
+			Services.Compositor.activeTagFor(modelData.name || "")
+
+		// Sync _displayTag from the per-screen active tag when not sliding
+		onScreenActiveTagChanged: {
+			if (!panel.sliding)
+				panel._displayTag = panel.screenActiveTag
 		}
 
 		// === Fade-in / hide logic ===
@@ -451,54 +515,61 @@ Variants {
 			}
 		}
 
-		// === IPC handler ===
+		// === Slide handlers (called by root IpcHandler after screen match) ===
 
-		IpcHandler {
-			target: "somewm-shell:collage"
-
-			function editToggle(): void {
-				if (panel.editMode) {
-					panel._exitEditMode()
-				} else if (panel.tagActive) {
-					panel._enterEditMode()
-				}
-			}
-
-			function slideStart(newTag: string): void {
-				// Force exit edit mode and close picker if active
-				if (collectionPicker.shown) collectionPicker.close()
-				if (panel.editMode) panel._exitEditMode()
-				panel._instantHide()
-				panel.sliding = true
-				// Do NOT update _displayTag here — defer to slideEnd
-				// to avoid Repeater rebuild during slide animation.
-				// activeTag is set globally for other consumers.
-				if (newTag && newTag !== "")
+		function _onSlideStart(newTag) {
+			// Force exit edit mode and close picker if active
+			if (collectionPicker.shown) collectionPicker.close()
+			if (panel.editMode) panel._exitEditMode()
+			panel._instantHide()
+			panel.sliding = true
+			// Update per-screen active tag now; _displayTag stays on the
+			// previous tag until slideEnd to avoid Repeater rebuild during
+			// the slide animation on this screen.
+			if (newTag && newTag !== "") {
+				var scrName = modelData && modelData.name ? modelData.name : ""
+				if (scrName !== "")
+					Services.Compositor.setTagScr(scrName, newTag)
+				else
 					Services.Compositor.activeTag = newTag
-			}
-
-			function slideEnd(): void {
-				// Apply the pending tag now (after slide animation completes)
-				panel._displayTag = Services.Compositor.activeTag
-				panel.sliding = false
-				if (panel.tagActive) {
-					panel._startFadeIn()
-				}
 			}
 		}
 
-		// === Startup: fetch initial active tag ===
+		function _onSlideEnd() {
+			// Apply the pending tag now (after slide animation completes)
+			panel._displayTag = panel.screenActiveTag
+			panel.sliding = false
+			if (panel.tagActive) {
+				panel._startFadeIn()
+			}
+		}
+
+		// === Startup: fetch this screen's initial active tag ===
 
 		Process {
 			id: initTagProc
-			command: ["somewm-client", "eval",
-				"local s = require('awful').screen.focused(); " +
-				"return s and s.selected_tag and s.selected_tag.name or ''"]
+			// Per-screen lookup — find screen by name then return its
+			// selected tag. Falls back to focused screen if name lookup
+			// fails (first-frame race before modelData is populated).
+			command: {
+				var scrName = (modelData && modelData.name) ? modelData.name : ""
+				var lua =
+					"local awful = require('awful'); " +
+					"local scr = nil; " +
+					"for s in screen do if s.name == '" + scrName + "' then scr = s break end end; " +
+					"scr = scr or awful.screen.focused(); " +
+					"return scr and scr.selected_tag and scr.selected_tag.name or ''"
+				return ["somewm-client", "eval", lua]
+			}
 			stdout: StdioCollector {
 				onStreamFinished: {
 					var tag = panel._ipcValue(text)
 					if (tag && tag !== "") {
-						Services.Compositor.activeTag = tag
+						var scrName = modelData && modelData.name ? modelData.name : ""
+						if (scrName !== "")
+							Services.Compositor.setTagScr(scrName, tag)
+						else
+							Services.Compositor.activeTag = tag
 						panel._displayTag = tag
 					}
 				}
@@ -512,7 +583,9 @@ Variants {
 		}
 
 		Component.onCompleted: {
+			root.panels.push(panel)
 			initTagProc.running = true
 		}
+	}
 	}
 }

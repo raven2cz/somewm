@@ -59,25 +59,37 @@ function M.setup()
 		end
 	end)
 
-	-- Active tag tracking (for collage per-tag visibility)
-	-- Only push on select (signal fires for both select and deselect)
+	-- Active tag tracking (for collage per-tag visibility).
+	-- Send BOTH the screen-aware call (setTagScr) and the legacy global
+	-- setTag. The shell maintains a per-screen map so on multi-monitor
+	-- setups each panel shows the right tag instead of mirroring the
+	-- focused screen. Only push on select — signal fires for select+deselect.
 	tag.connect_signal("property::selected", function(t)
-		if t.selected then
+		if not t.selected then return end
+		local tag_name = t.name or tostring(t.index)
+		local s = t.screen
+		local scr_name = s and (s.name or tostring(s.index)) or ""
+		if scr_name ~= "" then
 			awful.spawn({"qs", "ipc", "-c", "somewm", "call",
-				"somewm-shell:compositor", "setTag", t.name or tostring(t.index)})
+				"somewm-shell:compositor", "setTagScr", scr_name, tag_name})
 		end
+		awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+			"somewm-shell:compositor", "setTag", tag_name})
 	end)
 
-	-- Tag slide signals -> QuickShell collage IPC
-	awesome.connect_signal("tag_slide::start", function(_, new_tag_name)
-		if new_tag_name then
-			awful.spawn({"qs", "ipc", "-c", "somewm", "call",
-				"somewm-shell:collage", "slideStart", new_tag_name})
-		end
-	end)
-	awesome.connect_signal("tag_slide::end", function()
+	-- Tag slide signals -> QuickShell collage IPC.
+	-- Carry the originating screen name so the shell only hides/reshows
+	-- that monitor's collage (not all of them).
+	awesome.connect_signal("tag_slide::start", function(s, new_tag_name)
+		if not new_tag_name then return end
+		local scr_name = s and (s.name or tostring(s.index)) or ""
 		awful.spawn({"qs", "ipc", "-c", "somewm", "call",
-			"somewm-shell:collage", "slideEnd"})
+			"somewm-shell:collage", "slideStart", scr_name, new_tag_name})
+	end)
+	awesome.connect_signal("tag_slide::end", function(s)
+		local scr_name = s and (s.name or tostring(s.index)) or ""
+		awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+			"somewm-shell:collage", "slideEnd", scr_name})
 	end)
 end
 

@@ -18,8 +18,19 @@ Singleton {
     property string focusedClient: ""
     // Set by screenProc on startup, then updated by rc.lua screen::focus signal.
     property string focusedScreenName: ""
-    // Active tag name — pushed from rc.lua on tag::selected signal
+    // Active tag name on the focused screen (legacy global — kept for
+    // single-monitor consumers and as fallback when per-screen data is missing).
     property string activeTag: ""
+    // Per-screen active tag: { screenName: tagName }. Populated via
+    // setTagScr() IPC so consumers on multi-monitor setups can show the
+    // correct tag on each physical screen instead of mirroring activeTag.
+    property var activeTagByScreen: ({})
+
+    // Lookup helper — returns per-screen active tag, or activeTag as fallback.
+    function activeTagFor(screenName: string): string {
+        var t = activeTagByScreen[screenName]
+        return (t !== undefined && t !== "") ? t : activeTag
+    }
 
     // Check if a given screen is the focused one.
     // Used by all panel modules to target the correct monitor.
@@ -145,8 +156,19 @@ Singleton {
         function invalidate(): void { root._refreshState() }
         // Focused screen tracking (pushed from rc.lua screen::focus signal)
         function setScreen(name: string): void { root.focusedScreenName = name }
-        // Active tag tracking (pushed from rc.lua tag::selected signal)
+        // Active tag tracking (pushed from rc.lua tag::selected signal).
+        // Legacy single-arg form — updates only the global activeTag.
         function setTag(name: string): void { root.activeTag = name }
+        // Screen-aware form — updates per-screen map AND the global (if this
+        // is the focused screen) so legacy consumers still observe changes.
+        function setTagScr(screenName: string, tagName: string): void {
+            var m = root.activeTagByScreen
+            m[screenName] = tagName
+            // Reassign to trigger QML binding re-evaluation.
+            root.activeTagByScreen = Object.assign({}, m)
+            if (screenName === root.focusedScreenName)
+                root.activeTag = tagName
+        }
         // No eval() exposed! Only typed commands.
         function focus(cls: string): void { root.focusClientByClass(cls) }
         function spawn(cmd: string): void { root.spawn(cmd) }
