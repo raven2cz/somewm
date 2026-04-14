@@ -135,11 +135,16 @@ function M.setup()
 		properties = { tag = screen[1].tags[4] },
 	}
 
-	-- Obsidian -> tag 2
+	-- Obsidian -> active screen + active tag (handles case when screen[1] is off)
 	ruled.client.append_rule {
 		id         = "obsidian",
 		rule_any   = { name = { "Obsidian" } },
-		properties = { tag = screen[1].tags[2] },
+		callback   = function(c)
+			local s = awful.screen.focused()
+			c.screen = s
+			local t = s.selected_tag
+			if t then c:move_to_tag(t) end
+		end,
 	}
 
 	-- GLava visualizer (click-through, no focus)
