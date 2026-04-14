@@ -107,6 +107,42 @@ local function cleanup(st)
 	ov_destroy(st.new_wp)
 	st.old_wp = nil
 	st.new_wp = nil
+	-- Destroy cover overlays placed on non-focused monitors (see
+	-- create_covers below for the rationale).
+	if st.covers then
+		for _, id in ipairs(st.covers) do ov_destroy(id) end
+		st.covers = nil
+	end
+end
+
+--- Create stationary snapshot overlays on every non-focused screen so the
+-- focused-screen slide overlays cannot bleed visually into neighbouring
+-- outputs. Rationale: wp_snapshot/wp_snapshot_path create scene buffers
+-- parented to the global LyrBottom layer; wlroots renders any scene node
+-- whose bbox intersects an output's geometry. During the slide animation
+-- the focused overlays are moved by ov_move() across the screen, and once
+-- their bbox crosses the boundary into a neighbouring monitor that
+-- monitor renders them too — on top of its real wallpaper (LyrBg),
+-- producing a "ghost" slide with foreign wallpaper texture on e.g. a
+-- Samsung TV secondary output. Because wp_overlay_create() calls
+-- wlr_scene_node_raise_to_top() on every overlay it creates, overlays
+-- created AFTER the focused pair sit above them in z-order. Placing a
+-- stationary snapshot of each other screen's own current wallpaper on
+-- top therefore masks any bleed-through — each monitor keeps showing
+-- its own wallpaper for the duration of the animation.
+local function create_covers(focused_s)
+	if not has.snap then return nil end
+	local covers = {}
+	local ok_screen, screen_cap = pcall(function() return _G.screen end)
+	if not ok_screen or not screen_cap then return nil end
+	for other in screen_cap do
+		if other ~= focused_s then
+			local id = nil
+			pcall(function() id = capi.root.wp_snapshot(other) end)
+			if id then covers[#covers + 1] = id end
+		end
+	end
+	return covers
 end
 
 local function cancel_and_snap(s)
@@ -372,6 +408,15 @@ local function animated_viewidx(i, s)
 		end
 	end
 	st.new_wp = new_wp
+
+	-- 3a. Create stationary cover overlays on every OTHER screen. These
+	-- sit above the focused-screen slide overlays in z-order (because
+	-- wp_overlay_create raises each new node to the top) and therefore
+	-- mask any bleed-through when the moving old_wp/new_wp cross a
+	-- monitor boundary during the animation. See create_covers() docstring.
+	if cfg("wallpaper", "enabled") then
+		st.covers = create_covers(s)
+	end
 
 	-- 3b. Signal slide start (consumers like shell overlays can hide)
 	local new_tag_name = predict_tag_name(s, i)
