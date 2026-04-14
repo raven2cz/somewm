@@ -78,18 +78,18 @@ function M.setup()
 	end)
 
 	-- Tag slide signals -> QuickShell collage IPC.
-	-- Carry the originating screen name so the shell only hides/reshows
-	-- that monitor's collage (not all of them).
-	awesome.connect_signal("tag_slide::start", function(s, new_tag_name)
+	-- Kept single-arg (no screen name) — the slide animation itself runs
+	-- in the Lua layer (lua/somewm/tag_slide.lua) and per-screen routing
+	-- of the QS collage overlay was reverted because it didn't help the
+	-- underlying Samsung-TV slide glitch and this path is very sensitive.
+	awesome.connect_signal("tag_slide::start", function(_, new_tag_name)
 		if not new_tag_name then return end
-		local scr_name = s and (s.name or tostring(s.index)) or ""
 		awful.spawn({"qs", "ipc", "-c", "somewm", "call",
-			"somewm-shell:collage", "slideStart", scr_name, new_tag_name})
+			"somewm-shell:collage", "slideStart", new_tag_name})
 	end)
-	awesome.connect_signal("tag_slide::end", function(s)
-		local scr_name = s and (s.name or tostring(s.index)) or ""
+	awesome.connect_signal("tag_slide::end", function()
 		awful.spawn({"qs", "ipc", "-c", "somewm", "call",
-			"somewm-shell:collage", "slideEnd", scr_name})
+			"somewm-shell:collage", "slideEnd"})
 	end)
 end
 

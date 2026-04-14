@@ -48,19 +48,22 @@ Item {
 			else if (p.tagActive) p._enterEditMode()
 		}
 
-		// Screen-aware slide signals. rc.lua sends the originating screen
-		// name so we only hide/reshow that monitor's collage, not all of
-		// them. Empty screenName falls back to focused screen for safety.
-		function slideStart(screenName: string, newTag: string): void {
-			var p = screenName ? root._findPanel(screenName) : root._focusedPanel()
-			if (!p) return
-			p._onSlideStart(newTag)
+		// Slide signals — fan out to every panel. Previously the handler
+		// lived inside Variants so each panel received the signal directly;
+		// now that there's a single root handler we just iterate registered
+		// panels to preserve the original behaviour. Slide animation itself
+		// is driven by the Lua side (lua/somewm/tag_slide.lua) — the QS
+		// collage only uses these signals to hide/reshow its overlay.
+		function slideStart(newTag: string): void {
+			for (var i = 0; i < root.panels.length; i++) {
+				if (root.panels[i]) root.panels[i]._onSlideStart(newTag)
+			}
 		}
 
-		function slideEnd(screenName: string): void {
-			var p = screenName ? root._findPanel(screenName) : root._focusedPanel()
-			if (!p) return
-			p._onSlideEnd()
+		function slideEnd(): void {
+			for (var i = 0; i < root.panels.length; i++) {
+				if (root.panels[i]) root.panels[i]._onSlideEnd()
+			}
 		}
 	}
 
@@ -523,20 +526,18 @@ Item {
 			if (panel.editMode) panel._exitEditMode()
 			panel._instantHide()
 			panel.sliding = true
-			// Update per-screen active tag now; _displayTag stays on the
-			// previous tag until slideEnd to avoid Repeater rebuild during
-			// the slide animation on this screen.
-			if (newTag && newTag !== "") {
-				var scrName = modelData && modelData.name ? modelData.name : ""
-				if (scrName !== "")
-					Services.Compositor.setTagScr(scrName, newTag)
-				else
-					Services.Compositor.activeTag = newTag
-			}
+			// Defer _displayTag update to slideEnd — avoids Repeater
+			// rebuild during animation. Per-screen activeTag is pushed
+			// independently by rc.lua via the tag::selected signal
+			// (setTagScr), so we don't need to set it here.
+			if (newTag && newTag !== "")
+				Services.Compositor.activeTag = newTag
 		}
 
 		function _onSlideEnd() {
-			// Apply the pending tag now (after slide animation completes)
+			// Apply the pending tag now (after slide animation completes).
+			// Prefer the per-screen value so each panel lands on its own
+			// monitor's tag, fall back to the global activeTag.
 			panel._displayTag = panel.screenActiveTag
 			panel.sliding = false
 			if (panel.tagActive) {
