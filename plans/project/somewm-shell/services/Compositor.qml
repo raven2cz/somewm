@@ -32,6 +32,18 @@ Singleton {
         return (t !== undefined && t !== "") ? t : activeTag
     }
 
+    // Update per-screen active tag. Exposed on root (not just via IPC)
+    // so in-process QML consumers can call it directly (e.g. Collage panels
+    // seeding their own screen's tag at startup or during slide animations).
+    function setTagScr(screenName: string, tagName: string): void {
+        var m = activeTagByScreen
+        m[screenName] = tagName
+        // Reassign to trigger QML binding re-evaluation.
+        activeTagByScreen = Object.assign({}, m)
+        if (screenName === focusedScreenName)
+            activeTag = tagName
+    }
+
     // Check if a given screen is the focused one.
     // Used by all panel modules to target the correct monitor.
     function isActiveScreen(screenData): bool {
@@ -159,15 +171,11 @@ Singleton {
         // Active tag tracking (pushed from rc.lua tag::selected signal).
         // Legacy single-arg form — updates only the global activeTag.
         function setTag(name: string): void { root.activeTag = name }
-        // Screen-aware form — updates per-screen map AND the global (if this
-        // is the focused screen) so legacy consumers still observe changes.
+        // Screen-aware form — delegates to root.setTagScr so the same
+        // logic is callable both via IPC (from rc.lua) and directly from
+        // in-process QML (e.g. Collage panels).
         function setTagScr(screenName: string, tagName: string): void {
-            var m = root.activeTagByScreen
-            m[screenName] = tagName
-            // Reassign to trigger QML binding re-evaluation.
-            root.activeTagByScreen = Object.assign({}, m)
-            if (screenName === root.focusedScreenName)
-                root.activeTag = tagName
+            root.setTagScr(screenName, tagName)
         }
         // No eval() exposed! Only typed commands.
         function focus(cls: string): void { root.focusClientByClass(cls) }
