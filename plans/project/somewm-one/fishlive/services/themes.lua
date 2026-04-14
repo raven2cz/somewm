@@ -289,6 +289,11 @@ function themes.switch(theme_name)
 	-- Clear overrides (they belonged to the previous theme)
 	wp_service._overrides = {}
 
+	-- Clear tag_slide animation cache ONCE for all screens — wallpaper_cache_clear()
+	-- is global (clears every screen's cache), so calling it inside the per-screen
+	-- loop would wipe entries preloaded for earlier screens in this same theme switch.
+	if root.wallpaper_cache_clear then root.wallpaper_cache_clear() end
+
 	-- Re-apply wallpapers and rebuild slide cache for all screens
 	for scr in screen do
 		scr._wppath = wppath
@@ -302,7 +307,6 @@ function themes.switch(theme_name)
 			end
 		end
 		-- Rebuild tag_slide animation cache with new theme's resolved paths
-		if root.wallpaper_cache_clear then root.wallpaper_cache_clear() end
 		if root.wallpaper_cache_preload then
 			local paths = {}
 			for _, tag in ipairs(scr.tags) do

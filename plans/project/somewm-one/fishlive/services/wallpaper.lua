@@ -250,9 +250,15 @@ function wallpaper.init(scr, wppath, default_wallpaper, opts)
 	local path = wallpaper._resolve(init_tag)
 	if path then apply_wallpaper(scr, path) end
 
-	-- Pre-cache all resolved wallpapers for tag_slide animation overlays
-	-- Clear stale cache first (previous session may have used different scaling)
-	if root.wallpaper_cache_clear then root.wallpaper_cache_clear() end
+	-- Pre-cache all resolved wallpapers for tag_slide animation overlays.
+	-- Clear stale cache only ONCE per session — cache_clear() is global (wipes
+	-- all screens), so on multi-screen setups (connect_for_each_screen runs
+	-- per screen) repeated clears would erase entries preloaded for screens
+	-- processed earlier. Previous-session staleness is handled by the first call.
+	if root.wallpaper_cache_clear and not wallpaper._cache_cleared_this_session then
+		root.wallpaper_cache_clear()
+		wallpaper._cache_cleared_this_session = true
+	end
 	if root.wallpaper_cache_preload then
 		local paths = {}
 		for _, tag in ipairs(scr.tags) do
