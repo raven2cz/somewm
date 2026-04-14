@@ -128,11 +128,16 @@ function M.setup()
 		end
 	}
 
-	-- Blender -> tag 4
+	-- Blender -> active screen + active tag (handles case when screen[1] is off)
 	ruled.client.append_rule {
 		id         = "blender",
 		rule_any   = { name = { "Blender" } },
-		properties = { tag = screen[1].tags[4] },
+		callback   = function(c)
+			local s = awful.screen.focused()
+			c.screen = s
+			local t = s.selected_tag
+			if t then c:move_to_tag(t) end
+		end,
 	}
 
 	-- Obsidian -> active screen + active tag (handles case when screen[1] is off)
