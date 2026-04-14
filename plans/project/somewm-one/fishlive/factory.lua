@@ -80,6 +80,31 @@ function factory.create(name, screen, config)
 	return widget
 end
 
+--- Build a horizontal widget bar with auto-separators between components.
+--
+-- Replaces repetitive factory.create() + separator() sequences in rc.lua.
+-- Components are resolved by name (same as factory.create). The special
+-- name "systray" inserts wibox.widget.systray().
+--
+-- @tparam table screen Screen object (for DPI/geometry)
+-- @tparam table names Array of component names (e.g. {"cpu", "volume", "clock"})
+-- @treturn table Widget table suitable for wibox layout
+function factory.widget_bar(screen, names)
+	local sep = require("fishlive.widget_helper").separator
+	local widgets = { layout = wibox.layout.fixed.horizontal }
+	for i, name in ipairs(names) do
+		if name == "systray" then
+			widgets[#widgets + 1] = wibox.widget.systray()
+		else
+			widgets[#widgets + 1] = factory.create(name, screen)
+		end
+		if i < #names then
+			widgets[#widgets + 1] = sep()
+		end
+	end
+	return widgets
+end
+
 --- List all available component names (for debug/introspection).
 -- @treturn table Array of component names
 function factory.list()

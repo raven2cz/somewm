@@ -1,4 +1,11 @@
 pragma Singleton
+
+// Portraits — portrait image collections for the collage background.
+//
+// Scans `basePath` (from config) for collection subdirs, lazily enumerates
+// images per collection, and exposes random/indexed lookup helpers.
+// IPC: somewm-shell:portraits { refresh }
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

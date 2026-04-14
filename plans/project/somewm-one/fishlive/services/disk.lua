@@ -1,7 +1,16 @@
 ---------------------------------------------------------------------------
 --- Disk usage service — btrfs-aware with df fallback.
 --
+-- For btrfs mounts uses `btrfs filesystem usage` (compression/dedup-aware);
+-- for other filesystems falls back to `df -B1`. Reports all configured
+-- mount points plus a primary mount convenience summary.
+--
+-- Signal: data::disk — { mounts, percent, used, total, icon }
+-- Interval: 60s (disk usage changes slowly).
+--
 -- @module fishlive.services.disk
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

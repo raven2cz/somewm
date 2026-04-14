@@ -1,3 +1,6 @@
+// FadeLoader — lazy Loader that fades its content in/out via `shown`.
+//
+// Instantiates `content` only while shown; opacity is animated on toggle.
 import QtQuick
 import "../core" as Core
 

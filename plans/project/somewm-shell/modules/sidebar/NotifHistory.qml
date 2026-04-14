@@ -1,99 +1,28 @@
+// NotifHistory — sidebar notification list.
+//
+// Display shell for Core.NotifStore. No IPC logic here — the store owns
+// fetching/dismiss/clear/copy and the somewm-shell:notifications handler.
+// Bind to Core.NotifStore.notifications, call its functions for actions.
+
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Io
 import "../../core" as Core
 import "../../components" as Components
 
 Item {
     id: root
 
-    property var notifications: []
     property int expandedIndex: -1
+    readonly property var notifications: Core.NotifStore.notifications
 
-    // Fetch notifications from compositor via IPC.
-    // Uses _somewm_notif_history if available, else falls back to naughty.active.
-    function refresh() {
-        fetchProc.running = true
-    }
-
+    function refresh() { Core.NotifStore.refresh() }
     function clearAll() {
-        clearProc.running = true
+        Core.NotifStore.clearAll()
+        root.expandedIndex = -1
     }
-
-    function dismissOne(idx) {
-        dismissProc.command = ["somewm-client", "eval",
-            "if _somewm_notif_history then table.remove(_somewm_notif_history, " + (idx + 1) + ") end; return 'ok'"]
-        dismissProc.running = true
-    }
-
-    function copyToClipboard(title, message) {
-        var content = title
-        if (message) content += "\\n" + message
-        copyProc.command = ["sh", "-c", "printf '%s' '" + content.replace(/'/g, "'\\''") + "' | wl-copy"]
-        copyProc.running = true
-    }
-
-    Process {
-        id: fetchProc
-        command: ["somewm-client", "eval",
-            "local n = require('naughty'); " +
-            "local function esc(s) return s:gsub('\\\\','\\\\\\\\'):gsub('\"','\\\\\"'):gsub('\\n','\\\\n'):gsub('\\t','\\\\t'):gsub('\\r','') end " +
-            "local json='[' local sep='' " +
-            "local all = {} " +
-            "if _somewm_notif_history and #_somewm_notif_history > 0 then " +
-            "for _,v in ipairs(_somewm_notif_history) do all[#all+1]=v end " +
-            "else " +
-            "for _,v in ipairs(n.active or {}) do all[#all+1]=v end " +
-            "end " +
-            "for i=#all,1,-1 do local v=all[i] " +
-            "json=json..sep..'{\"title\":\"'..esc(v.title or '')..'\",\"message\":\"'..esc(v.message or '')..'\",\"app\":\"'..esc(v.app_name or '')..'\"}'  " +
-            "sep=',' end " +
-            "return json..']'"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                try {
-                    // somewm-client eval returns "OK\n<value>" — strip prefix
-                    var raw = text.trim()
-                    var nl = raw.indexOf("\n")
-                    var jsonStr = nl >= 0 ? raw.substring(nl + 1) : raw
-                    var data = JSON.parse(jsonStr)
-                    root.notifications = data || []
-                } catch (e) {
-                    console.error("NotifHistory parse error:", e)
-                    root.notifications = []
-                }
-            }
-        }
-    }
-
-    Process {
-        id: clearProc
-        command: ["somewm-client", "eval",
-            "_somewm_notif_history = {}; " +
-            "for _,n in ipairs(require('naughty').active or {}) do n:destroy() end; return 'ok'"]
-        onRunningChanged: {
-            if (!running) {
-                root.notifications = []
-                root.expandedIndex = -1
-            }
-        }
-    }
-
-    Process {
-        id: dismissProc
-        onRunningChanged: {
-            if (!running) root.refresh()
-        }
-    }
-
-    Process { id: copyProc }
-
-    // IPC: refresh when new notifications arrive
-    IpcHandler {
-        target: "somewm-shell:notifications"
-        function refresh(): void { root.refresh() }
-    }
+    function dismissOne(idx) { Core.NotifStore.dismissOne(idx) }
+    function copyToClipboard(title, message) { Core.NotifStore.copyToClipboard(title, message) }
 
     ColumnLayout {
         anchors.fill: parent
@@ -304,6 +233,4 @@ Item {
             }
         }
     }
-
-    Component.onCompleted: refresh()
 }

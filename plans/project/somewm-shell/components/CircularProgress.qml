@@ -1,3 +1,7 @@
+// CircularProgress — Canvas-based circular progress ring (0..1 value).
+//
+// Renders track + progress strokes with animated sweep; repaints on
+// animatedValue / size changes.
 import QtQuick
 import "../core" as Core
 

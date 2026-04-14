@@ -1,3 +1,6 @@
+// TabBar — icon+label tab row with an animated underline indicator.
+//
+// `tabs` is an array of { icon, label }; emits `tabChanged(index)` on select.
 import QtQuick
 import QtQuick.Layouts
 import "../core" as Core

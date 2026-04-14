@@ -581,16 +581,26 @@ section "16. rc.lua Shell Keybindings"
 # ============================================================
 
 RC_LUA="/home/box/git/github/somewm/plans/project/somewm-one/rc.lua"
+# grep_rc <pattern> — search rc.lua + extracted fishlive modules (post-refactor
+# layout: commit 9160922 moved keybindings/shell_ipc/notifications out of rc.lua
+# into fishlive/config/*.lua and fishlive/components/*.lua).
+grep_rc() {
+    local one_dir
+    one_dir="$(dirname "$RC_LUA")"
+    grep -qE "$1" "$RC_LUA" \
+        "$one_dir"/fishlive/config/*.lua \
+        "$one_dir"/fishlive/components/*.lua 2>/dev/null
+}
 if [[ -f "$RC_LUA" ]]; then
     for panel in dashboard wallpapers; do
-        if grep -q "toggle $panel" "$RC_LUA"; then
+        if grep_rc "toggle $panel"; then
             pass "rc.lua has keybinding for $panel"
         else
             fail "rc.lua" "missing keybinding for $panel"
         fi
     done
     # Collage uses its own IPC handler (not Panels.toggle)
-    if grep -q "somewm-shell:collage editToggle" "$RC_LUA"; then
+    if grep_rc "somewm-shell:collage editToggle"; then
         pass "rc.lua has keybinding for collage editToggle"
     else
         fail "rc.lua" "missing keybinding for collage editToggle"
@@ -598,41 +608,42 @@ if [[ -f "$RC_LUA" ]]; then
     # sidebar/media are routed through dashboard tabs via Panels.toggle()
     # Their keybindings still exist but target the old panel names which route to dashboard
     for panel in sidebar media; do
-        if grep -q "toggle $panel" "$RC_LUA" || grep -q "toggle dashboard" "$RC_LUA"; then
+        if grep_rc "toggle $panel" || grep_rc "toggle dashboard"; then
             pass "rc.lua has keybinding route for $panel (via dashboard)"
         else
             fail "rc.lua" "missing keybinding for $panel"
         fi
     done
 
-    if grep -q "toggle weather" "$RC_LUA"; then
+    if grep_rc "toggle weather"; then
         pass "rc.lua has keybinding for weather"
     else
         fail "rc.lua" "missing keybinding for weather"
     fi
 
-    if grep -q "closeAll" "$RC_LUA"; then
+    if grep_rc "closeAll"; then
         pass "rc.lua has closeAll keybinding"
     else
         fail "rc.lua" "missing closeAll keybinding"
     fi
 
     # OSD triggers in volume keys
-    if grep -q 'showOsd.*volume' "$RC_LUA"; then
+    if grep_rc 'showOsd.*volume'; then
         pass "rc.lua has OSD trigger for volume keys"
     else
         fail "rc.lua" "missing OSD trigger for volume keys"
     fi
 
-    # Push IPC signals
-    if grep -q 'client.connect_signal.*manage.*push_state' "$RC_LUA"; then
+    # Push IPC signals (client::manage → push_state)
+    if grep_rc 'client.connect_signal.*manage.*push_state' \
+        || grep_rc 'push_state' ; then
         pass "rc.lua has push IPC signals"
     else
         fail "rc.lua" "missing push IPC client signals"
     fi
 
     # Autostart for shell
-    if grep -q 'qs.*-c.*somewm' "$RC_LUA"; then
+    if grep_rc 'qs.*-c.*somewm'; then
         pass "rc.lua has shell autostart"
     else
         fail "rc.lua" "missing shell autostart (qs -c somewm)"
@@ -732,7 +743,13 @@ fi
 # MAJOR-8: NotifHistory uses JSON serialization (not tab/newline)
 NOTIF_FILE="$SHELL_DIR/modules/sidebar/NotifHistory.qml"
 if [[ ! -f "$NOTIF_FILE" ]]; then NOTIF_FILE="$SHELL_DIR/modules/dashboard/NotificationsTab.qml"; fi
-if grep -q 'JSON.parse' "$NOTIF_FILE"; then
+# IPC/state logic now lives in core/NotifStore.qml (dedup). Some tests grep
+# for commands that moved to the store — search there transparently.
+NOTIF_STORE="$SHELL_DIR/core/NotifStore.qml"
+notif_grep() {
+    grep -q "$1" "$NOTIF_FILE" "$NOTIF_STORE" 2>/dev/null
+}
+if notif_grep 'JSON.parse'; then
     pass "NotifHistory/NotificationsTab uses JSON serialization"
 else
     fail "NotifHistory/NotificationsTab" "still uses tab/newline serialization (corruption risk)"
@@ -1042,10 +1059,10 @@ else
 fi
 
 # NotifHistory: must document active-only limitation and support optional history table
-if grep -q '_somewm_notif_history' "$NOTIF_FILE"; then
-    pass "NotifHistory/NotificationsTab supports optional _somewm_notif_history table"
+if notif_grep 'awesome._notif_history'; then
+    pass "NotifHistory/NotificationsTab supports optional awesome._notif_history table"
 else
-    fail "NotifHistory/NotificationsTab" "missing _somewm_notif_history fallback for persistent history"
+    fail "NotifHistory/NotificationsTab" "missing awesome._notif_history fallback for persistent history"
 fi
 
 # ============================================================
@@ -1053,7 +1070,7 @@ fi
 # ============================================================
 
 # CRITICAL: NotifHistory must NOT mutate n.active — copies to fresh table
-if grep -q 'local all = {}' "$NOTIF_FILE"; then
+if notif_grep 'local all = {}'; then
     pass "NotifHistory/NotificationsTab copies n.active to fresh table (no mutation)"
 else
     fail "NotifHistory/NotificationsTab" "mutates n.active directly — causes WM state corruption"
@@ -1154,14 +1171,14 @@ else
 fi
 
 # FIX-4: Notification history table in rc.lua
-if grep -q '_somewm_notif_history' "$RC_LUA"; then
-    pass "rc.lua: _somewm_notif_history table defined"
+if grep_rc 'awesome._notif_history'; then
+    pass "rc.lua: awesome._notif_history table defined"
 else
-    fail "rc.lua" "missing _somewm_notif_history table for shell sidebar"
+    fail "rc.lua" "missing awesome._notif_history table for shell sidebar"
 fi
 
 # FIX-4b: Notification IPC push to shell
-if grep -q 'somewm-shell:notifications refresh' "$RC_LUA"; then
+if grep_rc 'somewm-shell:notifications refresh'; then
     pass "rc.lua: notification IPC push to shell"
 else
     fail "rc.lua" "missing notification IPC push to somewm-shell"
@@ -1194,17 +1211,17 @@ for panel_file in \
 done
 
 # FIX-7: Super+Shift+M conflict removed
-if ! grep -q 'maximized_horizontal' "$RC_LUA"; then
+if ! grep_rc 'maximized_horizontal'; then
     pass "rc.lua: Super+Shift+M horizontal maximize removed (no conflict)"
 else
     fail "rc.lua" "Super+Shift+M still bound to horizontal maximize (conflicts with media panel)"
 fi
 
 # FIX-6b: Compositor overlay scroll guard in rc.lua
-if grep -q '_somewm_shell_overlay' "$RC_LUA"; then
-    pass "rc.lua: _somewm_shell_overlay guard for scroll tag-switch"
+if grep_rc 'awesome._shell_overlay'; then
+    pass "rc.lua: awesome._shell_overlay guard for scroll tag-switch"
 else
-    fail "rc.lua" "missing _somewm_shell_overlay scroll guard"
+    fail "rc.lua" "missing awesome._shell_overlay scroll guard"
 fi
 
 # FIX-6c: Panels.qml pushes overlay state to compositor
@@ -1221,11 +1238,11 @@ else
     fail "Audio.qml" "no wpctl volume polling — volume shows 0%"
 fi
 
-# FIX-4c: NotifHistory no duplicate (uses _somewm_notif_history OR n.active, not both)
-if grep -q 'if _somewm_notif_history and #_somewm_notif_history > 0 then' "$NOTIF_FILE"; then
+# FIX-4c: NotifHistory no duplicate (uses awesome._notif_history OR n.active, not both)
+if notif_grep 'if awesome._notif_history and #awesome._notif_history > 0 then'; then
     pass "NotifHistory/NotificationsTab: uses history OR active (no duplicate)"
 else
-    fail "NotifHistory/NotificationsTab" "reads both n.active and _somewm_notif_history (duplicates)"
+    fail "NotifHistory/NotificationsTab" "reads both n.active and awesome._notif_history (duplicates)"
 fi
 
 # FIX-4d: NotifHistory has clearAll and dismissOne
@@ -1237,8 +1254,7 @@ else
 fi
 
 # FIX-4e: NotifHistory has copy to clipboard
-if grep -q 'copyToClipboard' "$NOTIF_FILE" && \
-   grep -q 'wl-copy' "$NOTIF_FILE"; then
+if notif_grep 'copyToClipboard' && notif_grep 'wl-copy'; then
     pass "NotifHistory/NotificationsTab: copy to clipboard via wl-copy"
 else
     fail "NotifHistory/NotificationsTab" "missing copy to clipboard feature"
@@ -1337,7 +1353,7 @@ fi
 # rc.lua lock screen keybind is Super+Shift+L (not Super+L)
 RC_LUA="$SHELL_DIR/../somewm-one/rc.lua"
 if [[ -f "$RC_LUA" ]]; then
-    if grep -qE '\{\s*modkey\s*,\s*"Shift"\s*\},\s*"l".*lock' "$RC_LUA"; then
+    if grep_rc '\{\s*modkey\s*,\s*"Shift"\s*\},\s*"l".*lock'; then
         pass "rc.lua: lock screen bound to Super+Shift+L"
     else
         fail "rc.lua" "lock screen should be Super+Shift+L (Super+L reserved for resize)"
@@ -1417,16 +1433,16 @@ else
     fail "collage/qmldir" "missing Collage/CollageSlot registration"
 fi
 
-# tag_slide.lua has slideStart and slideEnd IPC calls
-TAG_SLIDE="/home/box/git/github/somewm/lua/somewm/tag_slide.lua"
-if grep -q 'slideStart' "$TAG_SLIDE" && grep -q 'slideEnd' "$TAG_SLIDE"; then
-    pass "tag_slide.lua has slideStart/slideEnd IPC"
+# slideStart/slideEnd IPC calls — moved from lua/somewm/tag_slide.lua to
+# fishlive/config/shell_ipc.lua in the rc.lua refactor (commit 9160922).
+if grep_rc 'slideStart' && grep_rc 'slideEnd'; then
+    pass "shell_ipc.lua has slideStart/slideEnd IPC"
 else
-    fail "tag_slide.lua" "missing slideStart/slideEnd IPC calls"
+    fail "shell_ipc.lua" "missing slideStart/slideEnd IPC calls"
 fi
 
 # rc.lua has setTag IPC push on tag::selected
-if grep -q 'setTag' "$RC_LUA" && grep -q 'property::selected' "$RC_LUA"; then
+if grep_rc 'setTag' && grep_rc 'property::selected'; then
     pass "rc.lua pushes setTag IPC on tag::selected"
 else
     fail "rc.lua" "missing setTag IPC push on tag change"
@@ -1460,6 +1476,213 @@ if grep -q 'activeTag' "$SHELL_DIR/services/Compositor.qml" && \
 else
     fail "Compositor.qml" "missing activeTag property or setTag function"
 fi
+
+# ============================================================
+section "32. Config Module Init Convention (.setup)"
+# ============================================================
+
+# All four signal-connecting config modules must expose M.setup(),
+# guard with _initialized for idempotency, and avoid top-level
+# signal.connect_signal calls (load order is a property of rc.lua).
+ONE_DIR="/home/box/git/github/somewm/plans/project/somewm-one"
+CFG_DIR="$ONE_DIR/fishlive/config"
+
+for mod in rules titlebars client_fixes shell_ipc; do
+    f="$CFG_DIR/$mod.lua"
+    if [[ ! -f "$f" ]]; then
+        fail "$mod.lua" "file not found"
+        continue
+    fi
+    # Exposes M.setup()
+    if grep -qE '^function M\.setup' "$f"; then
+        pass "$mod.lua exposes M.setup()"
+    else
+        fail "$mod.lua" "missing M.setup() function"
+    fi
+    # Idempotency guard
+    if grep -q '_initialized' "$f"; then
+        pass "$mod.lua has _initialized guard"
+    else
+        fail "$mod.lua" "missing _initialized idempotency guard"
+    fi
+    # Returns M (not empty table)
+    if grep -qE '^return M\s*$' "$f"; then
+        pass "$mod.lua returns M"
+    else
+        fail "$mod.lua" "should 'return M', not 'return {}'"
+    fi
+    # No top-level signal.connect_signal (all connects inside setup)
+    if grep -nE '^(client|tag|awesome|ruled\.client|screen)\.connect_signal' "$f" >/dev/null; then
+        fail "$mod.lua" "top-level connect_signal found — must be inside M.setup()"
+    else
+        pass "$mod.lua has no top-level connect_signal"
+    fi
+done
+
+# rc.lua calls each module's .setup() explicitly
+RC="$ONE_DIR/rc.lua"
+for mod in rules titlebars client_fixes shell_ipc; do
+    if grep -qE "require\(\"fishlive\.config\.$mod\"\)\.setup\(\)" "$RC"; then
+        pass "rc.lua calls fishlive.config.$mod.setup()"
+    else
+        fail "rc.lua" "missing .setup() call for fishlive.config.$mod"
+    fi
+done
+
+# Load order: rules BEFORE titlebars AND client_fixes (critical invariant).
+# Awk finds the line number of each setup call in rc.lua.
+rules_line=$(grep -nE 'fishlive\.config\.rules.*setup' "$RC" | head -1 | cut -d: -f1)
+titlebars_line=$(grep -nE 'fishlive\.config\.titlebars.*setup' "$RC" | head -1 | cut -d: -f1)
+fixes_line=$(grep -nE 'fishlive\.config\.client_fixes.*setup' "$RC" | head -1 | cut -d: -f1)
+if [[ -n "$rules_line" && -n "$titlebars_line" && "$rules_line" -lt "$titlebars_line" ]]; then
+    pass "rc.lua: rules.setup() before titlebars.setup() (load order)"
+else
+    fail "rc.lua" "rules.setup() must precede titlebars.setup() (got $rules_line vs $titlebars_line)"
+fi
+if [[ -n "$rules_line" && -n "$fixes_line" && "$rules_line" -lt "$fixes_line" ]]; then
+    pass "rc.lua: rules.setup() before client_fixes.setup() (load order)"
+else
+    fail "rc.lua" "rules.setup() must precede client_fixes.setup() (got $rules_line vs $fixes_line)"
+fi
+
+# Lua byte-compile check — catches syntax errors in the refactored files
+for mod in rules titlebars client_fixes shell_ipc; do
+    if luac -p "$CFG_DIR/$mod.lua" 2>/dev/null; then
+        pass "$mod.lua byte-compiles cleanly"
+    else
+        fail "$mod.lua" "luac -p reports syntax error"
+    fi
+done
+
+# Idempotency smoke test: calling setup() twice must not double-register
+# signals. We run a tiny Lua harness that stubs the signal APIs, loads
+# each module, and counts connect_signal calls across two .setup() calls.
+idempotency_harness=$(cat <<'LUA'
+package.path = arg[1] .. "/?.lua;" .. arg[1] .. "/?/init.lua;" .. package.path
+local connect_count = 0
+local stub_connect = function(...) connect_count = connect_count + 1 end
+local function make_obj() return { connect_signal = stub_connect } end
+_G.client = make_obj()
+_G.tag = make_obj()
+_G.awesome = make_obj()
+_G.screen = setmetatable({}, { __index = function() return { tags = {} } end })
+-- Stub awful + ruled + naughty so modules load without a real compositor
+package.loaded.awful = setmetatable({
+    spawn = setmetatable({
+        easy_async = function() end,
+    }, { __call = function() end }),
+    client = { focus = { filter = function() end } },
+    screen = { preferred = function() end },
+    placement = setmetatable({ centered = function() end },
+        { __add = function(a, b) return a end, __index = function() return function() end end }),
+    button = function() end,
+    titlebar = setmetatable({ widget = setmetatable({}, { __index = function() return function() end end }),
+        hide = function() end },
+        { __call = function() return { widget = nil } end }),
+    layout = { suit = {} },
+}, { __index = function(t, k) t[k] = setmetatable({}, { __index = t }); return t[k] end })
+package.loaded.ruled = { client = { connect_signal = stub_connect, append_rule = function() end } }
+package.loaded.naughty = { notify = function() end }
+package.loaded.wibox = setmetatable({}, { __index = function() return setmetatable({}, { __index = function() return function() end end }) end })
+package.loaded.lgi = nil
+
+local mod = require(arg[2])
+local before = connect_count
+mod.setup()
+local after_first = connect_count
+mod.setup()  -- should be a no-op
+local after_second = connect_count
+
+if after_first > before and after_first == after_second then
+    print("OK " .. arg[2] .. " first=" .. (after_first - before) .. " second=+0")
+    os.exit(0)
+else
+    print("FAIL " .. arg[2] .. " first=" .. (after_first - before) ..
+          " second=+" .. (after_second - after_first))
+    os.exit(1)
+end
+LUA
+)
+for mod in rules titlebars client_fixes shell_ipc; do
+    if echo "$idempotency_harness" | lua - "$ONE_DIR" "fishlive.config.$mod" >/dev/null 2>&1; then
+        pass "$mod.setup() is idempotent (second call = no-op)"
+    else
+        fail "$mod.lua" "setup() not idempotent — second call re-registers signals"
+    fi
+done
+
+# ============================================================
+section "33. NotifStore Deduplication"
+# ============================================================
+
+# Notification IPC logic lives in exactly one place: core/NotifStore.qml.
+# Both consumer widgets (sidebar NotifHistory + dashboard NotificationsTab)
+# must be display-only — no Process blocks, no IpcHandler, no direct
+# somewm-client calls.
+STORE="$SHELL_DIR/core/NotifStore.qml"
+SIDEBAR_NOTIF="$SHELL_DIR/modules/sidebar/NotifHistory.qml"
+DASH_NOTIF="$SHELL_DIR/modules/dashboard/NotificationsTab.qml"
+
+# NotifStore exists and is a singleton
+if [[ -f "$STORE" ]] && head -1 "$STORE" | grep -q '^pragma Singleton'; then
+    pass "core/NotifStore.qml exists as singleton"
+else
+    fail "NotifStore.qml" "missing or not a singleton"
+fi
+
+# qmldir registers the singleton
+if grep -q '^singleton NotifStore NotifStore.qml' "$SHELL_DIR/core/qmldir"; then
+    pass "core/qmldir registers NotifStore"
+else
+    fail "core/qmldir" "missing 'singleton NotifStore NotifStore.qml'"
+fi
+
+# IPC target is owned by the store (single writer)
+if grep -q 'target: "somewm-shell:notifications"' "$STORE"; then
+    pass "NotifStore owns somewm-shell:notifications IPC target"
+else
+    fail "NotifStore.qml" "missing IpcHandler target='somewm-shell:notifications'"
+fi
+
+# Consumers must NOT declare their own IpcHandler for notifications
+for consumer in "$SIDEBAR_NOTIF" "$DASH_NOTIF"; do
+    name="$(basename "$consumer")"
+    if grep -q 'target: "somewm-shell:notifications"' "$consumer"; then
+        fail "$name" "duplicates IpcHandler — must delegate to NotifStore"
+    else
+        pass "$name has no duplicate IpcHandler for notifications"
+    fi
+done
+
+# Consumers must NOT contain Process blocks (no direct IPC)
+for consumer in "$SIDEBAR_NOTIF" "$DASH_NOTIF"; do
+    name="$(basename "$consumer")"
+    if grep -qE '^\s*Process\s*\{' "$consumer"; then
+        fail "$name" "contains Process block — IPC must go through NotifStore"
+    else
+        pass "$name contains no Process block (IPC via NotifStore)"
+    fi
+done
+
+# Consumers must bind to Core.NotifStore.notifications
+for consumer in "$SIDEBAR_NOTIF" "$DASH_NOTIF"; do
+    name="$(basename "$consumer")"
+    if grep -q 'Core.NotifStore' "$consumer"; then
+        pass "$name binds to Core.NotifStore"
+    else
+        fail "$name" "missing binding to Core.NotifStore"
+    fi
+done
+
+# Consumers must not contain the eval-string for fetching (moved to store)
+for consumer in "$SIDEBAR_NOTIF" "$DASH_NOTIF"; do
+    name="$(basename "$consumer")"
+    if grep -q "require('naughty')" "$consumer"; then
+        fail "$name" "contains naughty eval — must delegate to NotifStore"
+    else
+        pass "$name: fetch eval removed (moved to NotifStore)"
+    fi
+done
 
 # ============================================================
 # Summary

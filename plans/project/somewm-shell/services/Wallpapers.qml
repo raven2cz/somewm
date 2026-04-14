@@ -1,4 +1,11 @@
 pragma Singleton
+
+// Wallpapers — wallpaper browsing, per-tag overrides, and theme switching.
+//
+// Scans folders, caches thumbnails, tracks current wallpaper and per-tag
+// overrides pushed from the compositor, and applies themes via swww + pywal.
+// IPC: somewm-shell:wallpapers { switchTheme, reloadTheme }
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

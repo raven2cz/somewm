@@ -3,7 +3,8 @@
 # Usage: ./deploy.sh [--dry-run]
 #
 # Copies the somewm-shell project from the repo to the Quickshell config dir.
-# Copies config.default.json → config.json only if config.json doesn't exist.
+# *.default.json files are excluded from rsync and seeded only if the target
+# file doesn't exist (preserves user edits made in-app).
 
 set -euo pipefail
 
@@ -12,21 +13,27 @@ TARGET="$HOME/.config/quickshell/somewm"
 
 if [[ "${1:-}" == "--dry-run" ]]; then
     echo "Dry run — would sync:"
-    rsync -av --exclude 'deploy.sh' --exclude 'config.default.json' --dry-run "$SCRIPT_DIR/" "$TARGET/"
+    rsync -av --exclude 'deploy.sh' --exclude '*.default.json' --dry-run "$SCRIPT_DIR/" "$TARGET/"
     exit 0
 fi
 
 # Create target directory
 mkdir -p "$TARGET"
 
-# Sync (exclude deploy.sh and *.default.json)
-rsync -av --exclude 'deploy.sh' --exclude 'config.default.json' "$SCRIPT_DIR/" "$TARGET/"
+# Sync (exclude deploy.sh and *.default.json — those are seeded below)
+rsync -av --exclude 'deploy.sh' --exclude '*.default.json' "$SCRIPT_DIR/" "$TARGET/"
 
-# Copy config.default.json → config.json only if not exists (preserve user edits)
-if [[ ! -f "$TARGET/config.json" ]]; then
-    cp "$SCRIPT_DIR/config.default.json" "$TARGET/config.json"
-    echo "Created config.json from defaults"
-fi
+# Seed *.default.json → *.json only if target doesn't exist (preserve user edits).
+# Applies to config.json, collage-layouts.json, and any future seedable defaults.
+for default_file in "$SCRIPT_DIR"/*.default.json; do
+    [[ -e "$default_file" ]] || continue
+    target_name="$(basename "$default_file" .default.json).json"
+    target_path="$TARGET/$target_name"
+    if [[ ! -f "$target_path" ]]; then
+        cp "$default_file" "$target_path"
+        echo "Seeded $target_name from defaults"
+    fi
+done
 
 # Seed theme.json if not exists (ensures QS Theme singleton loads real colors)
 THEME_JSON="$HOME/.config/somewm/themes/default/theme.json"

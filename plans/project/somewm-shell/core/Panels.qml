@@ -46,7 +46,7 @@ Singleton {
 
     function _pushOverlayState() {
         overlayStateProc.command = ["somewm-client", "eval",
-            "_somewm_shell_overlay = " + (anyOverlayOpen ? "true" : "false")]
+            "awesome._shell_overlay = " + (anyOverlayOpen ? "true" : "false")]
         overlayStateProc.running = true
     }
 

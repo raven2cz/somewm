@@ -1,4 +1,10 @@
 pragma Singleton
+
+// Weather — current conditions + forecast via wttr.in.
+//
+// Refreshes every 60 minutes (cached); exposes temp, humidity, wind, and a
+// forecast array. `forceRefresh()` bypasses the cache.
+
 import QtQuick
 import Quickshell
 

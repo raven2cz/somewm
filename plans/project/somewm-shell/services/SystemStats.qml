@@ -1,4 +1,10 @@
 pragma Singleton
+
+// SystemStats — CPU / memory / disk / uptime + lazy GPU + CPU temperature.
+//
+// Always-on polling for wibar/home-tab data; GPU/temp probes gated by
+// `perfTabActive` so the PerformanceTab only pays the cost when visible.
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

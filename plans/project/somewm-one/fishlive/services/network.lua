@@ -1,7 +1,16 @@
 ---------------------------------------------------------------------------
 --- Network service — async read of /proc/net/dev, rate calculation.
 --
+-- Picks the primary interface (skips lo/docker/veth/br-/virbr) and computes
+-- rx/tx rates from byte deltas against a nanosecond timestamp. Formats rates
+-- fixed-width (5 chars) for stable wibar layout.
+--
+-- Signal: data::network — { interface, rx_rate, tx_rate, rx_formatted, tx_formatted, icon_up, icon_down }
+-- Interval: 2s.
+--
 -- @module fishlive.services.network
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

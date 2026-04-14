@@ -1,3 +1,7 @@
+// OSD — transient on-screen indicator (volume / brightness / custom).
+//
+// Per-screen Variants. Shown via Panels IPC `showOsd(type, value)`; auto-
+// fades after a short timeout.
 import QtQuick
 import QtQuick.Layouts
 import Quickshell

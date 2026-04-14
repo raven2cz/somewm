@@ -1,3 +1,6 @@
+// StatCard — GlassCard showing an icon + large value + label.
+//
+// Used on dashboard tabs to surface a single metric (CPU %, RAM, etc.).
 import QtQuick
 import QtQuick.Layouts
 import "../core" as Core

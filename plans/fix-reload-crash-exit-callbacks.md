@@ -121,18 +121,22 @@ Nebo pro menší změny (jen rc.lua/Lua moduly):
 somewm-client exec somewm
 ```
 
-## Crashlog infrastruktura (TODO)
+## Crashlog infrastruktura (DONE — 2026-04-11)
 
-Aktuálně nemáme způsob jak zachytit logy z před-crashového stavu. Potřeba:
+Implementováno v `feat/mebox-menus` branchi:
 
-1. **Pre-reload snapshot** — skript, který před reloadem uloží:
-   - `journalctl --user -n 200` snapshot
-   - `~/.local/log/somewm-debug.log` tail
-   - `dmesg` tail (pro GPU/kernel errory)
-   - Timestamped do `~/.local/log/somewm-crashlogs/`
+1. **Pre-reload snapshot** — `plans/scripts/somewm-snapshot.sh`
+   - journalctl, debug-tail, errors, dmesg, compositor state
+   - `~/.local/log/somewm-crashlogs/YYYYMMDD-HHMMSS/`
+   - Auto-prune >30 dní
 
-2. **Rotace logů** — `somewm-debug.log` se přepisuje při každém startu (`tee`), starý log se ztrácí
+2. **Rotace logů** — `plans/scripts/somewm-log-rotate.sh`
+   - 5 kopií (`.1` až `.5`), voláno z `start.sh`
 
-3. **Claude Code hook** — automatický snapshot před `somewm-client reload/restart/exec` příkazy
+3. **Claude Code hook** — `plans/scripts/somewm-hook-pre-reload.sh`
+   - PreToolUse hook v `.claude/projects/.../settings.json`
+   - Automatický snapshot před `somewm-client reload/restart/exec`
 
-4. **Post-mortem analyzer** — skript pro rychlou analýzu posledního crashlogu
+4. **Post-mortem analyzer** — `plans/scripts/somewm-postmortem.sh`
+   - Čte poslední snapshot, filtruje SEGFAULT/GPU/Lua chyby
+   - Výstup vhodný pro paste do Claude Code

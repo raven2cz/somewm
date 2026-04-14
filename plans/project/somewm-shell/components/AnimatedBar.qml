@@ -1,3 +1,7 @@
+// AnimatedBar — horizontal progress bar with animated width.
+//
+// Accepts `value` (0..1) and renders a rounded fill over a track using the
+// standard motion tokens from Core.Anims for its width transition.
 import QtQuick
 import "../core" as Core
 

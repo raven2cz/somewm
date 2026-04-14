@@ -1,3 +1,7 @@
+// WallpaperCarousel — horizontal overlap carousel of wallpaper thumbnails.
+//
+// `wallpapers` is an array of { path, name }; emits `wallpaperSelected` on
+// index change and `wallpaperApplied` when the user confirms a choice.
 import QtQuick
 import "../core" as Core
 

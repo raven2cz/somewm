@@ -1,3 +1,6 @@
+// SectionHeader — accent dot + title row used as a section label.
+//
+// Takes `title` and optional `accentColor`; fills the remaining row width.
 import QtQuick
 import QtQuick.Layouts
 import "../core" as Core

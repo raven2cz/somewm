@@ -1,7 +1,15 @@
 ---------------------------------------------------------------------------
 --- Memory usage service — async read of /proc/meminfo.
 --
+-- Reports RAM and swap usage in MiB. Percent is computed against MemTotal
+-- using MemAvailable (the kernel's honest free-memory estimate).
+--
+-- Signal: data::memory — { used, total, free, percent, swap_used, swap_total, icon }
+-- Interval: 3s.
+--
 -- @module fishlive.services.memory
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

@@ -1,7 +1,16 @@
 ---------------------------------------------------------------------------
 --- CPU usage + temperature service — async reads via shell.
 --
+-- Samples /proc/stat for usage delta and /sys/class/hwmon (k10temp / coretemp /
+-- cpu_thermal) for package temperature. Falls back to /sys/class/thermal if
+-- no hwmon sensor matches.
+--
+-- Signal: data::cpu — { usage, temp, icon }
+-- Interval: 2s.
+--
 -- @module fishlive.services.cpu
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
 ---------------------------------------------------------------------------
 
 local service = require("fishlive.service")

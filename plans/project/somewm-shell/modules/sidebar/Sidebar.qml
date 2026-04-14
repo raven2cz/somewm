@@ -1,3 +1,7 @@
+// Sidebar — right-edge slide-in panel with notification history.
+//
+// Per-screen Variants SlidePanel. Hosts NotifHistory; opened/closed via
+// Panels IPC toggle.
 import QtQuick
 import QtQuick.Layouts
 import Quickshell

@@ -1,3 +1,7 @@
+// Dashboard — fullscreen overlay with tabbed content (home/media/perf/notifications).
+//
+// Implements the Caelestia Drawers.qml pattern: border strip slides up,
+// content expands from the strip, tabs host per-domain widgets.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes

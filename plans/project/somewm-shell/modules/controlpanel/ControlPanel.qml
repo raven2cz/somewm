@@ -1,3 +1,7 @@
+// ControlPanel — quick control overlay (bottom-right corner).
+//
+// Same border-strip-then-content animation pattern as Dashboard, smaller,
+// anchored to the right corner. Horizontal layout: Volume | Mic | Brightness.
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -7,9 +11,7 @@ import Quickshell.Wayland
 import "../../core" as Core
 import "../../services" as Services
 
-// Quick control panel — bottom-right corner, same border strip pattern as Dashboard
-// Strip slides up → content grows from right corner
-// Horizontal layout: Volume | Mic | Brightness
+// Strip slides up → content grows from right corner.
 Variants {
     model: Quickshell.screens
 

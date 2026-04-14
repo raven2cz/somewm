@@ -1,3 +1,7 @@
+// SlidePanel — side-anchored wlr-layershell panel that slides in/out.
+//
+// `edge` = "left" | "right"; `shown` toggles a slide animation on the inner
+// content area; uses a Region mask so the transparent area stays click-through.
 import QtQuick
 import Quickshell
 import Quickshell.Wayland

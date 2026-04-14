@@ -1,4 +1,11 @@
 pragma Singleton
+
+// Audio — PipeWire/WirePlumber volume + mute for output sink and input source.
+//
+// Exposes volume/inputVolume (0..1), muted flags, Material icons, and setters
+// driven by `wpctl`. Polls on startup and after each change.
+// IPC: somewm-shell:audio { volumeUp, volumeDown, toggleMute }
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

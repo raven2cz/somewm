@@ -1,3 +1,6 @@
+// ScrollArea — vertical Flickable with an auto-hide scroll indicator.
+//
+// Shows a slim scrollbar while moving; hides it via opacity when idle.
 import QtQuick
 import "../core" as Core
 

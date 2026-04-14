@@ -1,4 +1,9 @@
 pragma Singleton
+
+// Network — Wi-Fi / Ethernet / VPN status via `nmcli` polling.
+//
+// Refreshes every 5s, exposes SSID, signal strength, IP, and status icon.
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

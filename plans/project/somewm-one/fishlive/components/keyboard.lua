@@ -1,3 +1,15 @@
+---------------------------------------------------------------------------
+--- Keyboard layout wibar widget — shows active xkb group, click cycles.
+--
+-- Subscribes to broker signal `data::keyboard`. Left-click advances the xkb
+-- group modulo the number of configured layouts. Prefixed with an extra
+-- leading space because this widget sits flush against the taglist.
+--
+-- @module fishlive.components.keyboard
+-- @author Antonin Fischer (raven2cz) & Claude
+-- @copyright 2026 MIT License
+---------------------------------------------------------------------------
+
 local wibox = require("wibox")
 local awful = require("awful")
 local beautiful = require("beautiful")
@@ -6,6 +18,10 @@ local wh = require("fishlive.widget_helper")
 
 local M = {}
 
+--- Create the keyboard-layout widget for a screen.
+-- @tparam screen screen The awful.screen the widget belongs to
+-- @tparam ?table config Reserved (currently unused)
+-- @treturn wibox.widget
 function M.create(screen, config)
 	local widget, _update = wh.create_icon_text("widget_keyboard_color", "#7daea3")
 

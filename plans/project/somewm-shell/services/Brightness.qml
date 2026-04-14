@@ -1,4 +1,11 @@
 pragma Singleton
+
+// Brightness — backlight control via `brightnessctl`.
+//
+// Exposes `percent` (1..100) and increase/decrease/setPercent helpers.
+// Reads current brightness via `brightnessctl -m info` on refresh.
+// IPC: somewm-shell:brightness { up, down }
+
 import QtQuick
 import Quickshell
 import Quickshell.Io

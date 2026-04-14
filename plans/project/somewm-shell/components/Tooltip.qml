@@ -1,3 +1,6 @@
+// Tooltip — small text popup positioned above a target item.
+//
+// Toggle via `visible`; centered on `target` with a fade opacity transition.
 import QtQuick
 import "../core" as Core
 

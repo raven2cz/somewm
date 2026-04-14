@@ -1,3 +1,7 @@
+// FrequencyVisualizer — circular audio frequency bars around an inner radius.
+//
+// Bars driven by `values[]` (0..1 per bar, typically from CavaService); each
+// bar is individually rotated and animated with a staggered spring motion.
 import QtQuick
 import "../core" as Core
 
