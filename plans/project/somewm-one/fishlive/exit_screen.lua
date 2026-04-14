@@ -349,17 +349,21 @@ function M.init(opts)
 		end
 	end
 
-	-- Create wibox on primary screen (will be repositioned on open)
+	-- Create wibox — geometry is just a placeholder; open() repositions to the
+	-- focused screen every time. Fall back to a sane default if no screen
+	-- exists yet (init-time race when outputs aren't set up), so we don't
+	-- crash on nil dereference; open() will fix geometry on first trigger.
 	local s = screen.primary or screen[1]
+	local geom = s and s.geometry or { x = 0, y = 0, width = 1920, height = 1080 }
 	M._state.exit_wb = wibox({
 		visible = false,
 		ontop = true,
 		type = "dock",
 		bg = cfg.bg_image and "#00000000" or cfg.bg_color,
-		x = s.geometry.x,
-		y = s.geometry.y,
-		width = s.geometry.width,
-		height = s.geometry.height,
+		x = geom.x,
+		y = geom.y,
+		width = geom.width,
+		height = geom.height,
 		widget = root_widget,
 	})
 
