@@ -495,17 +495,23 @@ rendermon(struct wl_listener *listener, void *data)
 
 #ifdef SOMEWM_BENCH
 	struct timespec render_start, render_end;
+	bool render_committed;
 	clock_gettime(CLOCK_MONOTONIC, &render_start);
-#endif
+	render_committed = wlr_scene_output_commit(m->scene_output, NULL);
+	clock_gettime(CLOCK_MONOTONIC, &render_end);
+	bench_render_record(timespec_diff_ns(&render_start, &render_end));
+	if (render_committed) {
+		/* Flush pending input events only when a real frame was committed:
+		 * input-to-display latency covers event -> visible pixels. */
+		bench_input_commit_flush();
+	} else {
+		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
+			m->wlr_output->name);
+	}
+#else
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
-#ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &render_end);
-	bench_render_record(timespec_diff_ns(&render_start, &render_end));
-	/* Flush any pending input events now that a frame was committed: the
-	 * input-to-display latency covers event -> visible pixels. */
-	bench_input_commit_flush();
 #endif
 
 skip:

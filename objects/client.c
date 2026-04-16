@@ -4539,12 +4539,10 @@ client_apply_corner_radius(client_t *c)
 void
 client_update_border_for_corners(client_t *c)
 {
-#ifdef HAVE_SCENEFX
     /* Null safety: border rects may not exist yet (unmapped client) */
     if (!c->border[0])
         return;
 
-    int cr = c->corner_radius;
     int bw = c->bw;
     int w = c->geometry.width;
     int h = c->geometry.height;
@@ -4553,11 +4551,15 @@ client_update_border_for_corners(client_t *c)
         /* No border — hide everything */
         for (int i = 0; i < 4; i++)
             wlr_scene_node_set_enabled(&c->border[i]->node, false);
+#ifdef HAVE_SCENEFX
         if (c->border_frame)
             wlr_scene_node_set_enabled(&c->border_frame->node, false);
+#endif
         return;
     }
 
+#ifdef HAVE_SCENEFX
+    int cr = c->corner_radius;
     if (cr > 0 && c->border_frame) {
         /* Rounded mode: single frame rect with clipped_region punch-hole.
          * The frame rect covers the full geometry. The clipped_region cuts
@@ -4591,34 +4593,36 @@ client_update_border_for_corners(client_t *c)
                 .corners = CORNER_LOCATION_ALL,
                 .area = { bw, bw, cw, ch },
             });
-    } else {
-        /* Flat mode: standard 4-rect border layout */
+    } else
+#endif /* HAVE_SCENEFX */
+    {
+        /* Flat mode: standard 4-rect border layout.
+         * Available on both scenefx and non-scenefx builds. */
+#ifdef HAVE_SCENEFX
         if (c->border_frame)
             wlr_scene_node_set_enabled(&c->border_frame->node, false);
+#endif
 
         for (int i = 0; i < 4; i++)
             wlr_scene_node_set_enabled(&c->border[i]->node, true);
 
-        if (bw > 0) {
-            wlr_scene_rect_set_size(c->border[0], w, bw);
-            wlr_scene_rect_set_size(c->border[1], w, bw);
-            wlr_scene_rect_set_size(c->border[2], bw, h - 2 * bw);
-            wlr_scene_rect_set_size(c->border[3], bw, h - 2 * bw);
-            wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
-            wlr_scene_node_set_position(&c->border[1]->node, 0, h - bw);
-            wlr_scene_node_set_position(&c->border[2]->node, 0, bw);
-            wlr_scene_node_set_position(&c->border[3]->node, w - bw, bw);
-        }
+        wlr_scene_rect_set_size(c->border[0], w, bw);
+        wlr_scene_rect_set_size(c->border[1], w, bw);
+        wlr_scene_rect_set_size(c->border[2], bw, h - 2 * bw);
+        wlr_scene_rect_set_size(c->border[3], bw, h - 2 * bw);
+        wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+        wlr_scene_node_set_position(&c->border[1]->node, 0, h - bw);
+        wlr_scene_node_set_position(&c->border[2]->node, 0, bw);
+        wlr_scene_node_set_position(&c->border[3]->node, w - bw, bw);
 
+#ifdef HAVE_SCENEFX
         /* Clear any corner radius from flat border rects */
         for (int i = 0; i < 4; i++) {
             wlr_scene_rect_set_corner_radius(c->border[i],
                 0, CORNER_LOCATION_NONE);
         }
-    }
-#else
-    (void)c;
 #endif
+    }
 }
 
 static int

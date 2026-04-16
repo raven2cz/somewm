@@ -1388,8 +1388,10 @@ apply_geometry_to_wlroots(Client *c)
 			} else {
 				/* Fully offscreen: hide everything */
 				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
-				for (int i = 0; i < 4; i++)
-					wlr_scene_node_set_enabled(&c->border[i]->node, false);
+				for (int i = 0; i < 4; i++) {
+					if (c->border[i])
+						wlr_scene_node_set_enabled(&c->border[i]->node, false);
+				}
 #ifdef HAVE_SCENEFX
 				if (c->border_frame)
 					wlr_scene_node_set_enabled(&c->border_frame->node, false);
