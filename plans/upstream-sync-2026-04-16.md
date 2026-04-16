@@ -146,13 +146,14 @@ Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b`
 - [ ] Test
 - [ ] Merge
 
-### 3c. `chore/upstream-drag-motion`
+### 3c. `chore/upstream-drag-motion-with-helpers` ✅ MERGED (269ba64)
 - **Commit:** `34ff92a` fix: Drag motion notification of drag source client #318
+- **Prerequisites (pulled from 3e):** `4c765d5` (is_client_valid helper), `ca22c8e` (cursor-to-client coord transform)
 - **Risk:** low — DnD is rarely used
-- **Test:** DnD in Firefox/Nautilus (if available)
-- [ ] Port
-- [ ] Test
-- [ ] Merge
+- **Test:** nested sandbox — 3× awesome.restart(), lgi_guard gen1-3 clean (0 blocked), QS hotedges remap, 1 client preserved
+- [x] Port (3 cherry-picks clean)
+- [x] Test
+- [x] Merge
 
 ### 3d. `chore/upstream-lgi-config-timeout`
 - **Commit:** `0deb9d2` fix(lgi): clean up stale GLib sources on config timeout
@@ -169,10 +170,10 @@ Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b`
 - [ ] Merge
 
 ### 3e. `chore/upstream-small-refactors`
-- **Commits:** `4c765d5` (pull out `is_client_valid()`), `ca22c8e` (cursor-to-client coord transform), `ad87e23` (consolidate `focus_restore()`)
-- **Risk:** refactors in hot code paths (focus, pointer)
-- **Test:** full nested sandbox workflow, pointer movement across monitors
-- [ ] Port
+- **Commits:** ~~`4c765d5`~~ (already merged with 3c), ~~`ca22c8e`~~ (already merged with 3c), `ad87e23` (consolidate `focus_restore()`)
+- **Risk:** refactors in hot code paths (focus restoration — 48 lines in `permissions/init.lua` + 60 in `somewm.c`)
+- **Test:** full nested sandbox workflow, pointer movement across monitors, game focus rules
+- [ ] Port `ad87e23`
 - [ ] Test
 - [ ] Merge
 
