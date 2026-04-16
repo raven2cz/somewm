@@ -4496,6 +4496,25 @@ luaA_hot_reload(void)
 	 * teardown ensures no Lua objects are collected during or after reload. */
 	lua_gc(L, LUA_GCSTOP, 0);
 
+	/* Gate Lgi closure dispatch before ANY Lua-observable teardown.
+	 * lgi_closure_guard.so does two things on begin_reload:
+	 *   1. Sets an atomic "not ready" flag so the wrapper callback
+	 *      returns a zeroed no-op for every dispatch.
+	 *   2. Rewires every tracked closure with a safe void(void) CIF,
+	 *      so even libffi's classify_argument walk (which runs before
+	 *      our wrapper) cannot fault on stale arg_types.
+	 * Must run before signal emission / GDBus close / source sweep so
+	 * that any late dispatches in that window are defused. */
+	{
+		void (*begin)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_begin_reload");
+		if (begin) {
+			begin();
+		} else {
+			fprintf(stderr, "somewm: hot-reload: WARNING: lgi_closure_guard.so "
+				"not preloaded, reload may crash\n");
+		}
+	}
+
 	/* ================================================================
 	 * Phase A: Teardown - clean up Lua-owned state
 	 * ================================================================
@@ -4774,17 +4793,8 @@ luaA_hot_reload(void)
 			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
 	}
 
-	/* Bump Lgi closure generation - all old closures become no-ops.
-	 * lgi_closure_guard.so must be LD_PRELOADed for this to work. */
-	{
-		void (*bump)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation");
-		if (bump) {
-			bump();
-		} else {
-			fprintf(stderr, "somewm: hot-reload: WARNING: lgi_closure_guard.so "
-				"not preloaded, second reload may crash\n");
-		}
-	}
+	/* Lgi closure dispatch was already gated at reload start via
+	 * lgi_guard_begin_reload(). No second bump needed here. */
 
 	/* Leak the old Lua state. lua_close() is unsafe because client
 	 * snapshots, screens, and other C objects still reference Lua
