@@ -3938,6 +3938,45 @@ luaA_enhance_lua_compat_error(const char *err, char *buf, size_t bufsize)
 	return false;
 }
 
+/** Remove all GLib sources registered by Lua code (Lgi, awful.spawn, dbus
+ * watchers, timers, etc.) that were attached above the baseline. These
+ * sources hold FFI closures with lua_State* pointers to the old Lua VM;
+ * if GLib dispatches them after Lua state teardown, lua_rawgeti() on a
+ * freed state -> SEGV.
+ *
+ * Probe first to get the exact upper bound - all Lua-registered sources
+ * have IDs in [baseline+1, probe_id-1]. No guesswork needed.
+ *
+ * NOTE: This function does NOT bump the Lgi closure generation. In our
+ * fork the guard is already gated via lgi_guard_begin_reload() at the
+ * start of teardown (hot-reload) or explicitly called by the caller
+ * (config-timeout path).
+ *
+ * \param label Caller label for the log message (e.g. "config-timeout" or "hot-reload").
+ */
+static void
+luaA_cleanup_stale_glib_sources(const char *label)
+{
+	GMainContext *ctx = g_main_context_default();
+	guint baseline = globalconf.glib_source_baseline;
+	GSource *probe = g_idle_source_new();
+	guint upper = g_source_attach(probe, ctx);
+	g_source_destroy(probe);
+	g_source_unref(probe);
+
+	guint removed = 0;
+	for (guint id = baseline + 1; id < upper; id++) {
+		GSource *src = g_main_context_find_source_by_id(ctx, id);
+		if (src) {
+			g_source_destroy(src);
+			removed++;
+		}
+	}
+	globalconf.glib_source_baseline = upper;
+	fprintf(stderr, "somewm: %s: removed %u stale GLib sources "
+		"(baseline=%u, new_baseline=%u)\n", label, removed, baseline, upper);
+}
+
 void
 luaA_loadrc(void)
 {
@@ -4169,7 +4208,30 @@ luaA_loadrc(void)
 			        config_paths[i]);
 
 			/* CRITICAL: Lua state is corrupted after siglongjmp.
-			 * We must recreate it before trying the next config. */
+			 * We must recreate it before trying the next config.
+			 *
+			 * Gate the Lgi closure guard FIRST - without this, any stale
+			 * FFI closure dispatched by GLib between here and the source
+			 * sweep would hit freed Lua memory. lgi_guard_begin_reload()
+			 * rewires closures to a safe void(void) CIF and bumps the
+			 * generation so late dispatches become no-ops.
+			 *
+			 * Then sweep stale GLib sources that hold FFI closures with
+			 * lua_State* pointers to the now-dead VM.
+			 *
+			 * Skip GDBus close here (unlike hot-reload): g_bus_get_sync()
+			 * could itself block if D-Bus was what caused the timeout. */
+			{
+				void (*begin)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_begin_reload");
+				if (begin) {
+					begin();
+				} else {
+					fprintf(stderr, "somewm: config-timeout: WARNING: "
+						"lgi_closure_guard.so not preloaded, stale closures "
+						"may crash\n");
+				}
+			}
+			luaA_cleanup_stale_glib_sources("config-timeout");
 			luaA_signal_cleanup();
 			luaA_keybinding_cleanup();
 			lua_close(globalconf_L);
@@ -4807,36 +4869,9 @@ luaA_hot_reload(void)
 		}
 	}
 
-	/* Remove all GLib sources registered by Lua code (Lgi, awful.spawn,
-	 * dbus watchers, timers, etc.). These sources hold FFI closures with
-	 * lua_State* pointers to the old Lua VM. If GLib dispatches them after
-	 * reload, lua_status(NULL) -> SEGV.
-	 *
-	 * Probe first to get the exact upper bound - all Lua-registered sources
-	 * have IDs in [baseline+1, probe_id-1]. No guesswork needed. */
-	{
-		GMainContext *ctx = g_main_context_default();
-		guint baseline = globalconf.glib_source_baseline;
-		GSource *probe = g_idle_source_new();
-		guint upper = g_source_attach(probe, ctx);
-		g_source_destroy(probe);
-		g_source_unref(probe);
-
-		guint removed = 0;
-		for (guint id = baseline + 1; id < upper; id++) {
-			GSource *src = g_main_context_find_source_by_id(ctx, id);
-			if (src) {
-				g_source_destroy(src);
-				removed++;
-			}
-		}
-		globalconf.glib_source_baseline = upper;
-		fprintf(stderr, "somewm: hot-reload: removed %u stale GLib sources "
-			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
-	}
-
-	/* Lgi closure dispatch was already gated at reload start via
-	 * lgi_guard_begin_reload(). No second bump needed here. */
+	/* Remove stale GLib sources. Lgi closure dispatch was already gated at
+	 * reload start via lgi_guard_begin_reload(); no second bump needed here. */
+	luaA_cleanup_stale_glib_sources("hot-reload");
 
 	/* Leak the old Lua state. lua_close() is unsafe because client
 	 * snapshots, screens, and other C objects still reference Lua
