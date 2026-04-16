@@ -20,10 +20,25 @@
 ---------------------------------------------------------------------------
 
 local awful = require("awful")
+local gears = require("gears")
 local hotkeys_popup = require("awful.hotkeys_popup")
 local menubar = require("menubar")
 local machi = require("layout-machi")
 local recording = require("fishlive.config.recording")
+
+-- Evaluate a Lua expression and return its result (replaces awful.util.eval).
+local function lua_eval(s)
+    local f, err = load("return " .. s)
+    if not f then
+        f, err = load(s)
+    end
+    if f then
+        local ok, result = pcall(f)
+        if ok then return tostring(result) end
+        return "error: " .. tostring(result)
+    end
+    return "parse error: " .. tostring(err)
+end
 
 local M = {}
 
@@ -90,8 +105,8 @@ function M.setup(args)
 				awful.prompt.run {
 					prompt       = "Run Lua code: ",
 					textbox      = awful.screen.focused().mypromptbox.widget,
-					exe_callback = awful.util.eval,
-					history_path = awful.util.get_cache_dir() .. "/history_eval"
+					exe_callback = lua_eval,
+					history_path = gears.filesystem.get_cache_dir() .. "/history_eval"
 				}
 			end,
 			{description = "lua execute prompt", group = "awesome"}),

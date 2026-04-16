@@ -12,6 +12,7 @@
 
 local wibox = require("wibox")
 local awful = require("awful")
+local gears = require("gears")
 local beautiful = require("beautiful")
 local broker = require("fishlive.broker")
 local wh = require("fishlive.widget_helper")
@@ -35,7 +36,7 @@ function M.create(screen, config)
 			wh.number_font, color, string.upper(data.layout))
 	end)
 
-	widget:buttons(awful.util.table.join(
+	widget:buttons(gears.table.join(
 		awful.button({}, 1, function()
 			local data = broker.get_value("data::keyboard")
 			if data and data.layouts then

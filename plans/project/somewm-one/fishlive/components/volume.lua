@@ -12,6 +12,7 @@
 
 local wibox = require("wibox")
 local awful = require("awful")
+local gears = require("gears")
 local beautiful = require("beautiful")
 local broker = require("fishlive.broker")
 local wh = require("fishlive.widget_helper")
@@ -29,7 +30,7 @@ function M.create(screen, config)
 		update(data.icon, string.format("%3d%%", data.volume))
 	end)
 
-	widget:buttons(awful.util.table.join(
+	widget:buttons(gears.table.join(
 		awful.button({}, 1, function() awful.spawn("pavucontrol") end),
 		awful.button({}, 2, function() awful.spawn("helvum") end),
 		awful.button({}, 3, function()
