@@ -4385,6 +4385,7 @@ luaA_create_fresh_state(void)
 	luaA_mouse_setup(L);
 	luaA_wibox_setup(L);
 	luaA_ipc_setup(L);
+	systray_item_class_setup(L);
 
 	/* D-Bus */
 	luaA_registerlib(L, "dbus", awesome_dbus_lib);
@@ -4457,6 +4458,11 @@ typedef struct {
 	char *name;
 } tag_snapshot_t;
 
+typedef struct {
+	char *bus_name;
+	char *object_path;
+} systray_snapshot_t;
+
 /** Perform in-process hot-reload of the Lua state.
  * Must be called from an idle callback, NOT from within a Lua pcall.
  */
@@ -4473,6 +4479,8 @@ luaA_hot_reload(void)
 	int num_screens = 0;
 	tag_snapshot_t *tag_snaps = NULL;
 	int num_tags = 0;
+	systray_snapshot_t *systray_snaps = NULL;
+	int num_systray = 0;
 
 	if (!L) {
 		fprintf(stderr, "somewm: hot-reload: no Lua state to reload\n");
@@ -4497,6 +4505,30 @@ luaA_hot_reload(void)
 	 * registry. If an unref'd slot overlaps with an Lgi ref, the Lgi
 	 * closure finds nil instead of its callable -> SEGV.
 	 */
+
+	/* Snapshot systray item bus names for re-probing after reload.
+	 * Must happen before "exit" signal since systray._cleanup() clears
+	 * the Lua-side item tables. The C array is still intact here. */
+	{
+		systray_item_array_t *items = systray_get_items();
+		num_systray = items->len;
+		if (num_systray > 0) {
+			systray_snaps = calloc(num_systray, sizeof(systray_snapshot_t));
+			if (systray_snaps) {
+				for (i = 0; i < num_systray; i++) {
+					systray_item_t *item = items->tab[i];
+					if (item->bus_name)
+						systray_snaps[i].bus_name = strdup(item->bus_name);
+					if (item->object_path)
+						systray_snaps[i].object_path = strdup(item->object_path);
+				}
+				fprintf(stderr, "somewm: hot-reload: snapshotted %d systray items\n",
+					num_systray);
+			} else {
+				num_systray = 0;
+			}
+		}
+	}
 
 	/* Emit "exit" signal so Lua code can clean up */
 	luaA_signal_emit(L, "exit", 0);
@@ -4675,6 +4707,26 @@ luaA_hot_reload(void)
 	globalconf.screens.len = 0;
 	globalconf.focus.client = NULL;
 
+	/* Destroy old drawin scene trees so they don't persist as duplicates.
+	 * During normal shutdown, drawin_wipe() handles this via GC, but
+	 * hot-reload leaks the old state with GC frozen. */
+	foreach(d, globalconf.drawins) {
+		drawin_t *w = *d;
+		for (int si = 0; si < SHADOW_TEXTURE_COUNT; si++) {
+			if (w->shadow.textures[si]) {
+				wlr_buffer_drop(w->shadow.textures[si]);
+				w->shadow.textures[si] = NULL;
+			}
+		}
+		if (w->scene_tree) {
+			wlr_scene_node_destroy(&w->scene_tree->node);
+			w->scene_tree = NULL;
+			w->scene_buffer = NULL;
+			w->border_buffer = NULL;
+		}
+	}
+	globalconf.drawins.len = 0;
+
 	/* Reset screen_refs before closing (entries become invalid) */
 	luaA_screen_refs_reset();
 
@@ -4699,7 +4751,7 @@ luaA_hot_reload(void)
 	 * lua_State* pointers to the old Lua VM. If GLib dispatches them after
 	 * reload, lua_status(NULL) -> SEGV.
 	 *
-	 * Probe first to get the exact upper bound — all Lua-registered sources
+	 * Probe first to get the exact upper bound - all Lua-registered sources
 	 * have IDs in [baseline+1, probe_id-1]. No guesswork needed. */
 	{
 		GMainContext *ctx = g_main_context_default();
@@ -4722,7 +4774,7 @@ luaA_hot_reload(void)
 			"(baseline=%u, new_baseline=%u)\n", removed, baseline, upper);
 	}
 
-	/* Bump Lgi closure generation — all old closures become no-ops.
+	/* Bump Lgi closure generation - all old closures become no-ops.
 	 * lgi_closure_guard.so must be LD_PRELOADed for this to work. */
 	{
 		void (*bump)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation");
@@ -4788,8 +4840,14 @@ luaA_hot_reload(void)
 			c->toplevel_handle = NULL;
 			c->screen = NULL;
 			c->transient_for = NULL;
-			for (int tb = 0; tb < CLIENT_TITLEBAR_COUNT; tb++)
+			for (int tb = 0; tb < CLIENT_TITLEBAR_COUNT; tb++) {
 				c->titlebar[tb].drawable = NULL;
+				c->titlebar[tb].size = 0;
+				if (c->titlebar[tb].scene_buffer) {
+					wlr_scene_node_destroy(&c->titlebar[tb].scene_buffer->node);
+					c->titlebar[tb].scene_buffer = NULL;
+				}
+			}
 
 			/* Re-register wlroots listeners */
 			client_reregister_listeners(c);
@@ -4813,8 +4871,8 @@ luaA_hot_reload(void)
 
 			/* Reference and push to arrays */
 			lua_pushvalue(L, -1);
-			client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-			stack_client_push(c);
+			client_array_append(&globalconf.clients, luaA_object_ref(L, -1));
+			stack_client_append(c);
 
 			new_clients[i] = c;
 			if (cs->was_focused)
@@ -4866,6 +4924,24 @@ luaA_hot_reload(void)
 	if (lua_istable(L, -1)) {
 		lua_pushboolean(L, 1);
 		lua_setfield(L, -2, "_restart");
+
+		/* Set awesome._systray_snapshot for Lua-side re-probing */
+		if (num_systray > 0 && systray_snaps) {
+			lua_newtable(L);
+			for (i = 0; i < num_systray; i++) {
+				if (systray_snaps[i].bus_name) {
+					lua_newtable(L);
+					lua_pushstring(L, systray_snaps[i].bus_name);
+					lua_setfield(L, -2, "bus_name");
+					lua_pushstring(L, systray_snaps[i].object_path
+						? systray_snaps[i].object_path
+						: "/StatusNotifierItem");
+					lua_setfield(L, -2, "object_path");
+					lua_rawseti(L, -2, i + 1);
+				}
+			}
+			lua_setfield(L, -2, "_systray_snapshot");
+		}
 	}
 	lua_pop(L, 1);
 
@@ -4888,6 +4964,10 @@ luaA_hot_reload(void)
 		lua_pop(L, 1);  /* luaA_screen_new leaves screen on stack */
 	}
 
+	/* Outputs are independent of screens (disabled monitors still have
+	 * outputs). Must exist before rc.lua so added::connected works. */
+	luaA_output_hot_reload(L);
+
 	/* Load and execute rc.lua.
 	 * Screens already exist (created above). When rc.lua registers handlers
 	 * for request::desktop_decoration etc., the ::connected pattern
@@ -4901,6 +4981,18 @@ luaA_hot_reload(void)
 
 	/* Client scanning: triggers awful.mouse/keyboard/rules setup */
 	client_emit_scanning();
+
+	/* Save client array order before manage signals. Rule callbacks
+	 * (e.g. to_secondary_section) call client:swap() which reorders
+	 * globalconf.clients. We need the manage loop to run for tags and
+	 * properties, but must preserve the pre-reload tiling order. */
+	client_t **saved_order = NULL;
+	if (num_clients > 0) {
+		saved_order = malloc(num_clients * sizeof(client_t *));
+		if (saved_order)
+			memcpy(saved_order, globalconf.clients.tab,
+				num_clients * sizeof(client_t *));
+	}
 
 	for (i = 0; i < num_clients; i++) {
 		client_t *c = globalconf.clients.tab[i];
@@ -4938,6 +5030,15 @@ luaA_hot_reload(void)
 		lua_pop(L, 1);
 	}
 
+	/* Restore pre-reload client order. The manage loop may have
+	 * reordered via to_secondary_section()/swap(), but clients
+	 * should keep their original tiling positions across reload. */
+	if (saved_order && globalconf.clients.len == num_clients) {
+		memcpy(globalconf.clients.tab, saved_order,
+			num_clients * sizeof(client_t *));
+	}
+	free(saved_order);
+
 	client_emit_scanned();
 
 	/* Emit startup signal */
@@ -4949,7 +5050,7 @@ luaA_hot_reload(void)
 	fprintf(stderr, "somewm: hot-reload: complete (%d clients, %d screens, %d tags reset)\n",
 		num_clients, num_screens, num_tags);
 
-	/* Mark new Lgi closures as ready — allows guard to dispatch them.
+	/* Mark new Lgi closures as ready - allows guard to dispatch them.
 	 * Must be called AFTER rc.lua is fully loaded and Lgi is stable. */
 	{
 		void (*ready)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_mark_ready");
@@ -4963,9 +5064,14 @@ cleanup:
 		free(tag_snaps[i].name);
 	for (i = 0; i < num_screens; i++)
 		free(screen_snaps[i].name);
+	for (i = 0; i < num_systray; i++) {
+		free(systray_snaps[i].bus_name);
+		free(systray_snaps[i].object_path);
+	}
 	free(client_snaps);
 	free(screen_snaps);
 	free(tag_snaps);
+	free(systray_snaps);
 }
 
 void

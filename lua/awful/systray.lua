@@ -565,8 +565,8 @@ local function register_item(service, path)
         systray._private.items[item_key] = item
 
         -- Watch for this service to vanish (handles crashes / ungraceful exits)
-        local watch_id = Gio.bus_watch_name(
-            Gio.BusType.SESSION,
+        local watch_id = Gio.bus_watch_name_on_connection(
+            systray._private.bus,
             service,
             Gio.BusNameWatcherFlags.NONE,
             nil,  -- appeared callback (don't care)
@@ -993,8 +993,8 @@ end
 
 --- Watch for the StatusNotifierWatcher to appear on the bus.
 local function watch_for_watcher()
-    local wid = Gio.bus_watch_name(
-        Gio.BusType.SESSION,
+    local wid = Gio.bus_watch_name_on_connection(
+        systray._private.bus,
         SNI_WATCHER_BUS,
         Gio.BusNameWatcherFlags.NONE,
         GObject.Closure(function(conn, name, owner)
@@ -1030,9 +1030,20 @@ function systray.init()
         return true
     end
 
-    -- Get session bus
+    -- Get session bus. After hot-reload, GLib's singleton cache may return
+    -- a closed connection (g_bus_get_sync doesn't check is_closed before
+    -- returning the cached object). Bypass the cache with a fresh connection.
     local ok, bus = pcall(function()
-        return Gio.bus_get_sync(Gio.BusType.SESSION)
+        local b = Gio.bus_get_sync(Gio.BusType.SESSION)
+        if b:is_closed() then
+            local addr = Gio.dbus_address_get_for_bus_sync(Gio.BusType.SESSION)
+            b = Gio.DBusConnection.new_for_address_sync(
+                addr,
+                Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
+                    + Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+                nil, nil)
+        end
+        return b
     end)
 
     if not ok or not bus then
@@ -1046,6 +1057,25 @@ function systray.init()
 
     -- Start watching for the StatusNotifierWatcher
     watch_for_watcher()
+
+    -- Re-probe systray items saved from before hot-reload.
+    -- Apps may not re-register with the watcher after it restarts,
+    -- so we proactively fetch their properties from the snapshot.
+    if capi.awesome._restart and capi.awesome._systray_snapshot then
+        local snapshot = capi.awesome._systray_snapshot
+        capi.awesome._systray_snapshot = nil
+        -- Use PRIORITY_LOW so watcher and host init (PRIORITY_DEFAULT) first
+        GLib.idle_add(GLib.PRIORITY_LOW, function()
+            for _, entry in ipairs(snapshot) do
+                local obj_path = entry.object_path or "/StatusNotifierItem"
+                local key = entry.bus_name .. obj_path
+                if not systray._private.items[key] then
+                    register_item(entry.bus_name, obj_path)
+                end
+            end
+            return false
+        end)
+    end
 
     return true
 end
