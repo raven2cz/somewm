@@ -130,21 +130,22 @@ can hot-reload without crash + no ASAN errors on shutdown.
 **Strategy:** každý commit v samostatné mini-branch s vlastním testem.
 Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b` rewire patchem).
 
-### 3a. `chore/upstream-focus-before-unmanage`
+### 3a. `chore/upstream-focus-before-unmanage` ✅ MERGED (317e05d)
 - **Commit:** `e102096` fix(focus): clear seat keyboard focus before unmanage
 - **Risk:** dotýká se našich NVIDIA focus workaroundů (issues #137, #135, #133)
-- **Test:** game focus chain — `steam_app_*` rule, alacritty ↔ mpv ↔ Steam
-- [ ] Port
-- [ ] Test
-- [ ] Merge
+- **Test:** nested sandbox — 2 alacritty launched, focused killed, compositor survived, focus transferred cleanly; 3× awesome.restart() clean; 9 unmap events, 0 assertions
+- [x] Port (6 lines, clean merge into our unmapnotify)
+- [x] Test
+- [x] Merge
 
-### 3b. `chore/upstream-layer-surface-enter-leave`
+### 3b. `chore/upstream-layer-surface-enter-leave` ✅ MERGED (5194d75)
 - **Commit:** `d354433` fix: pair `send_leave` with `send_enter` for layer surfaces
+- **Port note:** MANUAL — upstream touches `protocols.c` which doesn't exist in our monolithic fork; same 3-line change applied to `unmaplayersurfacenotify` in `somewm.c`
 - **Risk:** layer shell — wibox, exit screen, notifications
-- **Test:** wibox show/hide, naughty notification pop+dismiss, exit screen
-- [ ] Port
-- [ ] Test
-- [ ] Merge
+- **Test:** nested sandbox — 3× awesome.restart(), 9 LS-UNMAP events (3 hotedges × 3 reloads), no aborts/assertions
+- [x] Port
+- [x] Test
+- [x] Merge
 
 ### 3c. `chore/upstream-drag-motion-with-helpers` ✅ MERGED (269ba64)
 - **Commit:** `34ff92a` fix: Drag motion notification of drag source client #318
