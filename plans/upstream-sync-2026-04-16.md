@@ -256,11 +256,34 @@ Low priority — přijmout až když feature chceme. Každý feature balík = sa
 | retroactive output signal | `637f34e`, `0a48f61`, `a436844` | `feat/upstream-output-retroactive` |
 | benchmark + profiling | `e5d7dfe`, `746d59d`, `0e7b1eb` | `feat/upstream-benchmarks` |
 
-- [ ] Idle inhibit
-- [ ] Client icons
-- [ ] Input rules
-- [ ] Output retroactive signal
-- [ ] Benchmarks
+**Status:** ⏳ PUSHED, NOT MERGED (awaiting user testing)
+**Branch:** `chore/upstream-sync-kolo5`
+
+Per-subround cherry-picks, build + sandbox test per subround, all green:
+
+| Subround | Upstream commits | Our commits |
+|---|---|---|
+| 5a idle inhibit protocol fix | `086c4fe`, `a640e73` | `2dc3c23`, `fe8cb4d` |
+| 5b output retroactive | `637f34e` (already in), `0a48f61`, `a436844` | `934ae8d`, `35f6cb6` |
+| 5c bench basics | `0e7b1eb` | `e116490` |
+| 5d input rules | `b89e886`, `0975aa7` | `87b345b`, `c534e5b` |
+| 5e idle Lua-settable | `9ac6a75` | `dba0479` |
+| 5f client icons | `83766e4` | `0955251` |
+| 5g idle widget properties | `4b5c927` | `b87400d` |
+| 5h bench full infra + profile | `e5d7dfe`, `746d59d` | `12fb825`, `87cdd69` |
+
+**Adaptace pro 5h:** upstream umisťuje input/render/manage bench hooky do `input.c`/`monitor.c`/`window.c` (Kolo 6 refactor split). V našem fork stále žijí v `somewm.c`, takže hooky portovány na odpovídající call sites (buttonpress, motionnotify, keypress, rendermon, commitnotify, mapnotify). Všechno za `#ifdef SOMEWM_BENCH`, default build nedotčen.
+
+**Totální diff:** +3311 / -134, 36 files.
+
+- [x] Idle inhibit (5a + 5e + 5g)
+- [x] Client icons (5f)
+- [x] Input rules (5d)
+- [x] Output retroactive signal (5b)
+- [x] Benchmarks (5c + 5h)
+- [x] Build + sandbox test per subround
+- [ ] **User acceptance test (pending)**
+- [ ] Merge to main
 
 ---
 
