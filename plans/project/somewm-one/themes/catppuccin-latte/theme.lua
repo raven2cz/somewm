@@ -64,6 +64,7 @@ theme.shadow_drawin_radius    = 30
 theme.shadow_drawin_offset_x  = 0
 theme.shadow_drawin_offset_y  = 6
 theme.shadow_drawin_opacity   = 0.25
+theme.shadow_drawin_color     = "#000000"
 
 -- Taglist
 theme.taglist_font        = "Geist SemiBold 11"
