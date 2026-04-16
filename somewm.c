@@ -1334,7 +1334,7 @@ setup(void)
 	animation_init(event_loop);
 	animation_setup(globalconf_get_lua_State());
 
-	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
+	/* Initialize wallpaper cache after luaA_init so Lua/globalconf state is available */
 	wallpaper_cache_init();
 
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
