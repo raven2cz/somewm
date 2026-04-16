@@ -5843,6 +5843,10 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 		exclusive_focus = NULL;
 		focusclient(focustop(selmon), 1);
 	}
+
+	if (l->layer_surface->output)
+		wlr_surface_send_leave(l->layer_surface->surface, l->layer_surface->output);
+
 	if (l->layer_surface->output && (l->mon = l->layer_surface->output->data))
 		arrangelayers(l->mon);
 
