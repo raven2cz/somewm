@@ -3341,12 +3341,15 @@ keypress(struct wl_listener *listener, void *data)
 	/* Check if keygrabber is active - if so, route event to Lua callback.
 	 * Note: Keygrabber is allowed when Lua-locked (for lock screen password input)
 	 * but NOT when externally locked (session-lock-v1 protocol handles that). */
-	if (!locked && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && some_keygrabber_is_running()) {
+	if (!locked && some_keygrabber_is_running()) {
+		bool is_press = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
 		/* Route to keygrabber callback */
-		if (some_keygrabber_handle_key(mods, keycode, group->wlr_group->keyboard.xkb_state)) {
-			/* Keygrabber handled the event, disable key repeat and return */
-			group->nsyms = 0;
-			wl_event_source_timer_update(group->key_repeat_source, 0);
+		if (some_keygrabber_handle_key(keycode, group->wlr_group->keyboard.xkb_state, is_press)) {
+			/* Only disable key repeat for press events */
+			if (is_press) {
+				group->nsyms = 0;
+				wl_event_source_timer_update(group->key_repeat_source, 0);
+			}
 			return;
 		}
 	}
@@ -3421,6 +3424,17 @@ keyrepeat(void *data)
 	/* Block key repeat during lock to prevent compositor keybindings
 	 * from firing behind the lockscreen */
 	if (session_is_locked()) {
+		group->nsyms = 0;
+		return 0;
+	}
+
+	/* If a keygrabber started after the initial press (e.g. a keybinding
+	 * handler opened a launcher and installed an awful.keygrabber), stop
+	 * repeating the compositor binding. The grabber now owns the keyboard
+	 * and re-firing the binding that started it causes flicker for
+	 * toggle-style keybindings that alternate state at the repeat rate.
+	 * Mirrors the guard in keypress() above. */
+	if (some_keygrabber_is_running()) {
 		group->nsyms = 0;
 		return 0;
 	}

@@ -1566,8 +1566,13 @@ luaA_screen_fake_add(lua_State *L)
 	lua_rawget(L, LUA_REGISTRYINDEX);
 	lua_setmetatable(L, -2);
 
-	/* Initialize environment table */
+	/* Initialize environment table (must match LUA_OBJECT_FUNCS pattern:
+	 * env table + metatable for refcounting + "data" sub-table) */
 	lua_newtable(L);
+	lua_newtable(L);
+	lua_setmetatable(L, -2);
+	lua_newtable(L);
+	lua_setfield(L, -2, "data");
 	luaA_setuservalue(L, -2);
 
 	/* Store reference in registry */
@@ -2026,7 +2031,7 @@ luaA_screen_newindex(lua_State *L)
 	/* Only 'name' property is writable */
 	if (strcmp(key, "name") == 0) {
 		const char *new_name = NULL;
-		const char *old_name = screen->name;
+		char *old_name = screen->name ? strdup(screen->name) : NULL;
 
 		/* Get new name (can be nil to unset) */
 		if (!lua_isnil(L, 3)) {
@@ -2057,6 +2062,7 @@ luaA_screen_newindex(lua_State *L)
 			luaA_object_emit_signal(L, -2, "property::name", 1);
 			lua_pop(L, 1);  /* Pop screen object */
 		}
+		free(old_name);
 
 		return 0;
 	}
