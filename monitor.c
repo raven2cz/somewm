@@ -17,7 +17,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -351,7 +351,11 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
+#endif
 		die("couldn't recreate renderer");
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))

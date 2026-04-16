@@ -1017,14 +1017,23 @@ setup(void)
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
 
-	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
-	 * can also specify a renderer using the WLR_RENDERER env var.
+	/* Create the renderer. When scenefx is compiled in, use the FX renderer
+	 * (GLES2-based, adds corner radius / blur / shadow shaders).
+	 * Otherwise autocreate picks Pixman, GLES2 or Vulkan. The user can also
+	 * specify a renderer using the WLR_RENDERER env var (non-scenefx only).
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+		die("couldn't create scenefx renderer\n"
+			"SceneFX forces its own GLES2-based renderer.\n"
+			"If your GPU doesn't support EGL/GLES2, rebuild with -Dscenefx=disabled");
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer\n"
 			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
 			"Run with WLR_DEBUG=1 for more details");
+#endif
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
