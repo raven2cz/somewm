@@ -156,19 +156,18 @@ Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b`
 - [x] Test
 - [x] Merge
 
-### 3d. `chore/upstream-lgi-config-timeout`
+### 3d. `chore/upstream-lgi-config-timeout` ✅ MERGED (e12ec44)
 - **Commit:** `0deb9d2` fix(lgi): clean up stale GLib sources on config timeout
-- **Risk:** refactor of code we've modified (`e87926b` rewire sits inline).
-  Must integrate rewire call into extracted helper.
-- **Port approach:** MANUAL, not cherry-pick:
-  1. Extract our inline `sweep + rewire + bump` into helper `luaA_cleanup_stale_glib_sources(label)` matching upstream signature.
-  2. Add call from config-timeout branch of `luaA_loadrc()`.
-  3. Bring in the `test-floating-layout.lua` test change as separate commit.
-- **Test:** hot-reload smoke + deliberately break rc.lua (syntax error) to trigger timeout path.
-- [ ] Port
-- [ ] Test hot-reload
-- [ ] Test config-timeout path (syntax error in rc.lua)
-- [ ] Merge
+- **Port approach:** MANUAL (our `e87926b` rewire/begin_reload architecture differs from upstream bump_generation). Helper does ONLY the source sweep; caller gates the guard separately. Config-timeout path calls `lgi_guard_begin_reload()` + helper, skipping GDBus close.
+- **Test (nested sandbox):**
+  - Normal hot-reload: helper logs 'hot-reload: removed N stale GLib sources', baselines advance (56 → 799 → 1043 → 1287), no crashes across 3× reload
+  - Deliberate config-timeout via infinite-loop rc.lua under `XDG_CONFIG_HOME`: SIGALRM fires, begin_reload runs (gen=1), 3 sources swept, fallback config loads, compositor responds to IPC
+  - Naughty assertion in fallback is orthogonal preexisting issue (previously masked by SEGV)
+- `test-floating-layout.lua` flaky-fix deferred (separate concern)
+- [x] Port
+- [x] Test hot-reload
+- [x] Test config-timeout path
+- [x] Merge
 
 ### 3e. `chore/upstream-small-refactors`
 - **Commits:** ~~`4c765d5`~~ (already merged with 3c), ~~`ca22c8e`~~ (already merged with 3c), `ad87e23` (consolidate `focus_restore()`)
