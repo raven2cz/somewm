@@ -4911,6 +4911,25 @@ luaA_hot_reload(void)
 	 * teardown ensures no Lua objects are collected during or after reload. */
 	lua_gc(L, LUA_GCSTOP, 0);
 
+	/* Close the dispatch barrier and rewire every tracked Lgi FFI closure
+	 * to a guard-owned safe CIF *before* any teardown work runs. Without
+	 * this, a GLib timeout tick during the reload window can reach
+	 * classify_argument on a freed cif->arg_types and crash inside libffi
+	 * before our generation check ever executes. begin_reload sets the
+	 * guard's ready flag to 0, bumps generation, and re-preps every
+	 * wrapped closure with safe_cif (void return, zero args) + safe_noop.
+	 * Safe to call even if the guard is not preloaded (dlsym returns NULL). */
+	{
+		void (*begin)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_begin_reload");
+		if (begin) {
+			begin();
+		} else {
+			fprintf(stderr, "somewm: hot-reload: WARNING: "
+				"lgi_closure_guard.so not preloaded; stale "
+				"closures may crash inside libffi\n");
+		}
+	}
+
 	/* ================================================================
 	 * Phase A: Teardown - clean up Lua-owned state
 	 * ================================================================
