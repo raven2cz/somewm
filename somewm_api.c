@@ -446,6 +446,10 @@ some_set_seat_keyboard_focus(Client *c)
 	if (c->client_type == X11)
 		client_activate_surface(surface, 1);
 #endif
+	/* Update pointer constraint - games need this for mouse lock.
+	 * Without this, pointer stays unconstrained and focus-follows-mouse
+	 * can steal focus away from games. */
+	some_update_pointer_constraint(surface);
 }
 
 /** Find the Client* that owns a given wlr_surface.

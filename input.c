@@ -1318,6 +1318,18 @@ cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 		wlr_pointer_constraint_v1_send_activated(active_constraint);
 }
 
+/** Update pointer constraint for a surface.
+ * Called from somewm_api.c when Lua changes focus - games need pointer
+ * constraints to follow keyboard focus for mouse lock to work. */
+void
+some_update_pointer_constraint(struct wlr_surface *surface)
+{
+	if (!surface)
+		return;
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
+}
+
 void
 cursorwarptohint(void)
 {
