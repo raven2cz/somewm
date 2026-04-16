@@ -36,7 +36,7 @@ end
 function M.toggle()
 	if M.is_running() then
 		awful.spawn.with_shell("kill -INT $(cat " .. pid_file .. ") && rm -f " .. pid_file)
-		naughty.notify({ title = "Recording", text = "Stopped & saved", timeout = 3 })
+		naughty.notification({ title = "Recording", message = "Stopped & saved", timeout = 3 })
 	else
 		local output = focused_output()
 		local outfile = os.getenv("HOME") .. "/Videos/rec-" .. os.date("%Y%m%d-%H%M%S") .. ".mkv"
@@ -56,16 +56,16 @@ function M.toggle()
 			.. " -o " .. outfile
 			.. " & echo $! > " .. pid_file
 		)
-		naughty.notify({ title = "Recording", text = "Started (" .. output .. "): " .. outfile, timeout = 3 })
+		naughty.notification({ title = "Recording", message = "Started (" .. output .. "): " .. outfile, timeout = 3 })
 	end
 end
 
 function M.pause_resume()
 	if M.is_running() then
 		awful.spawn.with_shell("kill -USR2 $(cat " .. pid_file .. ")")
-		naughty.notify({ title = "Recording", text = "Pause/Resume toggled", timeout = 2 })
+		naughty.notification({ title = "Recording", message = "Pause/Resume toggled", timeout = 2 })
 	else
-		naughty.notify({ title = "Recording", text = "Not recording", timeout = 2 })
+		naughty.notification({ title = "Recording", message = "Not recording", timeout = 2 })
 	end
 end
 

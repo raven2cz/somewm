@@ -29,7 +29,7 @@ function M.setup()
 			local g = c.screen.geometry
 			if c.y + c.height > g.height then
 				c.y = g.height - c.height
-				naughty.notify { text = "restricted window: " .. c.name }
+				naughty.notification { message = "restricted window: " .. c.name }
 			end
 			if c.x + c.width > g.width then
 				c.x = g.width - c.width

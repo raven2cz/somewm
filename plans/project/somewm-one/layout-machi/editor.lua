@@ -169,8 +169,8 @@ function module.create(data)
         local layout = tag.layout
 
         if layout.machi_set_cmd == nil then
-            naughty.notify({
-                    text = "The layout to edit is not machi",
+            naughty.notification({
+                    message = "The layout to edit is not machi",
                     timeout = 3,
             })
             return
