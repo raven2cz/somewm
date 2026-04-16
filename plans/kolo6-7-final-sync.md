@@ -585,15 +585,63 @@ git checkout pre-kolo6-main-2026-04-16
 
 ## 6. Kolo 7 — detaily
 
-Samostatná branch po Kolo 6 merge, 3 triviální commity:
+Samostatná branch po Kolo 6 merge. **Upstream má 10 post-refactor commitů** nad `493fda4` (last refactor). Kompletní enumerace:
 
-| # | Commit | Co | Target (po Kolo 6) | Pre-check |
-|---|---|---|---|---|
-| 1 | `c510efa` | `exit` signal boolean param (true=reload, false=exit) | `luaa.c` + `somewm.c` | `grep connect_signal.*exit` rc.lua = prázdno ✓ |
-| 2 | `44f842b` | Trailing whitespace v `spawn.c` | `spawn.c` | triviální |
-| 3 | `64fe6a7` | Simplify `unmaplayersurfacenotify()` | `protocols.c` | existuje po Kolo 6 |
+| # | Upstream | Popis | Náš fork | Status | Workflow |
+|---|---|---|---|---|---|
+| 1 | `fb74146` | docs: revert bug report template | — | SKIP | docs, skip |
+| 2 | `e5d7dfe` | benchmark infrastructure | `12fb825` | DUPE (upstream merged our PR) | `git cherry-pick --skip` (empty) |
+| 3 | `746d59d` | make profile targets | `87cdd69` | DUPE (upstream merged our PR) | `git cherry-pick --skip` (empty) |
+| 4 | `8a64a43` | docs: issue templates YAML | — | SKIP | docs, skip |
+| 5 | `9e05267` | fix(xdg): set_bounds hint | `9012e25` | DUPE (same fix, different place) | `git cherry-pick --skip` (empty po Group D port) |
+| 6 | `d354433` | fix: pair send_leave | `a411860` | DUPE (same fix, different place) | `git cherry-pick --skip` (empty po Group D port) |
+| 7 | `64fe6a7` | Simplify `unmaplayersurfacenotify()` | — | **NEW** | port to `protocols.c` |
+| 8 | `cb6c2c1` | stop key repeat | `7d0ede8` | DUPE (same fix, different place) | `git cherry-pick --skip` (empty po Group E port) |
+| 9 | `c510efa` | `exit` signal boolean param | — | **NEW** | port to `luaa.c` + `somewm.c` |
+| 10 | `44f842b` | Trailing whitespace | — | **NEW** | port to `spawn.c` |
 
-`c510efa` Lua-forward-compat: Lua callbacks bez explicitního argumentu fungují (extra arg ignored). Ověřeno: `grep -n "exit" plans/project/somewm-one/rc.lua` = jen `fishlive.exit_screen` submodule, žádný `awesome.connect_signal("exit", ...)`. Bezpečné.
+**Net Kolo 7 = 3 new commits + 5 dupe skip + 2 docs skip.**
+
+### Poznámky o duplicitách
+
+Mnoho upstream post-refactor bugfixů už jsme sami portovali manuálně (během Kolo 5) protože řešily problémy co se nám reálně projevily, a my jsme je zapsali do monolitického `somewm.c`. Po Kolo 6 refactoru se naše kód dostane do správných modulů (`window.c`, `protocols.c`, `input.c`) = totožné s upstream. Cherry-pick duplicitních commitů → empty commit → skip.
+
+**`cb6c2c1` (SKIP):** Ověřeno `git patch-id` — `cb6c2c1` i náš `7d0ede8` pochází ze stejného upstream commit `787bd80`.
+
+**`9e05267` (SKIP):** Obsah identický s naším `9012e25` — oba používají `wlr_xdg_toplevel_set_bounds()` + `set_size(0,0)` místo workarea set_size.
+
+**`d354433` (SKIP):** Obsah identický s naším `a411860` — 3-line `wlr_surface_send_leave()` v unmaplayersurfacenotify.
+
+**`e5d7dfe` + `746d59d` (SKIP):** Upstream přijal naše dva bench PRs. Obsah i SHA history by měly být identické.
+
+### `c510efa` forward-compat check
+
+Lua callbacks bez explicitního argumentu fungují (extra arg ignored). Ověřeno: `grep -n "exit" plans/project/somewm-one/rc.lua` = jen `fishlive.exit_screen` submodule, žádný `awesome.connect_signal("exit", ...)`. Bezpečné.
+
+### Workflow
+
+```bash
+git checkout -b chore/upstream-sync-kolo7 main  # after Kolo 6 merged
+
+# Skip docs (fb74146, 8a64a43) — nothing to do
+# Cherry-pick all 8 non-docs in upstream order; expect 5 empty skips + 3 real
+for sha in e5d7dfe 746d59d 9e05267 d354433 64fe6a7 cb6c2c1 c510efa 44f842b; do
+    git cherry-pick $sha || git cherry-pick --skip  # --skip for empty/dupe
+done
+
+make build-test && make test-unit
+```
+
+**Alternative (cleaner):** skip dupes explicitně:
+
+```bash
+git cherry-pick 64fe6a7
+git cherry-pick c510efa
+git cherry-pick 44f842b
+# dupes + docs not cherry-picked at all
+```
+
+Pak v commit message: "Kolo 7: 3 new upstream commits (5 duplicates already in fork)".
 
 ---
 
