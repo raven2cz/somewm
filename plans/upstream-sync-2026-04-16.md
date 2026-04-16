@@ -112,11 +112,11 @@ can hot-reload without crash + no ASAN errors on shutdown.
 | 5 | `ae877ad` | docs: update `UPSTREAM_PORTS.md` |
 
 **Progress:**
-- [ ] 1 #4060 properties batch
-- [ ] 2 #4066 pushliteral
-- [ ] 3 #4017 override_label_bgs
-- [ ] 4 #4079 keybinding groups
-- [ ] 5 UPSTREAM_PORTS.md
+- [x] 1 #4060 properties batch — `6970d53` (conflicts resolved: layer_surface opacity, output added::connected)
+- [x] 2 #4066 pushliteral — `3d6f8ea`
+- [x] 3 #4017 override_label_bgs — `921e1b3`
+- [x] 4 #4079 keybinding groups — `009ce50`
+- [x] 5 UPSTREAM_PORTS.md — `00dc560`
 
 **Test plan:**
 1. `make` + `make test-unit`.
@@ -352,7 +352,7 @@ git push --force-with-lease origin <branch>  # only on our branch, never main
 | Kolo | Branch | Status |
 |---|---|---|
 | 1 | `chore/upstream-sync-bugfixes` | ✅ merged 2026-04-16 (8 commits, 3 skipped as duplicates) |
-| 2 | `chore/upstream-sync-ports` | ⏳ not started |
+| 2 | `chore/upstream-sync-ports` | ✅ merged 2026-04-16 (5 commits, 2 conflicts resolved) |
 | 3 | (per commit) | ⏳ not started |
 | 4 | `chore/upstream-deprecation-sweep` | 🔒 gated on grep audit |
 | 5 | (per feature) | ⏳ not started, on demand |
