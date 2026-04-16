@@ -1820,8 +1820,9 @@ main(int argc, char *argv[])
 
 	setup();
 	run(startup_cmd);
+	int exit_code = globalconf.exit_code;
 	cleanup();
-	return EXIT_SUCCESS;
+	return exit_code;
 
 usage:
 	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
