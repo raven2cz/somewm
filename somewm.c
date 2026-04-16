@@ -724,40 +724,86 @@ some_refresh(void)
 	in_refresh = true;
 
 #ifdef SOMEWM_BENCH
-	struct timespec bench_start, bench_end;
+	struct timespec bench_start, bench_end, stage_start, stage_end;
 	clock_gettime(CLOCK_MONOTONIC, &bench_start);
+	stage_start = bench_start;
 #endif
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_LUA_REFRESH,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
 
 	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
 	 * client geometry will have their changes applied by client_refresh()
 	 * in the same cycle. */
 	animation_tick_all();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_ANIMATION,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
+
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
 	 * This ensures wibar geometry is applied before client layout calculations. */
 	drawin_refresh();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_DRAWIN,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
+
 	/* Step 3: Apply client changes (geometry, borders, focus)
 	 * This matches AwesomeWM's client_refresh() which handles all client updates. */
 	client_refresh();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_CLIENT,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
+
 	/* Step 4: Update client visibility (banning) */
 	banning_refresh();
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_BANNING,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
 
 	/* Step 5: Update window stacking (Z-order)
 	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
 	stack_refresh();
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_STACK,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
+#endif
 
 	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
 	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
 	client_destroy_later();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_end);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_DESTROY,
+		timespec_diff_ns(&stage_start, &stage_end));
+	bench_end = stage_end;
 	bench_record_frame_time(timespec_diff_ns(&bench_start, &bench_end));
 #endif
 

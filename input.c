@@ -54,6 +54,7 @@
 #include "objects/signal.h"
 #include "event.h"
 #include "xkb.h"
+#include "bench.h"
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 
@@ -400,6 +401,12 @@ buttonpress(struct wl_listener *listener, void *data)
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
 	Client *c;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
@@ -1121,6 +1128,12 @@ keypress(struct wl_listener *listener, void *data)
 	/* This event is raised when a key is pressed or released. */
 	KeyboardGroup *group = wl_container_of(listener, group, key);
 	struct wlr_keyboard_key_event *event = data;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	/* Translate libinput keycode -> xkbcommon */
 	keycode = event->keycode + 8;

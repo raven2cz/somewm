@@ -38,6 +38,7 @@
 #include "objects/signal.h"
 #include "banning.h"
 #include "animation.h"
+#include "bench.h"
 
 /* macros */
 
@@ -492,9 +493,20 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
+#ifdef SOMEWM_BENCH
+	struct timespec render_start, render_end;
+	clock_gettime(CLOCK_MONOTONIC, &render_start);
+#endif
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &render_end);
+	bench_render_record(timespec_diff_ns(&render_start, &render_end));
+	/* Flush any pending input events now that a frame was committed: the
+	 * input-to-display latency covers event -> visible pixels. */
+	bench_input_commit_flush();
+#endif
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);
