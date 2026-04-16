@@ -26,12 +26,7 @@ if [[ ":${LD_LIBRARY_PATH:-}:" != *":/usr/local/lib:"* ]]; then
     export LD_LIBRARY_PATH="/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-# Lgi closure guard for safe hot-reload
-# somewm clears LD_PRELOAD in main() so children don't inherit it
-LGI_GUARD=/usr/local/lib/liblgi_closure_guard.so
-if [ -f "$LGI_GUARD" ]; then
-    export LD_PRELOAD="${LGI_GUARD}${LD_PRELOAD:+:$LD_PRELOAD}"
-    export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}verify_asan_link_order=0"
-fi
+# Lgi closure guard is auto-loaded by somewm's main() via re-exec.
+# No manual LD_PRELOAD needed since upstream cherry-picks 67d7899 + ace15ed + b6b2e78.
 
 exec dbus-run-session somewm -d 2>&1 | tee ~/.local/log/somewm-debug.log
