@@ -95,6 +95,7 @@
 #include "common/lualib.h"  /* For luaA_dumpstack */
 #include "objects/signal.h"
 #include "common/luaobject.h"  /* For luaA_object_emit_signal */
+#include "bench.h"             /* Optional bench instrumentation (gated by -Dbench=true) */
 #include "objects/button.h"
 #include "objects/drawin.h"
 #include "objects/drawable.h"
@@ -940,6 +941,9 @@ axisnotify(struct wl_listener *listener, void *data)
 void
 buttonpress(struct wl_listener *listener, void *data)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	struct wlr_pointer_button_event *event = data;
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
@@ -1577,6 +1581,10 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* Skip initial commit - handled by initialcommitnotify */
 	if (c->surface.xdg->initial_commit)
 		return;
+
+#ifdef SOMEWM_BENCH
+	bench_manage_end(c);
+#endif
 
 	/* Only call resize() for floating or fullscreen clients.
 	 * Tiled clients have their geometry managed by the Lua layout engine,
@@ -3441,6 +3449,9 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 void
 keypress(struct wl_listener *listener, void *data)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	int i;
 	uint32_t keycode;
 	const xkb_keysym_t *syms;
@@ -3644,6 +3655,9 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Called when the surface is mapped, or ready to display on-screen. */
 	Client *p = NULL;
 	Client *w, *c = wl_container_of(listener, c, map);
+#ifdef SOMEWM_BENCH
+	bench_manage_start(c);
+#endif
 	Monitor *m;
 	int i;
 	lua_State *L;
@@ -4157,6 +4171,9 @@ void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
 {
+#ifdef SOMEWM_BENCH
+	bench_input_event_record();
+#endif
 	double sx = 0, sy = 0, sx_confined, sy_confined;
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL;
@@ -4631,9 +4648,20 @@ rendermon(struct wl_listener *listener, void *data)
 		}
 	}
 
+#ifdef SOMEWM_BENCH
+	struct timespec bench_render_start, bench_render_end;
+	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
+#endif
 	if (!wlr_scene_output_commit(m->scene_output, NULL))
 		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
 			m->wlr_output->name);
+#ifdef SOMEWM_BENCH
+	else {
+		clock_gettime(CLOCK_MONOTONIC, &bench_render_end);
+		bench_render_record(timespec_diff_ns(&bench_render_start, &bench_render_end));
+		bench_input_commit_flush();
+	}
+#endif
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);
@@ -4943,71 +4971,6 @@ static float main_loop_iteration_limit = 0.1f;
 /* Recursion guard for some_refresh() */
 static bool in_refresh = false;
 
-#ifdef SOMEWM_BENCH
-#include <stdint.h>
-
-#define BENCH_FRAME_HISTORY 1000
-
-static uint64_t bench_frame_times_ns[BENCH_FRAME_HISTORY];
-static int bench_frame_index = 0;
-static int bench_frame_count = 0;
-static uint64_t bench_refresh_count = 0;
-
-static uint64_t
-timespec_diff_ns(struct timespec *start, struct timespec *end)
-{
-    return (uint64_t)(end->tv_sec - start->tv_sec) * 1000000000ULL
-         + (uint64_t)(end->tv_nsec - start->tv_nsec);
-}
-
-void
-bench_frame_stats_get(uint64_t *count, uint64_t *min_ns, uint64_t *max_ns,
-                      uint64_t *avg_ns, uint64_t *p99_ns)
-{
-    *count = bench_refresh_count;
-    if (bench_frame_count == 0) {
-        *min_ns = *max_ns = *avg_ns = *p99_ns = 0;
-        return;
-    }
-
-    /* Copy and sort for percentile calculation */
-    int n = bench_frame_count < BENCH_FRAME_HISTORY
-          ? bench_frame_count : BENCH_FRAME_HISTORY;
-    uint64_t sorted[BENCH_FRAME_HISTORY];
-    memcpy(sorted, bench_frame_times_ns, n * sizeof(uint64_t));
-
-    /* Simple insertion sort - n is at most 1000 */
-    for (int i = 1; i < n; i++) {
-        uint64_t key = sorted[i];
-        int j = i - 1;
-        while (j >= 0 && sorted[j] > key) {
-            sorted[j + 1] = sorted[j];
-            j--;
-        }
-        sorted[j + 1] = key;
-    }
-
-    *min_ns = sorted[0];
-    *max_ns = sorted[n - 1];
-
-    uint64_t sum = 0;
-    for (int i = 0; i < n; i++)
-        sum += sorted[i];
-    *avg_ns = sum / n;
-
-    int p99_idx = (int)((n - 1) * 0.99);
-    *p99_ns = sorted[p99_idx];
-}
-
-void
-bench_frame_stats_reset(void)
-{
-    bench_frame_index = 0;
-    bench_frame_count = 0;
-    bench_refresh_count = 0;
-}
-#endif
-
 /* Forward declaration */
 void some_refresh(void);
 
@@ -5153,45 +5116,67 @@ some_refresh(void)
 	in_refresh = true;
 
 #ifdef SOMEWM_BENCH
-	struct timespec bench_start, bench_end;
-	clock_gettime(CLOCK_MONOTONIC, &bench_start);
+	struct timespec bench_ts[BENCH_STAGE_COUNT + 1];
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[0]);
 #endif
 
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[1]);
+#endif
 
 	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
 	 * client geometry will have their changes applied by client_refresh()
 	 * in the same cycle. */
 	animation_tick_all();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
+#endif
+
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
 	 * AwesomeWM calls drawin_refresh() BEFORE client_refresh() in awesome_refresh().
 	 * This ensures wibar geometry is applied before client layout calculations. */
 	drawin_refresh();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
+#endif
+
 	/* Step 3: Apply client changes (geometry, borders, focus)
 	 * This matches AwesomeWM's client_refresh() which handles all client updates. */
 	client_refresh();
 
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
+#endif
+
 	/* Step 4: Update client visibility (banning) */
 	banning_refresh();
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
+#endif
 
 	/* Step 5: Update window stacking (Z-order)
 	 * This matches AwesomeWM's awesome_refresh() which calls stack_refresh() */
 	stack_refresh();
+
+#ifdef SOMEWM_BENCH
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
+#endif
 
 	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
 	 * This matches AwesomeWM's deferred destruction pattern to avoid race conditions */
 	client_destroy_later();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_end);
-	uint64_t elapsed = timespec_diff_ns(&bench_start, &bench_end);
-	bench_frame_times_ns[bench_frame_index] = elapsed;
-	bench_frame_index = (bench_frame_index + 1) % BENCH_FRAME_HISTORY;
-	bench_frame_count++;
-	bench_refresh_count++;
+	clock_gettime(CLOCK_MONOTONIC, &bench_ts[7]);
+	for (int i = 0; i < BENCH_STAGE_COUNT; i++)
+		bench_stage_record(i, timespec_diff_ns(&bench_ts[i], &bench_ts[i + 1]));
+	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[7]));
 #endif
 
 	in_refresh = false;
