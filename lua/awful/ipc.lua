@@ -2483,7 +2483,7 @@ local function register_builtin_commands()
     end
   end)
 
-  --- reload - Reload configuration (validates first)
+  --- reload - Reload configuration (cold restart, validates first)
   ipc.register("reload", function()
     -- Get config file path
     local conffile = capi.awesome.conffile

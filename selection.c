@@ -65,8 +65,7 @@ move_global_to_table(lua_State *L, int index, const char *global_name, const cha
 static int
 luaA_selection_get(lua_State *L)
 {
-    luaA_deprecate(L, "selection() is deprecated. Use selection.getter{} instead.");
-    return 0;
+    return luaL_error(L, "selection() is deprecated. Use selection.getter{} instead.");
 }
 
 /** Setup the selection module.

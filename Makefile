@@ -9,7 +9,7 @@
 
 -include .local.mk
 
-.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-flamegraph bench-diff bench-heaptrack
+.PHONY: all install uninstall clean setup reconfigure test test-unit test-check test-integration test-asan test-one test-visual test-one-visual test-ci test-fast build-test build-bench bench-run bench-run-live bench-json bench-baseline bench-compare bench-check bench-memory bench-flamegraph bench-diff bench-heaptrack profile profile-lua profile-save profile-diff
 
 # Default build: WITH ASAN for development
 all:
@@ -156,6 +156,76 @@ endif
 	perf script -i $(QUEUE) | stackcollapse-perf.pl > /tmp/queue.folded
 	difffolded.pl /tmp/sync.folded /tmp/queue.folded | flamegraph.pl > somewm-bench-diff.svg
 	@echo "Differential flamegraph: somewm-bench-diff.svg"
+
+# Run benchmarks with JSON output capture (against live session)
+bench-json: build-bench
+	@JSON=1 \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/run-all.sh
+
+# Save current results as baseline for this branch
+bench-baseline: bench-json
+	./tests/bench/bench-save-baseline.sh
+
+# Compare two result sets: make bench-compare A=results/dir-a B=results/dir-b
+bench-compare:
+	@lua5.1 tests/bench/bench-stats.lua $(A) $(B) 2>/dev/null \
+	 || luajit tests/bench/bench-stats.lua $(A) $(B) 2>/dev/null \
+	 || lua tests/bench/bench-stats.lua $(A) $(B)
+
+# Check for regressions against baseline
+bench-check: bench-json
+	@lua5.1 tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1) 2>/dev/null \
+	 || luajit tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1) 2>/dev/null \
+	 || lua tests/bench/bench-stats.lua \
+	 tests/bench/results/baselines/$$(git branch --show-current) \
+	 $$(ls -td tests/bench/results/20* | head -1)
+
+# Run memory trend analysis (uses its own headless compositor)
+bench-memory: build-bench
+	@SOMEWM=./build-bench/somewm \
+	 SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/bench-memory-runner.sh
+
+# --- Profiling (live session) ---
+
+# Profile the running compositor for DURATION seconds (default: 30)
+# Usage: make profile
+#        make profile DURATION=60
+profile:
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh $(DURATION)
+
+# Profile with Lua function breakdown via jit.p
+# Usage: make profile-lua
+#        make profile-lua DURATION=60
+profile-lua:
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --lua $(DURATION)
+
+# Save a profile as a named baseline for later comparison
+# Usage: make profile-save LABEL=before-refactor
+profile-save:
+ifndef LABEL
+	@echo "Usage: make profile-save LABEL=<name>" >&2
+	@exit 1
+endif
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --save $(LABEL) $(DURATION)
+
+# Compare current profile against a saved baseline
+# Usage: make profile-diff LABEL=before-refactor
+profile-diff:
+ifndef LABEL
+	@echo "Usage: make profile-diff LABEL=<name>" >&2
+	@exit 1
+endif
+	@SOMEWM_CLIENT=./build-bench/somewm-client \
+	 ./tests/bench/profile-session.sh --diff $(LABEL) $(DURATION)
 
 # Memory profiling with heaptrack
 bench-heaptrack: build-bench

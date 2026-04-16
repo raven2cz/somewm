@@ -1,7 +1,7 @@
 project(
   'somewm',
   'c',
-  version: '2.0.0-dev',
+  version: '0.5.0',
   license: 'MIT',
   default_options: [
     'c_std=gnu11',
@@ -144,6 +144,23 @@ endif
 wlroots_version = '0.19'
 message('Using wlroots version: ' + wlroots_version)
 
+# SceneFX (optional visual effects - rounded corners, shadows, blur)
+# Drop-in replacement for wlroots scene renderer, requires wlroots 0.19
+scenefx_option = get_option('scenefx')
+scenefx = dependency('scenefx-0.4', required: scenefx_option)
+if not scenefx.found()
+  scenefx_sub = subproject('scenefx', required: scenefx_option)
+  if scenefx_sub.found()
+    scenefx = scenefx_sub.get_variable('scenefx')
+  endif
+endif
+have_scenefx = scenefx.found()
+if have_scenefx
+  message('SceneFX visual effects enabled')
+else
+  message('SceneFX not found or disabled, visual effects disabled')
+endif
+
 # PAM authentication (optional, for lock screen)
 pam_option = get_option('pam')
 pam_dep = dependency('pam', required: pam_option)
@@ -262,6 +279,10 @@ if have_pam
   add_project_arguments('-DHAVE_PAM', language: 'c')
 endif
 
+if have_scenefx
+  add_project_arguments('-DHAVE_SCENEFX', language: 'c')
+endif
+
 if get_option('test_pam')
   add_project_arguments('-DTEST_PAM', language: 'c')
 endif
@@ -317,6 +338,7 @@ somewm_sources = [
   'animation.c',
   'selection.c',
   'pam_auth.c',
+  'bench.c',
   # Common
   'common/luaclass.c',
   'common/luaobject.c',
@@ -376,6 +398,10 @@ if have_pam
   all_deps += [pam_dep]
 endif
 
+if have_scenefx
+  all_deps += [scenefx]
+endif
+
 somewm_exe = executable(
   'somewm',
   somewm_sources,
@@ -410,6 +436,13 @@ test_layer_client = executable(
   layer_shell_client_header,
   dependencies: [wayland_client],
   install: false,
+)
+
+# Session launcher script (restart/rebuild loop)
+install_data(
+  'somewm-session',
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
 )
 
 # Test XDG transient client for stacking regression tests (issue #276)
@@ -527,5 +560,6 @@ summary({
   'Lua': lua_dep.name() + ' ' + lua_dep.version(),
   'LGI': lgi_version,
   'Xwayland': have_xwayland,
+  'SceneFX': have_scenefx,
   'Systemd': have_systemd,
 }, section: 'Configuration')

@@ -16,7 +16,7 @@
 #include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
 #include <stdbool.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 
 /* Flag to mark stack as needing refresh */
 static bool need_stack_refresh = false;
@@ -80,21 +80,26 @@ stack_windows(void)
 static window_layer_t
 client_layer_translator(Client *c)
 {
-	Client *focused;
-
 	if (!c)
 		return WINDOW_LAYER_NORMAL;
+
+	/* Override-redirect (unmanaged) X11 surfaces are always on top.
+	 * X11 semantics: override_redirect bypasses the WM entirely and
+	 * displays above all managed windows. Maps to LyrOverlay. */
+#ifdef XWAYLAND
+	if (c->client_type == X11 && c->surface.xwayland->override_redirect)
+		return WINDOW_LAYER_ONTOP;
+#endif
 
 	/* First deal with user-set attributes */
 	if (c->ontop)
 		return WINDOW_LAYER_ONTOP;
 
-	/* Fullscreen windows only get their own layer when they have focus.
-	 * On Wayland, we also keep the fullscreen layer when the focused client
-	 * is on a different screen, since the scene graph uses separate layers
-	 * (unlike X11's flat stacking model where wibars are below all clients). */
-	focused = some_get_focused_client();
-	if (c->fullscreen && (focused == c || !focused || focused->screen != c->screen))
+	/* Fullscreen clients ALWAYS stay in LyrFS on Wayland.
+	 * Unlike X11's flat stacking, scene graph layers mean fullscreen
+	 * must be above wibar (LyrTop) at all times. Dialogs/transients
+	 * follow their parent via WINDOW_LAYER_IGNORE → stack_transients_above(). */
+	if (c->fullscreen)
 		return WINDOW_LAYER_FULLSCREEN;
 
 	if (c->above)
@@ -103,9 +108,14 @@ client_layer_translator(Client *c)
 	if (c->below)
 		return WINDOW_LAYER_BELOW;
 
-	/* Check for transient attribute */
+	/* Check for transient attribute BEFORE floating —
+	 * transients must follow their parent's layer, not get
+	 * pulled into LyrFloat independently. */
 	if (c->transient_for)
 		return WINDOW_LAYER_IGNORE;
+
+	if (c->floating)
+		return WINDOW_LAYER_FLOATING;
 
 	/* Then deal with window type */
 	switch (c->type) {
@@ -137,6 +147,8 @@ get_scene_layer(window_layer_t layer)
 		return LyrBottom;
 	case WINDOW_LAYER_NORMAL:
 		return LyrTile;
+	case WINDOW_LAYER_FLOATING:
+		return LyrFloat;
 	case WINDOW_LAYER_ABOVE:
 		return LyrTop;
 	case WINDOW_LAYER_FULLSCREEN:

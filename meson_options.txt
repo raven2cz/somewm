@@ -20,6 +20,13 @@ option(
 )
 
 option(
+  'scenefx',
+  type: 'feature',
+  value: 'auto',
+  description: 'Enable scenefx visual effects (rounded corners, shadows, blur)',
+)
+
+option(
   'systemd',
   type: 'feature',
   value: 'auto',
