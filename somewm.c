@@ -50,7 +50,7 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
@@ -359,6 +359,20 @@ cleanuplisteners(void)
 	wl_list_remove(&new_session_lock.link);
 	/* NOTE: XWayland listeners are removed in cleanup() immediately before
 	 * wlr_xwayland_destroy(), matching the backend listener pattern. */
+}
+
+void
+cold_restart(void)
+{
+	globalconf.exit_code = 1;
+	some_compositor_quit();
+}
+
+void
+rebuild_restart(void)
+{
+	globalconf.exit_code = 2;
+	some_compositor_quit();
 }
 
 /* ==========================================================================
@@ -1016,6 +1030,19 @@ setup(void)
 		layers[i] = wlr_scene_tree_create(&scene->tree);
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
+
+#ifdef HAVE_SCENEFX
+	/* Set global blur parameters for scenefx backdrop blur.
+	 * Values match scenefx defaults (frosted-glass aesthetic).
+	 * Can be tuned later via Lua API or beautiful theme. */
+	wlr_scene_set_blur_data(scene,
+		/* num_passes */ 3,
+		/* radius */     5,
+		/* noise */      0.02f,
+		/* brightness */ 0.9f,
+		/* contrast */   0.9f,
+		/* saturation */ 1.1f);
+#endif
 
 	/* Create the renderer. When scenefx is compiled in, use the FX renderer
 	 * (GLES2-based, adds corner radius / blur / shadow shaders).

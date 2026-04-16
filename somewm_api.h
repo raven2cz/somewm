@@ -164,6 +164,8 @@ void some_arrange_all(void);
  * Compositor control
  */
 void some_compositor_quit(void);
+void cold_restart(void);
+void rebuild_restart(void);
 
 /*
  * Global compositor state access
