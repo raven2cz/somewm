@@ -239,8 +239,8 @@ If reload + widgets OK → merge to main. If regression → report issue before 
 - [x] rc.lua updates (3 commits on branch)
 - [x] Cherry-picks (7 commits)
 - [x] Per-round sandbox tests
-- [ ] **User acceptance test (pending)**
-- [ ] Merge to main
+- [x] User acceptance test
+- [x] Merge to main (2026-04-16, fast-forward, branch deleted)
 
 ---
 
