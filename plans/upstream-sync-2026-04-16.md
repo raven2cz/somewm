@@ -74,17 +74,17 @@ Filed upstream as issue trip-zip/somewm#465.
 | 11 | `411cb42` | use set_bounds instead of set_size for initial XDG | `somewm.c` |
 
 **Progress tracking (check off as merged):**
-- [ ] 1 keyboardlayout off-by-one
-- [ ] 2 xdg null-ptr
-- [ ] 3 screen.name UAF
-- [ ] 4 screen.fake_add SEGV
-- [ ] 5 keygrabber release
-- [ ] 6 stop key repeat
-- [ ] 7 root._remove_key
-- [ ] 8 drawin shadow refresh
-- [ ] 9 ewmh stack refresh
-- [ ] 10 xdg set_bounds initial
-- [ ] 11 set_bounds vs set_size
+- [x] 1 keyboardlayout off-by-one — `947b442`
+- [x] 2 xdg null-ptr — `042401a`
+- [x] 3 screen.name UAF — `104e944`
+- [x] 4 screen.fake_add SEGV — `f4bcbbb`
+- [x] 5 keygrabber release — `d39cb2a`
+- [x] 6 stop key repeat — `7d0ede8` (manual port of cb6c2c1)
+- [x] 7 root._remove_key — `0509133`
+- [~] 8 drawin shadow refresh — SKIPPED (already in fork: border_need_update, luaA_drawin_set_shadow, wibar.lua "shadow" whitelist all present)
+- [x] 9 ewmh stack refresh — `fb4d3ad`
+- [~] 10 xdg set_bounds initial — SKIPPED (duplicate of item 11)
+- [~] 11 set_bounds vs set_size — SKIPPED (already in fork as `9012e25`)
 
 **Test plan per batch:**
 1. After every 2–3 cherry-picks: `make` (ASAN build).
@@ -351,7 +351,7 @@ git push --force-with-lease origin <branch>  # only on our branch, never main
 
 | Kolo | Branch | Status |
 |---|---|---|
-| 1 | `chore/upstream-sync-bugfixes` | ⏳ not started |
+| 1 | `chore/upstream-sync-bugfixes` | ✅ merged 2026-04-16 (8 commits, 3 skipped as duplicates) |
 | 2 | `chore/upstream-sync-ports` | ⏳ not started |
 | 3 | (per commit) | ⏳ not started |
 | 4 | `chore/upstream-deprecation-sweep` | 🔒 gated on grep audit |
