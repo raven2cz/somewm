@@ -18,8 +18,9 @@ to `main` only after verification.
 | 4 | deprecation sweep | ✅ DONE |
 | 5 | features (idle/icons/rules/output/bench) | ✅ DONE |
 | 6 | velký refactor split somewm.c | ⏸️ ODLOŽENO (all-or-nothing, riskantní merge) |
+| 7 | post-sync pickup (nové commity z doby Kolo 1–5) | ⏳ PLANNED (3 commits) |
 
-**Zbývá z upstreamu pouze Kolo 6** (12 commitů co rozsekají `somewm.c` na focus.c/window.c/input.c/monitor.c/protocols.c/xwayland.c). Odloženo do doby, kdy chceme věnovat dedikovaný multi-day session.
+**Zbývá z upstreamu:** Kolo 6 (12 commitů co rozsekají `somewm.c` na focus.c/window.c/input.c/monitor.c/protocols.c/xwayland.c — odloženo do dedikovaného multi-day session) + Kolo 7 (3 malé commity co přibyly BĚHEM našeho sync work, zachytávají nás na úroveň HEAD upstreamu).
 
 ## Scope and principles
 
@@ -325,6 +326,49 @@ High risk of silent focus/render regressions.
 
 ---
 
+## Kolo 7 — post-sync pickup (PLANNED)
+
+Commity, které přibyly v `upstream/main` BĚHEM našeho sync workflow
+(2026-04-13 až 2026-04-16). Malý dopad, aby nás dostaly na úroveň HEAD
+upstreamu.
+
+**Branch:** `chore/upstream-sync-kolo7` (založit až po Kolo 6, nebo standalone
+pokud Kolo 6 zůstane odložené na měsíce).
+
+| # | Commit | Co dělá | Strategie |
+|---|---|---|---|
+| 1 | `c510efa` | `exit` signal dostal boolean parametr (true = hot reload, false = exit) — AwesomeWM-kompatibilní | cherry-pick (čistý, `luaa.c` + `somewm.c`) |
+| 2 | `44f842b` | Kill trailing whitespace v `spawn.c` | cherry-pick (2 prázdné řádky, triviální) |
+| 3 | `64fe6a7` | Simplify `unmaplayersurfacenotify()` v `protocols.c` | **ČEKÁ NA Kolo 6** — soubor neexistuje před refactorem; případně manual port do našeho `somewm.c` jako v Kolo 3b |
+
+**Poznámky:**
+- `c510efa` je bezpečné zařadit kdykoliv, nemá závislost na Kolo 6.
+- `44f842b` je kosmetika, hodnota nulová mimo konzistenci s upstreamem.
+- `64fe6a7` je refaktor existujícího fixu (pairs send_leave z Kolo 3b);
+  pokud se rozhodneme pro manual port, je to 9/14 řádek v
+  `unmaplayersurfacenotify()`. Jinak počkat na Kolo 6.
+
+**Další kandidáti (dříve zváženi jako "skip", revidovat až budeme u Kola 7):**
+- `6196ccc` + `3553c29` editorconfig + stylua tweaks (konzistence stylu)
+- `abdaac8` + `cf34c6d` test harness hardening
+- `8a64a43` YAML issue templates (pokud začneme používat)
+
+**Verifikace "nic jsme neopomenuli":**
+`git cherry main upstream/main` ukazuje 52 `+` commitů, ale ≥35 z nich jsou
+false positives způsobené adaptací patchů (naše SHA ≠ upstream SHA pro
+stejný fix). Ověřeno 2026-04-16, že tyto jsou aplikované pod jinými SHA:
+
+| Upstream | Naše | Pozn. |
+|---|---|---|
+| `9e05267` xdg set_bounds restore | `9012e25` | my dřív (Mar 22 vs. Apr 13) |
+| `cb6c2c1` stop key repeat | `7d0ede8` | Kolo 1 |
+| `d354433` pair send_leave | `a411860` | Kolo 3b |
+| `e102096` focus unmanage assert | `6ece748` | Kolo 3a |
+| `bd19e1e` selection crash | `03262bc` | pre-sync |
+| `5eb31e1` drawin shadow | `9a459ca` | pre-sync |
+
+---
+
 ## Misc / skip
 
 - `22b226d` prepare main for 2.0 development — version bump, skip (our release is separate).
@@ -336,7 +380,9 @@ High risk of silent focus/render regressions.
 - `abdaac8`, `cf34c6d` test harness fixes — take if tests become flaky.
 - `bd19e1e` dead code cleanup — low priority.
 - `850a126` DEVIATIONS.md update — docs, optional.
-- `64fe6a7` simplify `unmaplayersurfacenotify()` — cleanup only.
+- ~~`64fe6a7` simplify `unmaplayersurfacenotify()`~~ — **moved to Kolo 7** (čeká na `protocols.c` z Kolo 6, nebo manual port).
+- `c510efa` exit signal parameter — **moved to Kolo 7**.
+- `44f842b` trailing whitespace in `spawn.c` — **moved to Kolo 7**.
 
 ---
 
@@ -426,10 +472,11 @@ git push --force-with-lease origin <branch>  # only on our branch, never main
 |---|---|---|
 | 1 | `chore/upstream-sync-bugfixes` | ✅ merged 2026-04-16 (8 commits, 3 skipped as duplicates) |
 | 2 | `chore/upstream-sync-ports` | ✅ merged 2026-04-16 (5 commits, 2 conflicts resolved) |
-| 3 | (per commit) | ⏳ not started |
-| 4 | `chore/upstream-deprecation-sweep` | 🔒 gated on grep audit |
-| 5 | (per feature) | ⏳ not started, on demand |
-| 6 | (refactor) | 🛑 deferred |
+| 3 | `chore/upstream-focus-before-unmanage` + 4 more mini-branches | ✅ merged 2026-04-16 (3a–3e) |
+| 4 | `chore/upstream-deprecation-sweep-kolo4` | ✅ merged 2026-04-16 (10 commits, 66 files, +162/−3624) |
+| 5 | `chore/upstream-sync-kolo5` | ✅ merged 2026-04-16 (13 commits, 5h manually ported) |
+| 6 | (refactor) | 🛑 deferred — needs dedicated multi-day session |
+| 7 | `chore/upstream-sync-kolo7` | ⏳ PLANNED — 3 post-sync commits (1 čeká na Kolo 6) |
 
 Update this table as rounds complete. Move plan to `plans/done/` when all
 non-deferred rounds are merged or explicitly skipped.
