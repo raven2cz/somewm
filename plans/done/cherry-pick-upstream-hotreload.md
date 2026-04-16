@@ -1,8 +1,42 @@
 # Cherry-pick: upstream hot-reload + drawin/systray fixes
 
-**Branch:** `fix/upstream-hotreload-cherrypick`
+**Branch:** `fix/upstream-hotreload-cherrypick` (mergnuto do main 2026-04-16, smazáno)
 **Date:** 2026-04-15
-**Status:** APPROVED WITH CHANGES po Sonnet + Codex review — ready for Stage 1a impl
+**Status:** DONE pro Stage 1a/1b/1c. Stage 2 a deferred přesunuto do samostatných plánů.
+
+## Final outcome (2026-04-16)
+
+Merge commit `1670e4b` na main. 7 cherry-picků aplikováno:
+
+| Stage | Upstream hash | Náš hash | Co |
+|-------|---------------|----------|-----|
+| 1a    | c40eb9f | `3efb424` | destroy stale titlebar scene buffers |
+| 1a    | a07990b | `0ac2238` | destroy old drawin scene trees |
+| 1a    | 23282a9 | `0c2cc85` | shadow refresh on resize, border_width=0 |
+| 1b    | 5617c20 | `dfead9e` | systray snapshot + re-probe |
+| 1b    | 7be1148 | `d7c6a94` | bypass stale GDBus singleton cache |
+| 1c    | 1e42b13 | `5d6c2d6` | recreate output objects in new Lua state |
+| 1c    | 7a8e0cf | `6bb31f1` | preserve tiled client order across reload |
+
+**Smoke test výsledek (2026-04-16):** 4 sekvenční reload → stabilní wibar shadow,
+systray, outputs, tag→client mapping. Viz konkrétní session notes v merge commitu.
+
+**Regressiony odhalené po merge:**
+- Wibar shadow na startu chybí, když `theme.shadow_drawin_color` je nil → opraveno
+  v `3cc986c` (somewm-one theme), generický C-side fix otevřený v
+  `plans/investigate-shadow-nil-color-render.md`.
+- 5. reload + sliding tags animation → SIGSEGV v libffi.so (PID 90539). Nový plán
+  `plans/investigate-reload-libffi-lgi-crash.md`.
+
+## Follow-ups z tohoto plánu (nezmergované)
+
+- **Stage 2** (commity 67d7899 + ace15ed + b6b2e78): `plans/stage2-lgi-guard-autoload.md`
+- **Deferred 0deb9d2** (GLib source sweep refactor): `plans/forward-port-glib-timeout-sweep.md`
+
+---
+
+## Původní plán (pro referenci)
+
 
 ## Framing (důležité upřesnění po Codex review)
 

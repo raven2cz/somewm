@@ -1,5 +1,30 @@
 # Fix: Hot-reload Lgi FFI closure crash (second reload SEGV)
 
+## Status (2026-04-16)
+
+**Phase 1 (linker-wrap guard): DONE.**
+- Guard knihovna `liblgi_closure_guard.so` zmergnuta na main:
+  - `7fe1a73` sweep stale GLib sources
+  - `8253c96` revert Lgi mutex poison (dokumentace známého limitu)
+  - `a79042b` LD_PRELOAD Lgi FFI closure guard
+- Manuální LD_PRELOAD setup je v `plans/scripts/start.sh`.
+
+**Phase 1.5 (auto-load) NOT YET MERGED.** Upstream má 3 commity
+(`67d7899` + `ace15ed` + `b6b2e78`) co náš manuální setup nahrazují
+auto-loadem + multi-path search. Plán na cherry-pick viz
+`plans/stage2-lgi-guard-autoload.md`.
+
+**Phase 2 (upstream PR na lgi-devs/lgi): OPEN.** Epoch patch podle Codex
+doporučení nebyl podán.
+
+**Phase 3 (GMainContext isolation): OPEN.** Optional hardening.
+
+**Pozorovaný zbytkový problém:** i s Phase 1 guard crash v libffi.so stále
+nastává při 5. reload + sliding tags animation (viz
+`plans/investigate-reload-libffi-lgi-crash.md` — může vyžadovat Phase 2 nebo 3).
+
+---
+
 ## Problem
 
 After Lua hot-reload, old Lgi FFI closures survive in `ffi_closure` memory

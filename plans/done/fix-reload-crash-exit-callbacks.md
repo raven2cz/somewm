@@ -1,5 +1,22 @@
 # Fix: Reload crash — exit callback nil value
 
+## Status: SUPERSEDED (2026-04-16)
+
+Po cherry-pick merge (viz `plans/done/cherry-pick-upstream-hotreload.md`)
+se symptom "exit callback: attempt to call a nil value" už neopakuje.
+Zbývající crash při 5. reload + sliding tags je SIGSEGV v libffi.so
+(jiný symptom, pravděpodobně překrývající se root cause) a má vlastní plán
+s konkrétním stack tracem:
+
+→ **`plans/investigate-reload-libffi-lgi-crash.md`** (2026-04-16)
+
+Crashlog infrastruktura z tohoto plánu (snapshot script, log rotace,
+Claude Code hook, post-mortem analyzer) ZŮSTÁVÁ V PROVOZU — v
+`plans/scripts/somewm-snapshot.sh`, `somewm-log-rotate.sh`,
+`somewm-hook-pre-reload.sh`, `somewm-postmortem.sh`.
+
+## Původní popis (pro referenci)
+
 ## Status: TODO (podklady, neopravovat teď)
 
 ## Pozorovaný problém
