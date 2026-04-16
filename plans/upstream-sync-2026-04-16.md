@@ -5,7 +5,21 @@ Selective adoption of upstream commits from `trip-zip/somewm` into our fork
 separate branch, tested locally (build + unit + nested sandbox) and merged
 to `main` only after verification.
 
-**Starting state:** `main` is 89 commits behind `upstream/main` (2026-04-16).
+**Starting state:** `main` was 89 commits behind `upstream/main` (2026-04-16).
+
+## Summary (as of 2026-04-16 EOD)
+
+| Kolo | Popis | Stav |
+|---|---|---|
+| pre-work | hot-reload / lgi series | ✅ DONE |
+| 1 | bezpečné bugfixy | ✅ DONE |
+| 2 | AwesomeWM sync ports | ✅ DONE |
+| 3 | medium-risk bugfixy | ✅ DONE |
+| 4 | deprecation sweep | ✅ DONE |
+| 5 | features (idle/icons/rules/output/bench) | ✅ DONE |
+| 6 | velký refactor split somewm.c | ⏸️ ODLOŽENO (all-or-nothing, riskantní merge) |
+
+**Zbývá z upstreamu pouze Kolo 6** (12 commitů co rozsekají `somewm.c` na focus.c/window.c/input.c/monitor.c/protocols.c/xwayland.c). Odloženo do doby, kdy chceme věnovat dedikovaný multi-day session.
 
 ## Scope and principles
 
@@ -282,8 +296,8 @@ Per-subround cherry-picks, build + sandbox test per subround, all green:
 - [x] Output retroactive signal (5b)
 - [x] Benchmarks (5c + 5h)
 - [x] Build + sandbox test per subround
-- [ ] **User acceptance test (pending)**
-- [ ] Merge to main
+- [x] User acceptance test
+- [x] Merge to main (2026-04-16, fast-forward, branch deleted)
 
 ---
 
