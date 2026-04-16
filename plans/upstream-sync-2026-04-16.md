@@ -191,31 +191,56 @@ Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b`
 
 ## Kolo 4 — deprecation sweep
 
-**Precondition:** grep our rc.lua + plugins + themes for deprecated API uses BEFORE cherry-pick.
+**Branch:** `chore/upstream-deprecation-sweep-kolo4` — ⏳ **PUSHED, NOT MERGED** (awaiting user testing)
 
-```bash
-grep -rn "awful.util" plans/project/somewm-one/ ~/.config/somewm/ 2>/dev/null
-grep -rn "awful.tag\.\(viewonly\|gettags\|delete\|move\)" plans/project/somewm-one/ 2>/dev/null
-# etc. — one grep per removed function
+7 upstream commits removing deprecated API + 3 config-migration commits. Total: **66 files, +162 / −3624 lines**.
+
+### Grep audit — completed 2026-04-16
+
+| Commit | Removes | Our hits | Migration |
+|---|---|---|---|
+| `d0d0a00` | 12 module aliases (`awful.wibox`/`.rules`/`.ewmh`, wibox layout→container) | 0 | none |
+| `765c84a` | 27-file deprecation sweep (set_align, legacy_align, etc.) | 0 (false positives: textbox:set_text, menubar.utils, awful.keygrabber.run/.stop still exist) | none |
+| `635c2c9` | naughty/layout/legacy.lua, root._append_*, C dead code, luaA_button_check | 0 | none |
+| `fd070d0` | button.h + drawin.c forward decls | 0 | none (depends on 635c2c9) |
+| `2ded594` | 26 awful.tag + 5 awful.client fns | 2 hits in fishlive/config/keybindings.lua | `awful.client.floating.toggle`→`function(c) c.floating = not c.floating end`; `awful.client.getmaster()`→`awful.client.visible(c.screen)[1]` |
+| `bb72461` | 9 naughty.core fns inc. `naughty.notify` | 6 hits (recording.lua ×4, client_fixes.lua, layout-machi/editor.lua) | `naughty.notify({text=})`→`naughty.notification({message=})` |
+| `563d30a` | entire `awful.util` module (498 lines) | 5 hits (keybindings.lua eval+cache_dir, 3× `util.table.join` in components) | `awful.util.table.join`→`gears.table.join`, `awful.util.get_cache_dir()`→`gears.filesystem.get_cache_dir()`, `awful.util.eval`→inline `lua_eval()` helper |
+
+### Commit order on branch (dependency-respecting)
 ```
+540aa4a refactor: remove 12 deprecated Lua redirect shims            (4b d0d0a00)
+3bfd1e1 refactor: remove all remaining Lua deprecation calls         (4c 765c84a)
+915fe0f refactor: remove legacy Lua subsystem and C dead code        (4g 635c2c9)
+c52f0ca chore: remove stale declaration and duplicate forward decl   (4a fd070d0 — depends on 4g)
+ccf3e19 refactor: remove deprecated functions from awful.tag/client  (4d 2ded594)
+bbdd217 config(somewm-one): migrate keybindings off awful.client     (pre-4d)
+e8df03a config(somewm-one): migrate naughty.notify → notification    (pre-4e)
+3220e61 refactor: remove 9 deprecated functions from naughty.core    (4e bb72461)
+dcfa3f4 config(somewm-one): migrate off awful.util module            (pre-4f)
+6116d0d refactor: delete awful.util module (498 lines)               (4f 563d30a)
+```
+(Config commits are interleaved because they were made after discovering conflict; functionally the config changes are forward-compatible with both old and new API.)
 
-**Candidate commits:**
-- `d0d0a00` remove 12 deprecated Lua redirect shims
-- `563d30a` delete `awful.util` module (498 lines)
-- `2ded594` remove deprecated `awful.tag` and `awful.client` functions
-- `bb72461` remove 9 deprecated `naughty.core` functions
-- `765c84a` remove all remaining Lua deprecation calls
-- `635c2c9` remove legacy Lua subsystem and C dead code
-- `fd070d0` remove stale declaration and duplicate forward decl
+### Per-subround sandbox tests (all PASSED)
+- Every subround: compile, launch nested compositor, ping, `awesome.restart()`, ping again
+- 4f (awful.util): 2× reload, lgi_guard gen1/2 clean (132/259 closures, 0 blocked), GLib baselines 56→185→351
+- Zero Lua errors, zero SEGV, zero assertions across all rounds
 
-**Decision gate:** if ANY removed API is used in our config, either skip that
-commit OR update our config first and add config change as separate commit
-before taking upstream removal.
+### Test instructions for user
+```bash
+git checkout chore/upstream-deprecation-sweep-kolo4
+~/git/github/somewm/plans/scripts/install-scenefx.sh
+# reboot (DRM changes) OR somewm-client exec somewm (hot-swap)
+```
+If reload + widgets OK → merge to main. If regression → report issue before merge.
 
-- [ ] Grep audit completed
-- [ ] rc.lua updates (if needed)
-- [ ] Cherry-picks
-- [ ] Test
+- [x] Grep audit completed
+- [x] rc.lua updates (3 commits on branch)
+- [x] Cherry-picks (7 commits)
+- [x] Per-round sandbox tests
+- [ ] **User acceptance test (pending)**
+- [ ] Merge to main
 
 ---
 
