@@ -169,13 +169,23 @@ Commit `0deb9d2` = manuální port, ne cherry-pick (konflikt s naším `e87926b`
 - [x] Test config-timeout path
 - [x] Merge
 
-### 3e. `chore/upstream-small-refactors`
+### 3e. `chore/upstream-focus-restore-consolidation` ✅ MERGED (2c0d1bb)
 - **Commits:** ~~`4c765d5`~~ (already merged with 3c), ~~`ca22c8e`~~ (already merged with 3c), `ad87e23` (consolidate `focus_restore()`)
 - **Risk:** refactors in hot code paths (focus restoration — 48 lines in `permissions/init.lua` + 60 in `somewm.c`)
-- **Test:** full nested sandbox workflow, pointer movement across monitors, game focus rules
-- [ ] Port `ad87e23`
-- [ ] Test
-- [ ] Merge
+- **Architectural note:** Upstream's refactor operates at the **decision layer** (which client to focus after close/lock/monitor-change). Our NVIDIA focus workarounds (issues #137, #135, #133) operate at the **delivery layer** (`somewm_api.c:some_set_seat_keyboard_focus`, `objects/client.c`). These are orthogonal — upstream's single `focus_restore(Monitor *m)` entry point emits `request::focus_restore`, Lua picks from history, then falls back to `focusclient(focustop(m))` which calls the same delivery code our fixes already patched.
+- **Cherry-pick conflicts resolved (2):**
+  - `destroylayersurfacenotify`: kept our debug log + lua_object cleanup, appended upstream's defensive `exclusive_focus` clear
+  - `unmaplayersurfacenotify`: removed inner `focusclient` from exclusive_focus branch (upstream pattern), kept our `wlr_surface_send_leave` from 3b, kept upstream's `focus_restore(l->mon ? l->mon : selmon)` at end
+- **Test (nested sandbox, QS hotedges running):**
+  - Client close: 3 alacritty clients (A/B/C), killed C → focus transferred via `check_focus_delayed` (Lua autofocus), compositor survived
+  - 3× `awesome.restart()`: lgi_guard gen1-3 clean (1263/1567/1703 closures rewired, 0 blocked, all generations ready)
+  - GLib baseline cleanup: 9/16/16 stale sources purged across reloads
+  - Layer surface unmap: 9 LS-UNMAP events (3 hotedges × 3 reloads), all clean
+  - Zero assertions, zero SEGV, zero ASAN errors
+- **Note:** Client-close focus restoration still goes through `client_unmanage` → `request::unmanage` → Lua `check_focus_delayed` (not C-level `focus_restore`). The new `focus_restore(m)` is invoked in: closemon, focusmon, view tag change, destroylocksurface, exclusive_focus layer unmap.
+- [x] Port `ad87e23`
+- [x] Test
+- [x] Merge
 
 ---
 
