@@ -130,6 +130,20 @@ client_scene_node_destroy(Client* c) {
        c->scene = NULL;
 }
 
+/* Clear fork-specific scene child pointers (titlebars, borders) after
+ * client_scene_node_destroy(). They were children of c->scene and are now
+ * freed — leaving dangling pointers would UAF in refresh callbacks. Called
+ * from ALL unmap paths (normal + !globalconf_L early exit). */
+static void
+client_clear_scene_child_pointers(Client *c)
+{
+	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++)
+		c->titlebar[bar].scene_buffer = NULL;
+	for (int i = 0; i < 4; i++)
+		c->border[i] = NULL;
+	c->border_frame = NULL;
+}
+
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
@@ -1706,6 +1720,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
 		client_scene_node_destroy(c);
+		client_clear_scene_child_pointers(c);
 		return;
 	}
 
@@ -1754,15 +1769,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 	}
 
 	client_scene_node_destroy(c);
-
-	/* Clear scene child pointers - they were children of c->scene
-	 * and are now freed. Prevents use-after-free in refresh callbacks. */
-	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++) {
-		c->titlebar[bar].scene_buffer = NULL;
-	}
-	for (int i = 0; i < 4; i++)
-		c->border[i] = NULL;
-	c->border_frame = NULL;
+	client_clear_scene_child_pointers(c);
 
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
