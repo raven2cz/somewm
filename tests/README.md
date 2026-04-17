@@ -253,6 +253,124 @@ To port AwesomeWM tests:
 - Some AwesomeWM tests may need adaptation for Wayland
 - D-Bus features not fully tested in headless mode
 
+## Profiling
+
+### Setup
+
+Build the bench binary and install it as your compositor:
+
+```bash
+make build-bench
+sudo cp build-bench/somewm /usr/local/bin/somewm
+```
+
+Then restart your session. When you're done profiling, switch back to the dev
+build with `sudo make install`.
+
+### Quick profile
+
+```bash
+make profile              # 30s C flamegraph
+make profile-lua          # 30s C flamegraph + Lua function breakdown
+make profile DURATION=60  # longer capture
+```
+
+Use the compositor normally during the capture. Open the resulting SVG in a
+browser (click to zoom, Ctrl+F to search).
+
+### Before/after comparison
+
+```bash
+# 1. Save a baseline
+make profile-save LABEL=before-change
+
+# 2. Make your changes, rebuild, restart
+make build-bench && sudo cp build-bench/somewm /usr/local/bin/somewm
+# ... restart session ...
+
+# 3. Capture again and generate differential flamegraph
+make profile-diff LABEL=before-change
+```
+
+The diff flamegraph shows red (more CPU) and blue (less CPU).
+
+### Repeatable scripted workload
+
+For controlled comparison without manual interaction, the scripted workload
+drives a fixed sequence of tag switches, focus changes, geometry updates, and
+property toggles:
+
+```bash
+tests/bench/profile-workload.sh --save before
+# ... make changes, rebuild, restart ...
+tests/bench/profile-workload.sh --diff before
+```
+
+### Lua profiling
+
+`make profile-lua` captures both C and Lua profiles. You can also start/stop
+the Lua profiler manually via IPC:
+
+```bash
+somewm-client eval "require('jit.p').start('Gli1', '/tmp/lua-profile.txt')"
+# ... use compositor ...
+somewm-client eval "require('jit.p').stop()"
+cat /tmp/lua-profile.txt
+```
+
+The output shows stack frames with sample counts, compatible with FlameGraph
+tools: `flamegraph.pl < /tmp/lua-profile.txt > lua-flamegraph.svg`
+
+### Tips
+
+- The profiler warns if the running binary was rebuilt since startup (causes
+  unresolved C function names). Restart the compositor to fix.
+- System library symbols (pixman, wlroots, cairo) are resolved via debuginfod.
+- Profile the bench build, not the ASAN build. ASAN adds ~17% overhead that
+  distorts the profile.
+
+### Memory profiling
+
+```bash
+# Allocation tracking (start compositor under heaptrack)
+heaptrack ./build-bench/somewm
+
+# Or attach to running compositor
+heaptrack --pid $(pidof somewm)
+```
+
+### Bench-instrumented build
+
+Build with `make build-bench` to get per-stage frame timing, render phase timing,
+C/Lua boundary crossing counts, and input latency accessible via `awesome.bench_stats()`:
+
+```bash
+make build-bench
+./build-bench/somewm  # Run as your compositor
+
+# Query stats from another terminal
+somewm-client eval "
+  local s = awesome.bench_stats()
+  for k,v in pairs(s.stages) do
+    print(k, string.format('avg=%.1fus p99=%.1fus', v.avg_us, v.p99_us))
+  end
+  print(string.format('render: avg=%.1fus p99=%.1fus', s.render.avg_us, s.render.p99_us))
+  print('crossings/frame avg=' .. s.crossings_per_frame.avg)
+"
+```
+
+### Interpreting perf output
+
+The self-time view (`perf report --no-children`) shows where CPU is actually spent:
+
+```bash
+perf report --stdio --no-children --percent-limit 0.3 -g none
+```
+
+The children view (default) shows inclusive time, where percentages overlap because they
+include callees. A function at 50% doesn't mean it uses 50% of CPU -- it means 50% of
+samples had that function somewhere in the call stack.
+
 ## Future Work
 
 - Add client spawning support (native Wayland clients like `foot`)
