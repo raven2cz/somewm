@@ -278,6 +278,14 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
 
+	/* Register destroy/unmap listeners BEFORE wlr_scene_layer_surface_v1_create()
+	 * so ours fire BEFORE wlroots' internal destroy handler. Our destroy
+	 * handler calls wlr_scene_node_destroy(&l->scene->node); if wlroots'
+	 * own destroy handler fires first it will tear down the scene tree,
+	 * leaving us with a dangling pointer that segfaults on double-destroy. */
+	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
+	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
+
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
@@ -291,8 +299,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 	 * This ensures our opacity re-apply runs after wlroots resets
 	 * buffer opacity to 1.0 during surface_reconfigure(). */
 	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
-	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
-	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
