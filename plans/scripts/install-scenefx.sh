@@ -53,6 +53,14 @@ if [[ "${1:-}" == "--check" ]]; then
     exit 0
 fi
 
+# Step 0: Self-heal — previous `sudo ninja install` can rebuild .o files
+# as root, leaving build-fx with mixed ownership. Meson reconfigure then
+# fails with "Unhandled python OSError". Reclaim ownership if needed.
+if [[ -d "$BUILDDIR" ]] && find "$BUILDDIR" -not -user "$USER" -print -quit 2>/dev/null | grep -q .; then
+    echo "==> Reclaiming root-owned files in $BUILDDIR (sudo)..."
+    sudo chown -R "$USER:$(id -gn)" "$BUILDDIR"
+fi
+
 # Step 1: Meson configure
 echo "==> Configuring meson (scenefx=enabled)..."
 if [[ -d "$BUILDDIR" ]]; then
