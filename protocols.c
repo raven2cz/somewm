@@ -17,7 +17,7 @@
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>

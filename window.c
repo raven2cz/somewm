@@ -16,7 +16,7 @@
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
