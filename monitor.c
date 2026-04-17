@@ -44,6 +44,7 @@
 
 #include "focus.h"
 #include "window.h"
+#include "input.h"
 #include "somewm_internal.h"
 
 /* Module-private state */
@@ -778,7 +779,15 @@ updatemons(struct wl_listener *listener, void *data)
 				lua_pop(globalconf_L, 1);
 			}
 
+			/* Snapshot banning flag before banning_refresh() clears it,
+			 * so the follow-up motionnotify() in some_refresh() sees
+			 * the correct state and re-delivers pointer focus after
+			 * tag visibility changes (Chromium-freeze fix ea7e1aa).
+			 * Without this, monitor hotplug silently drops pointer focus. */
+			bool banning_pending = globalconf.need_lazy_banning;
 			banning_refresh();
+			if (banning_pending)
+				motionnotify(0, NULL, 0, 0, 0, 0);
 			some_refresh();
 		}
 	}

@@ -370,6 +370,9 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
+		/* Direct surface->data read (not client_surface_get_scene_tree):
+		 * idle-inhibit surfaces may be non-Client (layer-shell, popups)
+		 * whose ->data semantics differ. !tree is treated as "visible". */
 		struct wlr_scene_tree *tree = surface->data;
 
 		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
@@ -411,6 +414,7 @@ some_push_idle_inhibitors(lua_State *L)
 	lua_newtable(L);
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
+		/* See some_is_idle_inhibited() for rationale on raw ->data read. */
 		struct wlr_scene_tree *tree = surface->data;
 		bool visible = globalconf.appearance.bypass_surface_visibility
 			|| (!tree || wlr_scene_node_coords(&tree->node, &lx, &ly));
