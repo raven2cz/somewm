@@ -1717,6 +1717,13 @@ unmapnotify(struct wl_listener *listener, void *data)
 
 	/* Safety: If Lua destroyed during cleanup, skip Lua-dependent operations */
 	if (!globalconf_L) {
+		/* Remove XDG commit listener before client_scene_node_destroy()
+		 * NULLs c->scene — destroynotify() uses c->scene as the proxy for
+		 * "unmap never ran" and will skip commit.link removal if NULL,
+		 * leaking the listener (wlroots asserts on surface teardown).
+		 * Mirrors the normal unmap path below. */
+		if (c->client_type == XDGShell)
+			wl_list_remove(&c->commit.link);
 		client_scene_node_destroy(c);
 		client_clear_scene_child_pointers(c);
 		return;
