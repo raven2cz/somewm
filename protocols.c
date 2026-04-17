@@ -182,6 +182,10 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
+	wlr_log(WLR_DEBUG, "[LS-COMMIT] ns=%s mapped=%d scene=%p lua_obj=%p",
+		layer_surface->namespace ? layer_surface->namespace : "?",
+		l->mapped, (void *)l->scene, (void *)l->lua_object);
+
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
 
@@ -217,6 +221,23 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	}
 
 	arrangelayers(l->mon);
+
+	/* When a layer surface maps, re-evaluate pointer focus so that
+	 * wl_pointer.enter is delivered if the cursor is already over it.
+	 * Without this, hover doesn't work until the user moves the mouse.
+	 * Similar to sway's cursor_rebase_all() in handle_map(), but uses
+	 * motionnotify(0,...) which re-runs xytonode() + pointerfocus()
+	 * without emitting Lua mouse signals (those are gated on time != 0).
+	 * Skip when exclusive_focus is active to avoid disrupting grabs. */
+	if (!was_mapped && l->mapped && !exclusive_focus)
+		motionnotify(0, NULL, 0, 0, 0, 0);
+
+	/* Re-apply opacity after wlroots resets buffer opacity on commit */
+	if (l->lua_object) {
+		layer_surface_t *ls = l->lua_object;
+		if (ls->opacity >= 0)
+			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
+	}
 
 	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
@@ -256,9 +277,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
-	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
-	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
-	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
@@ -267,6 +285,14 @@ createlayersurface(struct wl_listener *listener, void *data)
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
 	l->scene->node.data = l->popups->node.data = l;
+
+	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create()
+	 * so our handler fires after wlroots' internal scene handler.
+	 * This ensures our opacity re-apply runs after wlroots resets
+	 * buffer opacity to 1.0 during surface_reconfigure(). */
+	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
+	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
+	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);

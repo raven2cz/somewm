@@ -1003,6 +1003,17 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	pointerfocus(c, surface, sx, sy, time);
 }
 
+static int pointer_enter_deferred_pending;
+
+static void
+deferred_pointer_enter(void *data)
+{
+	(void)data;
+	pointer_enter_deferred_pending = 0;
+	/* Re-evaluate pointer focus with current cursor position */
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -1041,6 +1052,15 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 				"(client had no wl_pointer resources)",
 				c ? client_get_appid(c) : "?");
 			wlr_seat_pointer_notify_clear_focus(seat);
+			/* Schedule deferred re-delivery — client may not have
+			 * bound wl_pointer yet. By the time the idle callback
+			 * fires, the client will have its pointer resources ready. */
+			if (!pointer_enter_deferred_pending) {
+				pointer_enter_deferred_pending = 1;
+				wl_event_loop_add_idle(
+					wl_display_get_event_loop(dpy),
+					deferred_pointer_enter, NULL);
+			}
 		}
 	}
 
