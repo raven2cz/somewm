@@ -4,13 +4,106 @@
 **Base:** `main` @ `5118079` (2026-04-16)
 **Goal:** úplný sync s `upstream/main` skrze velký refactor split `somewm.c` (Kolo 6) + 3 post-sync drobnosti (Kolo 7).
 
-**Status:** ✅ GREEN po Codex review round 3 (v3.1). Připraveno k implementaci po user approval.
+**Status:** 🟡 Kolo 6 implementace DONE, user live test běží (2026-04-17). Kolo 7 + 5 nových upstream commitů = still TODO.
 
 **Review history:**
 - v1 draft 2026-04-16 (sekční layout, Varianta C doporučení)
 - v2 rewrite 2026-04-16 po Codex (gpt-5.4) + Sonnet review — viz sekce 11 „Review changelog"
 - v3 update 2026-04-16 po Codex review #2 (full-tree acceptance manifest, konkrétní 5.5 hotplug, 3 hard gates)
 - v3.1 update 2026-04-16 po Codex review #3 (Section 5.5 4-level coverage, `screen:fake_remove` correctly labeled, `wlr-randr` live hotplug = hard gate) → **GREEN, proceed**
+- **v4 status update 2026-04-17** — Kolo 6 implementace hotová, user live test běží, scope update kvůli 5 novým upstream commitům z 2026-04-16
+
+---
+
+## 0. Status update 2026-04-17 ← **IMPLEMENTAČNÍ VÝSLEDKY**
+
+### Kolo 6 — ✅ IMPLEMENTED (user live test in progress)
+
+**Branch:** `chore/upstream-sync-kolo6` pushed to `origin`. **NEMERGOVÁNO** do main — user spustil ~půldenní live test (2026-04-17).
+
+**Commits v branchi (reverzní pořadí):**
+
+| SHA | Popis |
+|---|---|
+| `0567e56` | chore(scripts): self-heal root-owned build-fx v install-scenefx.sh |
+| `18cc414` | fix(kolo6): split LISTEN order — destroy/unmap PŘED `wlr_scene_layer_surface_v1_create`, commit PO (blocker SIGSEGV fix) |
+| `2bffa5b` | fix(kolo6): restore fork pointer/layer deltas dropped by refactor (deferred_pointer_enter, rendermon opacity re-apply, migration-audit docs) |
+| `f464860` | fix(kolo6): route refactored modules through `scenefx_compat.h` (ABI mismatch wlroots vs SceneFX scene node enum) |
+| `2e01936` | fix(kolo6): restore non-code files lost during Variant C replay |
+| `52936d3` | docs(kolo6): fix stale comment on wallpaper_cache_init |
+| `a109dc4` | fix(kolo6): restore Lgi guard ordering + pointer-constraint on Lua focus |
+| `ad33ccd` | fix(kolo6): return globalconf.exit_code from main() for rebuild_restart |
+| `82f61f3` | fix(kolo6): port remaining Lua/SceneFX/bench deltas (Codex final review) |
+| `0fb98ca` | fix(kolo6): port missed fx_renderer_create delta for SceneFX builds |
+| `ce1a98c` | fix(kolo6): stop key repeat when keygrabber starts mid-binding (Group E; DUPE s upstream `cb6c2c1`) |
+| `6a6aef5` | fix(kolo6): address Codex Round 5 findings on Groups F/G/H |
+| `4a810cb` | feat(kolo6): port NVIDIA/SceneFX/bench deltas (Groups F/G/H) |
+| `30c1898` | fix(kolo6): de-duplicate SOMEWM_BENCH impl v somewm.c (Group A1) |
+| `77d7494` | refactor(kolo6): port fork infrastructure onto refactored tree (Group A) |
+| `ed71fa5` | docs(plans): Phase 1b API compat preflight — 0 blockers |
+| `b14c51a` | docs(plans): Phase 1 fork delta inventory |
+
+**Phase-by-phase:**
+- Phase 0 (prep) ✅ — tags `pre-kolo6-main-2026-04-16`, `upstream-base-kolo6` pushed
+- Phase 1 (fork delta inventory) ✅ — `plans/kolo6-fork-delta-inventory.md`
+- Phase 1b (API compat preflight) ✅ — `plans/kolo6-api-compat.md`, 0 blockers
+- Phase 2 (setup base branch) ✅
+- Phase 3 (Groups A-H) ✅ — všechny port commity merged sequentially, Codex review po každém bloku
+- Phase 4 (build matrix) ✅ — ASAN+SceneFX build čistý; bench varianta compile-verified
+- Phase 5 (sandbox tests) ✅ — 5.1-5.3 pass; 5.5c (wlr-randr hotplug) deferred to user live test
+- **Phase 6 (merge to main)** ⏳ **pending user live test approval**
+
+**Key incidents během implementace:**
+
+1. **ABI mismatch (f464860):** SceneFX rozšiřuje `enum wlr_scene_node_type` o `WLR_SCENE_NODE_SHADOW` (=2) a `WLR_SCENE_NODE_OPTIMIZED_BLUR` (=4), vanilla wlroots má `WLR_SCENE_NODE_BUFFER`=2. Refactored moduly includovaly `<wlr/types/wlr_scene.h>` přímo, takže ASAN build-fx měl dva různé pohledy na enum → runtime segfaulty, mouse hover nefungovaly. Fix: všechny moduly (`input.c`, `focus.c`, `window.c`, `xwayland.c`, `bench.c`, `luaa.c`, `monitor.c`, `protocols.c`) routed přes `scenefx_compat.h`.
+
+2. **Layer surface destroy SIGSEGV (18cc414):** commit `2bffa5b` přeřadil všechny tři listener registrace (`commit`, `unmap`, `destroy`) za `wlr_scene_layer_surface_v1_create()`. To způsobilo, že wlroots interní destroy listener fire jako první, strhl scene tree, a náš destroy handler pak volal `wlr_scene_node_destroy(&l->scene->node)` na už destroyed node → double-destroy SIGSEGV při otevření terminálu. Fix: split — `destroy`/`unmap` PŘED scene_create (zachovává wlroots ordering), `commit` ZA scene_create (opacity setup).
+
+3. **Install-scenefx.sh self-heal (0567e56):** předchozí `sudo ninja install` kompiloval artefakty jako root v `build-fx/`. Meson reconfigure pak padal `Unhandled python OSError`. Fix: Step 0 kontrola + `sudo chown -R` reclaim.
+
+**Phase 5 actual coverage:**
+- ✅ 5.1 XWayland focus — nested xterm pass
+- ✅ 5.2 SceneFX effects — shadow/radius/opacity visible
+- ✅ 5.3 Layer surfaces — waybar reload clean
+- ⏸ 5.4-5.10 — verified jako součást user live session, ne discrete test runs
+
+### Kolo 7 + nové upstream commity — ⏳ TODO
+
+**Původní Kolo 7 scope (3 commity):**
+- `64fe6a7` protocols: Simplify unmaplayersurfacenotify() — NEW
+- `c510efa` send exit signal parameter — NEW
+- `44f842b` Kill trailing whitespace — NEW
+
+**Duplicate upstream commity (už v našem forku, cherry-pick = empty):**
+- `cb6c2c1` stop key repeat — DUPE s naším `ce1a98c`
+- `d354433` pair send_leave — DUPE s naším `a411860`
+- `9e05267` set_bounds hint — DUPE s naším `9012e25`
+- `e5d7dfe` benchmark infrastructure — DUPE (upstream přijal náš PR)
+- `746d59d` make profile targets — DUPE (upstream přijal náš PR)
+
+**🆕 POST-v3.1 NEW UPSTREAM COMMITS (landed 2026-04-16, NOT in original plan scope):**
+
+| SHA | Popis | Riziko |
+|---|---|---|
+| `df53154` | client: Guard client->scene access | LOW — defensive null check |
+| `9774101` | client: Remove obsolete client_is_rendered_on_mon() | LOW — dead code removal |
+| `bad997d` | fix: Use-after-free of wlr_scene_tree via wlr_surface->data | **HIGH** — memory safety fix, probably wants port |
+| `901e363` | fix: re-evaluate pointer focus after banning refresh | MEDIUM — input behavior fix |
+| `d27fa2b` | fix: Use static inline for scene-tree surface helpers | LOW — header inlining |
+
+Tyto budou součástí Kolo 7 branch. Doporučuje se nejdřív audit pro `bad997d` (UAF) a `901e363` (pointer focus) — mohou interagovat s naším `a109dc4` pointer-constraint fixem.
+
+### Zbývá do plného upstream sync
+
+1. ⏳ **User live test** (~půl dne, 2026-04-17) — pak Phase 6 merge Kolo 6 → main
+2. ⏳ **Kolo 7 branch** — cherry-pick:
+   - 3 původní (`64fe6a7`, `c510efa`, `44f842b`)
+   - 5 nových (`df53154`, `9774101`, `bad997d`, `901e363`, `d27fa2b`)
+   - 5 duplicate skip (`cb6c2c1`, `d354433`, `9e05267`, `e5d7dfe`, `746d59d`)
+3. ⏳ **Kolo 7 merge** → main
+4. ✅ **Pak `git log upstream/main..main` = prázdné = plný sync**
+
+**Celkem zbývá:** ~8 cherry-picks (3 původní + 5 nových) + re-validate matrix. Očekávaný čas **2-4 hod** (menší scope než původní Kolo 7 timing kvůli 5 dodatečným commitům).
 
 ---
 
