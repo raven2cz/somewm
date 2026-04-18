@@ -232,10 +232,14 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (!was_mapped && l->mapped && !exclusive_focus)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
-	/* Re-apply opacity after wlroots resets buffer opacity on commit */
+	/* Re-apply opacity after wlroots resets buffer opacity on commit.
+	 * Skip when opacity >= 1.0 — applying 1.0 is a no-op scene-tree walk
+	 * and fires on every layer commit (~42/s for QS panels on this host),
+	 * producing LS-OPACITY log spam. Lua callers that want "default" opacity
+	 * commonly set ls.opacity = 1 explicitly, which passes the >= 0 gate. */
 	if (l->lua_object) {
 		layer_surface_t *ls = l->lua_object;
-		if (ls->opacity >= 0)
+		if (ls->opacity >= 0 && ls->opacity < 1.0f)
 			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
 	}
 
