@@ -1484,9 +1484,14 @@ resize(Client *c, struct wlr_box geo, int interact)
 void
 setfullscreen(Client *c, int fullscreen)
 {
-	c->fullscreen = fullscreen;
-	if (!c->mon || !client_surface(c)->mapped)
+	int was_fullscreen;
+
+	if (!c->mon || !client_surface(c)->mapped) {
+		c->fullscreen = fullscreen;
 		return;
+	}
+
+	was_fullscreen = c->fullscreen;
 
 	/* Fullscreen is mutually exclusive with maximized states */
 	if (fullscreen && (c->maximized || c->maximized_horizontal || c->maximized_vertical)) {
@@ -1498,12 +1503,20 @@ setfullscreen(Client *c, int fullscreen)
 			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 0);
 	}
 
+	c->fullscreen = fullscreen;
 	c->bw = fullscreen ? 0 : get_border_width();
 	client_set_fullscreen_internal(c, fullscreen);
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
 	if (fullscreen) {
-		c->prev = c->geometry;
+		/* Only capture pre-fullscreen geometry on the non-FS → FS
+		 * transition. Redundant enter-FS calls (setmon() re-applies
+		 * `setfullscreen(c, c->fullscreen)` after monitor move, and
+		 * fullscreennotify() can fire while already fullscreen) would
+		 * otherwise overwrite c->prev with the current fullscreen rect
+		 * — losing the original restore point. */
+		if (!was_fullscreen)
+			c->prev = c->geometry;
 		resize(c, c->mon->m, 0);
 	} else {
 		/* restore previous size instead of arrange for floating windows since
