@@ -443,9 +443,9 @@ commitpopup(struct wl_listener *listener, void *data)
 	/* Inherit parent's opacity on newly created popup */
 	if (l && l->lua_object) {
 		layer_surface_t *ls = l->lua_object;
-		if (ls->opacity >= 0)
+		if (ls->opacity >= 0 && ls->opacity < 1.0f)
 			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
-	} else if (c && c->opacity >= 0) {
+	} else if (c && c->opacity >= 0 && c->opacity < 1.0f) {
 		client_apply_opacity_to_scene(c, (float)c->opacity);
 	}
 

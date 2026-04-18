@@ -124,6 +124,9 @@ struct wl_event_loop *event_loop;
 struct wlr_backend *backend;
 struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
+#ifdef HAVE_SCENEFX
+struct wlr_scene_optimized_blur *optimized_blur_layer;
+#endif
 struct wlr_scene_tree *drag_icon;
 Client *drag_source_client;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
@@ -1054,6 +1057,22 @@ setup(void)
 		/* brightness */ 0.9f,
 		/* contrast */   0.9f,
 		/* saturation */ 1.1f);
+
+	/* Create the optimized blur layer. Everything below it in z-order gets
+	 * pre-rendered into a blur cache; buffers above with
+	 * backdrop_blur_optimized=true sample from the cache instead of
+	 * re-running the blur shader per frame. Without this node the cache is
+	 * NULL and every frame SceneFX logs "Failed to use optimized blur" and
+	 * falls back to per-frame blur (hot render loop on NVIDIA).
+	 *
+	 * Placement: above LyrBottom — so root_bg + LyrBg (wallpaper) + LyrBottom
+	 * (bottom panels) are captured as the backdrop; LyrTile/LyrFloat/etc.
+	 * (windows) sit above and can sample the cache.
+	 *
+	 * Size is set in updatemons() once the output layout box is known. */
+	optimized_blur_layer = wlr_scene_optimized_blur_create(&scene->tree, 0, 0);
+	wlr_scene_node_place_above(&optimized_blur_layer->node,
+			&layers[LyrBottom]->node);
 #endif
 
 	/* Create the renderer. When scenefx is compiled in, use the FX renderer

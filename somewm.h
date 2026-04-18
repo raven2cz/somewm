@@ -65,6 +65,9 @@ extern struct wlr_backend *backend;
 extern struct wlr_session *session;
 extern struct wlr_scene *scene;
 extern struct wlr_scene_tree *layers[NUM_LAYERS];
+#ifdef HAVE_SCENEFX
+extern struct wlr_scene_optimized_blur *optimized_blur_layer;
+#endif
 extern struct wlr_renderer *drw;
 extern struct wlr_allocator *alloc;
 extern struct wlr_compositor *compositor;
