@@ -1524,10 +1524,20 @@ setfullscreen(Client *c, int fullscreen)
 		resize(c, c->prev, 0);
 	}
 	/* Emit per-client property::fullscreen so Lua handlers run
-	 * (update_implicitly_floating, arrange_prop_nf) before arrange */
+	 * (update_implicitly_floating, arrange_prop_nf) before arrange.
+	 * Also emit per-client property::geometry after resize() so Lua
+	 * geometry-tracking handlers (e.g. anim_client.lua's max_geo /
+	 * normal_geo snapshots) observe the pre-animation framebuffer.
+	 * Without this, client-initiated fullscreen via xdg protocol
+	 * (e.g. MPV "F" key -> fullscreennotify -> setfullscreen) never
+	 * populates max_geo, so the exit-FS shrink animation has from=nil
+	 * and silently does nothing. The Lua path (client_set_fullscreen)
+	 * already fires property::geometry via client_resize_do, so this
+	 * only plugs the protocol-path gap. */
 	lua_State *L = globalconf_get_lua_State();
 	if (L) {
 		luaA_object_push(L, c);
+		luaA_object_emit_signal(L, -1, "property::geometry", 0);
 		luaA_object_emit_signal(L, -1, "property::fullscreen", 0);
 		lua_pop(L, 1);
 	}
