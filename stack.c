@@ -109,6 +109,15 @@ client_layer_translator(Client *c)
 	if (c->transient_for)
 		return WINDOW_LAYER_IGNORE;
 
+	/* Maximized clients stay in LyrTile regardless of floating=true
+	 * (AwesomeWM's maximize setter auto-floats the client — legacy X11
+	 * semantics where stacking was flat). On Wayland, LyrFloat is visually
+	 * always above LyrTile, so a maximized floater can never be covered
+	 * by a tiled client focus-change. Keep maximized clients in the
+	 * normal layer so other tiled windows can raise above them. */
+	if (c->maximized || c->maximized_horizontal || c->maximized_vertical)
+		return WINDOW_LAYER_NORMAL;
+
 	if (c->floating)
 		return WINDOW_LAYER_FLOATING;
 
