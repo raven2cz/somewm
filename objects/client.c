@@ -2932,22 +2932,39 @@ void
 client_set_fullscreen(lua_State *L, int cidx, bool s)
 {
     client_t *c = luaA_checkudata(L, cidx, &client_class);
-    int abs_cidx;
+    int abs_cidx = luaA_absindex(L, cidx);
 
     if(c->fullscreen != s)
     {
         /* become fullscreen! */
         if(s)
         {
+            /* If already maximized, un-maximize first so that c->prev (and
+             * the Lua "fullscreen" memento stored by aplace.fullscreen below)
+             * captures the original pre-max geometry, not the maximized rect.
+             * Without this, Super+M → Super+F → Super+F off restores to the
+             * maximized size and the original geometry is lost permanently
+             * (subsequent Super+M then stores the already-maximized rect as
+             * its own memento). client_set_maximized*(false) emits
+             * request::geometry which triggers aplace.restore("maximize")
+             * and resizes the client back to the pre-max geometry.
+             * Use abs_cidx because the Lua signal handlers during
+             * client_set_maximized* may grow the stack and invalidate a
+             * negative cidx. */
+            if (c->maximized)
+                client_set_maximized(L, abs_cidx, false);
+            if (c->maximized_horizontal)
+                client_set_maximized_horizontal(L, abs_cidx, false);
+            if (c->maximized_vertical)
+                client_set_maximized_vertical(L, abs_cidx, false);
             /* Save geometry for restore if client-side unfullscreen happens
              * via protocol (fullscreennotify -> setfullscreen -> c->prev) */
             c->prev = c->geometry;
             /* You can only be part of one of the special layers. */
-            client_set_below(L, cidx, false);
-            client_set_above(L, cidx, false);
-            client_set_ontop(L, cidx, false);
+            client_set_below(L, abs_cidx, false);
+            client_set_above(L, abs_cidx, false);
+            client_set_ontop(L, abs_cidx, false);
         }
-        abs_cidx = luaA_absindex(L, cidx);
         lua_pushliteral(L, "fullscreen");
         c->fullscreen = s;
         luaA_object_emit_signal(L, abs_cidx, "request::geometry", 1);
