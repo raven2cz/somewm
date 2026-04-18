@@ -498,20 +498,6 @@ rendermon(struct wl_listener *listener, void *data)
 			goto skip;
 	}
 
-	/* Re-apply layer surface opacity right before render to catch any
-	 * buffer nodes created by wlroots after our commit handler ran */
-	{
-		LayerSurface *l;
-		for (int i = 0; i < 4; i++) {
-			wl_list_for_each(l, &m->layers[i], link) {
-				if (l->lua_object && l->lua_object->opacity >= 0
-						&& l->lua_object->opacity < 1.0)
-					layer_surface_apply_opacity_to_scene(
-						l->lua_object, (float)l->lua_object->opacity);
-			}
-		}
-	}
-
 #ifdef SOMEWM_BENCH
 	struct timespec render_start, render_end;
 	bool render_committed;
