@@ -673,6 +673,18 @@ updatemons(struct wl_listener *listener, void *data)
 	wlr_scene_node_set_position(&locked_bg->node, sgeom.x, sgeom.y);
 	wlr_scene_rect_set_size(locked_bg, sgeom.width, sgeom.height);
 
+#ifdef HAVE_SCENEFX
+	/* Resize the optimized blur cache to the full output layout so buffers
+	 * above the blur layer can sample blurred backdrop across all monitors.
+	 * TinyWL sets this per-output; for multi-monitor we use the layout box. */
+	if (optimized_blur_layer) {
+		wlr_scene_node_set_position(&optimized_blur_layer->node,
+				sgeom.x, sgeom.y);
+		wlr_scene_optimized_blur_set_size(optimized_blur_layer,
+				sgeom.width, sgeom.height);
+	}
+#endif
+
 	wl_list_for_each(m, &mons, link) {
 		if (!m->wlr_output->enabled)
 			continue;
