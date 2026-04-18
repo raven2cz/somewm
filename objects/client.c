@@ -4649,7 +4649,15 @@ apply_backdrop_blur_to_tree(struct wlr_scene_node *node, bool enabled)
         struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
         wlr_scene_buffer_set_backdrop_blur(buf, enabled);
         if (enabled) {
-            wlr_scene_buffer_set_backdrop_blur_optimized(buf, true);
+            /* Per-frame blur, not cached. The optimized blur path samples
+             * from a pre-rendered cache that only contains nodes below the
+             * scene-level wlr_scene_optimized_blur layer (root_bg + LyrBg
+             * + LyrBottom). Every client window sits above that layer, so
+             * optimized=true makes a blurred client show the wallpaper
+             * through overlapping floating windows instead of their live
+             * content. Per-frame blur re-samples the actual framebuffer
+             * each frame, preserving see-through-windows behavior. */
+            wlr_scene_buffer_set_backdrop_blur_optimized(buf, false);
             wlr_scene_buffer_set_backdrop_blur_ignore_transparent(buf, true);
         }
     } else if (node->type == WLR_SCENE_NODE_TREE) {
