@@ -1493,40 +1493,14 @@ setfullscreen(Client *c, int fullscreen)
 
 	was_fullscreen = c->fullscreen;
 
-	/* Fullscreen is mutually exclusive with maximized states. Route the
-	 * un-maximize through Lua so aplace.restore("maximize") runs and
-	 * resizes the client back to the pre-max geometry BEFORE we save
-	 * c->prev below. Bare flag-clear would leave c->geometry at the
-	 * maximized rect and c->prev would capture that — unfullscreen would
-	 * then restore to maximized size, losing the original.
-	 * Note: set c->fullscreen AFTER the un-maximize dispatch so Lua
-	 * state during the maximize signal chain matches the old value. */
+	/* Fullscreen is mutually exclusive with maximized states */
 	if (fullscreen && (c->maximized || c->maximized_horizontal || c->maximized_vertical)) {
-		lua_State *L = globalconf_get_lua_State();
-		if (L) {
-			luaA_object_push(L, c);
-			if (c->maximized)
-				client_set_maximized(L, -1, false);
-			if (c->maximized_horizontal)
-				client_set_maximized_horizontal(L, -1, false);
-			if (c->maximized_vertical)
-				client_set_maximized_vertical(L, -1, false);
-			lua_pop(L, 1);
-
-			/* Reentrance guard: a Lua signal handler invoked during the
-			 * un-maximize dispatch may have toggled c.fullscreen via
-			 * client_set_fullscreen (which already does its own c->prev /
-			 * geometry bookkeeping). If so, trust its result and bail —
-			 * continuing would clobber c->fullscreen and c->prev below. */
-			if (c->fullscreen != was_fullscreen)
-				return;
-		} else {
-			c->maximized = 0;
-			c->maximized_horizontal = 0;
-			c->maximized_vertical = 0;
-			if (c->client_type == XDGShell && c->surface.xdg->toplevel)
-				wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 0);
-		}
+		c->maximized = 0;
+		c->maximized_horizontal = 0;
+		c->maximized_vertical = 0;
+		/* Clear XDG toplevel maximize state if applicable */
+		if (c->client_type == XDGShell && c->surface.xdg->toplevel)
+			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, 0);
 	}
 
 	c->fullscreen = fullscreen;
