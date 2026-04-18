@@ -93,9 +93,6 @@ layer_surface_apply_opacity_to_scene(layer_surface_t *ls, float opacity)
 		return;
 	}
 
-	wlr_log(WLR_DEBUG, "[LS-OPACITY] APPLY: scene=%p popups=%p opacity=%.2f",
-		(void *)ls->ls->scene, (void *)ls->ls->popups, opacity);
-
 	ls_apply_opacity_to_tree(&ls->ls->scene->node, opacity);
 
 	/* Also apply to popup tree */
@@ -116,16 +113,33 @@ luaA_layer_surface_get_opacity(lua_State *L, layer_surface_t *ls)
 static int
 luaA_layer_surface_set_opacity(lua_State *L, layer_surface_t *ls)
 {
+	double prev = ls->opacity;
+	double new_val;
+	bool reset_to_default;
+
 	if (lua_isnil(L, -1)) {
-		ls->opacity = -1;
-		layer_surface_apply_opacity_to_scene(ls, 1.0f);
+		new_val = 1.0;
+		reset_to_default = true;
 	} else {
-		double opacity = luaL_checknumber(L, -1);
-		if (opacity < 0 || opacity > 1)
+		new_val = luaL_checknumber(L, -1);
+		if (new_val < 0 || new_val > 1)
 			return luaL_error(L, "opacity must be between 0 and 1");
-		ls->opacity = opacity;
-		layer_surface_apply_opacity_to_scene(ls, (float)opacity);
+		reset_to_default = false;
 	}
+
+	/* Skip scene-tree walk when effective opacity is unchanged.
+	 * Lua anim/client code often reassigns ls.opacity = 1 unconditionally;
+	 * without this gate every such reassignment walks the scene tree for
+	 * no visible effect (and previously spammed debug logs per commit). */
+	double prev_effective = (prev >= 0) ? prev : 1.0;
+	if (prev_effective != new_val || (reset_to_default && prev >= 0)
+			|| (!reset_to_default && prev < 0)) {
+		ls->opacity = reset_to_default ? -1 : new_val;
+		layer_surface_apply_opacity_to_scene(ls, (float)new_val);
+	} else {
+		ls->opacity = reset_to_default ? -1 : new_val;
+	}
+
 	luaA_object_push(L, ls);
 	luaA_object_emit_signal(L, -1, "property::opacity", 0);
 	lua_pop(L, 1);
