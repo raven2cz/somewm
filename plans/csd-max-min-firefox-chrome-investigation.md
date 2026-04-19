@@ -1,197 +1,207 @@
-# CSD max/min buttons — Firefox + Chrome min→restore→max bug investigation
+# CSD max/min buttons — Firefox + Chrome min→restore→max bug
 
-**Status**: open, work paused — bug not fixed, needs fresh investigation on return
+**Status**: 2026-04-19 — root cause identified via KWin reference, fix plan drafted
 
 **Branch**: `feat/csd-max-min-buttons` (pushed to origin/raven2cz)
 
-**Last commits**:
-- `748070e` — happy-path wiring (works for simple max/restore cycles)
-- `8a42b35` — attempted fix from Codex+Sonnet review (did NOT fix Firefox,
-  Chrome broken after this commit — but Chrome was not tested on 748070e,
-  so Chrome regression may predate the attempted fix)
+**Commits**:
+- `748070e` — happy-path wiring (max/restore works; min→restore broken)
+- `8a42b35` — failed speculative fix (Codex+Sonnet H1+H2 hypotheses — did NOT fix)
+- `2ea6c61` — investigation notes (this file, now being rewritten)
 
-## Problem summary
+## Problem summary (confirmed by user live test)
 
-Firefox, Chrome, Nautilus (and other Gtk/Chromium CSD apps) now send
-`xdg_toplevel.set_maximized` / `set_minimized` when the user clicks
-their client-side decoration buttons. 748070e wired those requests to
-the existing AwesomeWM `client_set_maximized` / `client_set_minimized`
-Lua API.
+Happy-path maximize/restore works in all CSD apps (Firefox, Chrome, Nautilus).
 
-**Happy path works**: open Firefox, click max → maximizes. Click restore
-→ restores. Repeat. All fine.
+**Broken path: minimize → restore from minimize.**
 
-**Broken sequence** (Firefox, confirmed; Chrome, unknown baseline):
+After CSD minimize click → wibar tasklist restore:
+- **Chrome**: client area misaligned with window frame, buttons unclickable
+- **Firefox**: window appears restored, but the next CSD maximize click triggers
+  `mousegrabber_run + top_left_corner` (log evidence), i.e. a resize-drag
+  interaction instead of maximize
 
-1. Firefox windowed, floating layout
-2. Click CSD minimize button → window hides (OK)
-3. Click wibar tasklist entry to restore → window reappears (OK)
-4. Click CSD maximize button → **window jumps to a screen corner, stays
-   at roughly its pre-minimize floating size**, not fullscreen. Feels
-   like a resize-drag started instead of a maximize.
+User's diagnosis: "za vsechno muze spatny restore z minimalizace" — the
+unminimize path leaves the xdg client in an inconsistent state (geometry,
+state bits, activated, suspended) and everything downstream is corrupted.
 
-Log evidence during reproduction:
+## Root cause (per KWin reference)
 
+Studied `~/git/github/kwin` xdg-shell handling:
+
+**KWin `XdgToplevelWindow::doMinimize()`** (xdgshellwindow.cpp:863):
+```cpp
+void XdgToplevelWindow::doMinimize() {
+    if (m_isInitialized) {
+        if (isMinimized()) {
+            workspace()->activateNextWindow(this);
+        }
+    }
+    workspace()->updateMinimizedOfTransients(this);
+}
 ```
-00:09:56.907  [FOCUS-ACTIVATE] Firefox deactivated
-00:09:56.908  [FOCUS-ACTIVATE] terminal activated
-00:09:57.894  FBO 3836x2123  (full output damage; Firefox briefly looks max-sized)
-00:09:58.867  mousegrabber_run called   ← awful.mouse.client.resize started
-00:09:58.867  XCursor 'top_left_corner' missing, falling back   ← NW resize cursor
-00:09:58.885…00:10:00.126  ~80 FBOs, monotonically shrinking 3824x2113 → 1896x1364
+**No** `set_suspended`, **no** configure. Just moves focus away.
+
+**KWin `setSuspended`** (windowitem.cpp:189):
+```cpp
+m_window->setSuspended(!visible && !m_window->isOffscreenRendering());
 ```
+Driven by **scene visibility / occlusion** — a rendering hint, not a
+minimize signal. xdg-shell spec agrees: `suspended` is "indicates that
+the content of the toplevel is not visible" (rendering optimization).
 
-The `mousegrabber_run + top_left_corner` pair is the smoking gun. In
-somewm/AwesomeWM code, that pair is only reached via
-`awful.mouse.client.resize`, typically bound to `Mod4+R-click`.
+**KWin unminimize path**: tasklist click → `setMinimized(false)` →
+natural `setActive(true)` flow → `doSetActive()` adds `Activated` to
+`m_nextStates` → `scheduleConfigure()` sends **one coherent configure**
+bundling Activated + existing Maximized + existing size.
 
-**Key observation**: somewm does NOT register
-`wlr_xdg_toplevel.events.request_resize`, so Firefox sending
-`xdg_toplevel.resize` would be silently dropped at the wlroots level.
-Therefore `mousegrabber_run` must originate from Lua, not from an
-unlistened wlroots signal — yet the user did not press Mod4+R-click.
-Something is routing the CSD click through a Lua path that terminates
-in `mouse.client.resize`.
+**somewm violation** (`objects/client.c:2822-2854`):
+```c
+if(c->client_type == XDGShell) {
+    wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, s);   // A
+    if(!s && ...initialized && mapped) {
+        wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel,   // B
+                                       c->maximized);
+        apply_geometry_to_wlroots(c);                               // C
+    }
+}
+```
+On minimize we send `set_suspended(true)` — Gtk/Chromium treat suspended
+as a hint to collapse CSD rendering state. On unminimize we fire three
+separate protocol/scene events (A+B+C) in quick succession, each
+scheduling its own configure or mutating scene independently. The
+client's CSD hit-region recomputation lands on a transient inconsistent
+(state, size, suspended, activated) tuple. KWin does **one** configure.
 
-## What we tried (748070e → 8a42b35)
+## Fix plan
 
-### Round 1 reviews
-Parallel Codex (gpt-5.4) + Sonnet agent review of 748070e code.
+### Core principle
+Mirror KWin's pattern: **don't drive xdg state from `client_set_minimized`**.
+Minimize/unminimize is a compositor-internal concept (hide/show scene
+node, tasklist signal). Let the natural focus/activate machinery generate
+the coherent configure on restore.
 
-Both converged on two hypotheses:
+### Changes
 
-**H1 — Handler ordering**: `maximizenotify` called
-`wlr_xdg_toplevel_set_maximized(wants)` BEFORE running Lua. The next
-configure therefore carried `maximized=true` at the OLD floating size;
-Firefox/GTK recomputed CSD hit regions for that stale size. Claimed
-this, combined with set_suspended(false) on unminimize, put Firefox in
-a confused state that treats the next click as a resize.
+#### `objects/client.c` `client_set_minimized` (~2822)
+**Remove the entire `if(c->client_type == XDGShell)` block** (lines
+2839-2855). Keep only:
+- `c->minimized = s`
+- `banning_need_update()`
+- `wlr_scene_node_set_enabled(&c->scene->node, !s)`
+- foreign-toplevel handle update
+- workarea update
+- `property::minimized` signal
 
-**H2 — Unminimize stale state**: `client_set_minimized(false)` only
-calls `wlr_xdg_toplevel_set_suspended(false)`. It does not re-send a
-fresh configure with the current maximized/geometry state. Firefox
-CSD resumes with stale hit regions.
+No manual `set_suspended`, no `set_maximized`, no
+`apply_geometry_to_wlroots`. All xdg state driving is delegated
+downstream.
 
-### Attempted fix 8a42b35
+#### Why this works for all three unminimize paths
 
-- `window.c maximizenotify`: reorder — Lua first, only ack-configure
-  as a trailing fallback when Lua short-circuited (already in the
-  requested state).
-- `objects/client.c client_set_minimized`: on `s==false` with mapped
-  surface, call `wlr_xdg_toplevel_set_maximized(c->maximized)` +
-  `apply_geometry_to_wlroots(c)` to force a fresh configure.
+The signal `property::minimized` is wired at
+`lua/awful/layout/init.lua:343` to `arrange_prop_nf` → triggers
+`arrange(screen)` → runs `window.c:209-218` foreach-clients loop →
+calls `client_set_suspended(c, !visible)` where `visible =
+client_isvisible(c)` excludes minimized (objects/client.h:497).
 
-### Live test result
+So arrange ALWAYS fires on min/unmin and ALWAYS calls `set_suspended`
+with the right value — regardless of whether the unminimize originated
+from:
+- `c:activate` (tasklist / keybind): arrange fires; also activate
+  later adds `set_activated(true)` — both batched if still pending
+- `awful.client.restore()`: arrange fires; that's all
+- foreign-toplevel unminimize (protocols.c:625): arrange fires; that's all
 
-- **Firefox**: same bug, min→restore→max still jumps to edge.
-- **Chrome**: "client area completely outside, buttons unclickable"
-  after min→restore. User DID NOT test Chrome on 748070e — the Chrome
-  regression may be pre-existing, not introduced by 8a42b35.
+wlroots' `wlr_xdg_surface_schedule_configure` coalesces onto an idle
+configure if one is pending (wlr_xdg_surface.c:170). The single
+configure that gets sent batches ALL currently-pending toplevel state:
+size, maximized, fullscreen, activated, suspended. Identical to KWin's
+"one coherent configure" pattern.
 
-Both hypotheses (H1, H2) were thus unverified speculation; the actual
-bug is something else we haven't identified.
+#### `window.c` `maximizenotify` (~1267)
+**No change.** 748070e + 8a42b35 reorder is correct — bug was never in
+max path.
 
-## Uncertainties to resolve
+#### `window.c` `minimizenotify` (~1330)
+**No change.** Already minimal (routes to Lua).
 
-| Question | How to resolve |
-|---|---|
-| Was Chrome already broken on 748070e, or did 8a42b35 break it? | Deploy 748070e, test Chrome min→restore explicitly |
-| Which half of 8a42b35 (if any) helps Firefox at all? | Split 8a42b35 into two commits, bisect |
-| What Lua path triggers `mousegrabber_run`? | Add a printf/backtrace at mousegrabber_run entry |
-| Is Firefox actually getting a fresh configure after unminimize? | Instrument wlr_xdg_toplevel_set_maximized and configure send |
-| Does another compositor (sway/kwin) exhibit the same behavior with same Firefox version? | Live comparison |
-| Is Firefox in CSD or SSD mode in our compositor? | Check xdg-decoration protocol state at mapnotify |
+#### `window.c` arrange loop (~209-218) — suspended policy
+**No change.** Keeping `client_set_suspended(c, !client_isvisible(c))`
+as the single source of truth for suspended state. Semantically correct
+per xdg-shell.xml — minimized windows ARE "not visible", so
+`suspended=true` is legitimate. The bug was never that suspended was
+set on minimize; it was that on unminimize we fired 3 events (suspended,
+maximized, geometry) at different code paths and layers. Removing the
+manual driving from `client_set_minimized` consolidates to a single
+scheduled configure.
 
-## Next-step plan (when resuming)
+### Verification plan (after implementation)
 
-### Phase 1 — isolation (must do first)
+1. **Build + deploy + restart**:
+   ```bash
+   plans/scripts/install-scenefx.sh
+   somewm-client exec somewm   # or reboot for DRM fidelity
+   ```
 
-Deploy `748070e` (revert point), test carefully:
+2. **Happy-path regression check** (must still work):
+   - Firefox: open → max → restore → max → restore ✓
+   - Chrome: same
+   - Nautilus: same
 
-1. Chrome: min → wibar restore → observe. Is the client area misaligned?
-   → If YES: Chrome regression is pre-existing, NOT caused by 8a42b35.
-   → If NO: 8a42b35 broke Chrome. Keep that fact noted; revert
-     `client_set_minimized` change but possibly keep `maximizenotify`
-     reorder as it may still help.
-2. Firefox: min → wibar restore → max. Confirm same bug on 748070e
-   (should be identical to the report).
+3. **Bug-fix check** (previously broken):
+   - Firefox: open → CSD min → wibar restore → CSD max
+     → expect: cleanly maximizes, no resize-drag, no corner-jump
+   - Chrome: open → CSD min → wibar restore
+     → expect: client area aligned with frame, buttons clickable
+   - Chrome: open → CSD min → wibar restore → CSD max ✓
 
-### Phase 2 — diagnostics
+4. **Keybind fallback check**:
+   - Super+Ctrl+n minimize, Super+Ctrl+n unminimize → same result as
+     CSD click → should also work
 
-Add instrumentation commits (diagnostic-only, revert before merge):
+### Non-goals (scope boundary)
 
-1. `window.c maximizenotify`: log entry with
-   `c->minimized, c->maximized, c->fullscreen, toplevel->requested.*,
-   c->geometry` — before and after each `wlr_xdg_toplevel_set_maximized`
-   call.
-2. `objects/client.c client_set_minimized`: log on both transitions
-   with full client state.
-3. `lua/awful/mouse/init.lua` (or wherever `client.resize` is defined):
-   log the entry with a Lua stack trace (`debug.traceback()`) so we
-   see who called it.
-4. `somewm.c` pointer button handling: log surface + coords + modifier
-   mask on every button press while Firefox is focused.
+- XWayland minimize path (`ewmh.c`) — untouched, works.
+- SSD apps (alacritty, foot) — no CSD, N/A.
+- Fullscreen interaction with minimize — out of scope (separate code path).
+- Driving `suspended` from scene occlusion — deferred. Can be added
+  later as an optimization; current fix works without it.
 
-See Codex round-2 review saved at `plans/csd-max-min-codex-round2.md`
-(exists after `8a42b35`) for a more detailed diagnostic patch.
+## Rejected alternatives
 
-### Phase 3 — reference check
+- **Send one merged configure manually on unminimize** (pack `set_maximized`
+  + `set_size` into a single schedule_configure): viable but fragile;
+  duplicates wlroots' batching logic. KWin doesn't do this — it relies
+  on the natural Activated configure carrying everything.
+- **Register `request_resize` to catch the spurious resize-drag**: treats
+  symptom not cause. The resize-drag is Firefox reacting to inconsistent
+  CSD state; fix the state, the drag won't happen.
+- **Suppress pointer input for N ms after unminimize**: hack, makes the
+  UI feel laggy, only masks timing-dependent variants of the same bug.
 
-Install sway (keep somewm config) or run kwin nested. Reproduce the
-exact sequence with the same Firefox build. Record:
+## Files touched (in implementation)
 
-- Does the bug reproduce elsewhere? (If yes → Firefox-side issue)
-- What configure sequence does sway/kwin send? (Compare with our log)
-- Where do they register `request_resize`? (May answer why it matters)
+- `objects/client.c` — simplify `client_set_minimized` (~2822-2864)
+- `plans/csd-max-min-firefox-chrome-investigation.md` — this file
 
-### Phase 4 — targeted fix
+No changes to `window.c` (minimizenotify/maximizenotify already OK as-is
+from 748070e + 8a42b35 reorder).
 
-Only after Phase 1-3 produce ground-truth evidence about what is
-actually happening. Candidate fixes (priority order once evidence
-points somewhere):
+## References
 
-- Register `request_resize` + route to a controlled handler that
-  either rejects or routes explicitly via Lua with protocol edges.
-- Defer the unminimize reconfigure to the next arrange cycle instead
-  of calling `apply_geometry_to_wlroots` synchronously.
-- Suppress client pointer input for N ms after a
-  `set_suspended(false)` to let Gtk/Chromium re-settle its CSD.
-- Something else entirely, surfaced by the instrumentation.
+- KWin `src/xdgshellwindow.cpp:863` — doMinimize pattern
+- KWin `src/xdgshellwindow.cpp:873` — doSetActive → scheduleConfigure
+- KWin `src/scene/windowitem.cpp:189` — suspended = scene visibility
+- Sway `sway/desktop/xdg_shell.c:385` — request_maximize = schedule_configure only
+- Sway does NOT register xdg request_minimize
+- wlroots `types/xdg_shell/wlr_xdg_toplevel.c` — set_activated etc. call schedule_configure
 
-## Files to touch (pointers for next session)
+## Context that must survive
 
-- `window.c`
-  - `maximizenotify` ~line 1266 (current reordered version on 8a42b35)
-  - `minimizenotify` ~line 1319
-  - `initialcommitnotify` ~line 290 (wm_capabilities advertise)
-  - `apply_geometry_to_wlroots` ~line 1366
-- `objects/client.c`
-  - `client_set_minimized` ~line 2822 (current 8a42b35 version adds
-    unminimize reconfigure)
-  - `client_set_maximized_common` ~line 2969 (current adds
-    `wlr_xdg_toplevel_set_maximized` on state change)
-- `objects/client.h` ~line 177 — minimize wl_listener field added
-- `plans/project/somewm-one/fishlive/config/keybindings.lua` ~line 408 —
-  default mousebindings (Mod4+R-click → mouse_resize)
-- `plans/project/somewm-one/fishlive/config/screen.lua` ~line 105 —
-  tasklist button 1 → `c:activate { action = "toggle_minimization" }`
-
-## Reference: external reviews
-
-- Codex round 1 (gpt-5.4): proposed the H1+H2 fix implemented in 8a42b35
-  — proposed but not verified. Saved session artifact: /tmp/codex-review.md
-- Sonnet round 1: converged on same H1 fix with slightly different
-  redundant-ack fallback.
-- Codex round 2 (gpt-5.4): ran with new failure evidence, focused on
-  diagnostic instrumentation rather than fixes. Saved at
-  `plans/csd-max-min-codex-round2.md` (once committed).
-
-## Scope boundary
-
-This bug is about **xdg-shell CSD Gtk/Chromium apps** only. XWayland
-(X11) clients have their own `_NET_WM_STATE_MAXIMIZED_*` /
-`_NET_WM_STATE_HIDDEN` path via `ewmh.c`, confirmed working and
-untouched by this branch.
-
-Server-side-decorated apps (alacritty, foot) are also untouched — they
-have no CSD buttons to click.
+Previous 8a42b35 fix was based on two **unverified** hypotheses
+(H1 ordering, H2 fresh-configure). User memory rule: "U složitých
+render/timing bugů přidat logování PŘED hypotézami". This plan is based
+on the KWin reference (ground truth from a working implementation), not
+further speculation. If live test fails, go back to adding
+instrumentation before the next hypothesis.
