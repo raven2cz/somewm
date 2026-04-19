@@ -70,15 +70,15 @@ Item {
 
 		// First load: set directly without crossfade
 		if (_currentPath === "") {
-			imgFront.source = "file://" + newPath
+			imgFront.source = Core.FileUtil.fileUrl(newPath)
 			_currentPath = newPath
 			return
 		}
 
 		if (_useFront) {
-			imgBack.source = "file://" + newPath
+			imgBack.source = Core.FileUtil.fileUrl(newPath)
 		} else {
-			imgFront.source = "file://" + newPath
+			imgFront.source = Core.FileUtil.fileUrl(newPath)
 		}
 		_useFront = !_useFront
 		_currentPath = newPath
@@ -207,10 +207,16 @@ Item {
 			cursorShape: Qt.SizeFDiagCursor
 			property real _startY: 0
 			property real _startHeight: 0
+			property bool _dirty: false
 
+			// Commit resize only on release / cancel. Emitting slotResized on
+			// every pixel reassigned layoutData in the parent, which churned
+			// Repeater bindings and left the per-slot DragHandler unable to
+			// start a new move until edit mode was re-entered.
 			onPressed: (mouse) => {
 				_startY = mouse.y + resizeHandle.y + root.y
 				_startHeight = root.maxHeight
+				_dirty = false
 			}
 			onPositionChanged: (mouse) => {
 				if (!pressed) return
@@ -218,7 +224,19 @@ Item {
 				var delta = (currentY - _startY) / root.sp
 				var newH = Math.max(100, _startHeight + delta)
 				root.maxHeight = Math.round(newH)
-				root.slotResized(Math.round(newH))
+				_dirty = true
+			}
+			onReleased: {
+				if (_dirty) {
+					root.slotResized(Math.round(root.maxHeight))
+					_dirty = false
+				}
+			}
+			onCanceled: {
+				if (_dirty) {
+					root.slotResized(Math.round(root.maxHeight))
+					_dirty = false
+				}
 			}
 		}
 	}

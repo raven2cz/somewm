@@ -32,6 +32,12 @@ Singleton {
 	// Loading flag
 	property bool loading: false
 
+	// User-selected default collection (shared with the Lua-side notifications
+	// random-portrait fallback). Plain-text file written by
+	// fishlive.services.portraits:set_default(). Empty string when the file
+	// does not exist or the value does not match any scanned collection.
+	property string defaultCollection: ""
+
 	// Emitted when a specific collection's image list becomes available
 	signal collectionScanned(string name)
 
@@ -187,6 +193,37 @@ Singleton {
 		}
 	}
 
+	// === Default collection (shared with Lua notifications) ===
+	// Reading the plain-text state file via `cat` (Process). FileView proved
+	// unreliable for initial sync read of hidden dot-files; Process gives us
+	// deterministic content on startup and on explicit reload.
+
+	readonly property string _defaultFilePath:
+		Quickshell.env("HOME") + "/.config/somewm/.default_portrait"
+
+	Process {
+		id: defaultProc
+		stdout: StdioCollector {
+			onStreamFinished: {
+				root.defaultCollection = text ? text.trim() : ""
+			}
+		}
+	}
+
+	function _loadDefault() {
+		defaultProc.command = ["cat", root._defaultFilePath]
+		defaultProc.running = true
+	}
+
+	// Watch the file so switching the default via Lua menu updates live.
+	FileView {
+		id: defaultWatch
+		path: root._defaultFilePath
+		watchChanges: true
+		onFileChanged: root._loadDefault()
+		onLoadFailed: root._loadDefault()  // file may appear later
+	}
+
 	// === IPC ===
 
 	IpcHandler {
@@ -195,5 +232,8 @@ Singleton {
 	}
 
 	// Initial scan on startup
-	Component.onCompleted: _scanCollections()
+	Component.onCompleted: {
+		_scanCollections()
+		_loadDefault()
+	}
 }
