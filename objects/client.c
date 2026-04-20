@@ -2832,12 +2832,17 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
-        /* Wayland: Sync suspended state with minimized state.
-         * The C arrange() also sets this, but runs asynchronously via
-         * timer.delayed_call. Set it immediately so the client can start
-         * rendering at the new size before the deferred arrange fires. */
-        if(c->client_type == XDGShell)
-            wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, s);
+        /* NOTE: xdg-shell state (suspended, maximized, size) is NOT driven
+         * from here. The property::minimized signal below triggers
+         * awful.layout.arrange() → window.c arrange() which calls
+         * client_set_suspended(c, !client_isvisible(c)). wlroots batches
+         * the pending toplevel state (size, maximized, activated, suspended)
+         * into a single coherent configure, matching KWin's pattern
+         * (xdgshellwindow.cpp:873 doSetActive → scheduleConfigure). Earlier
+         * versions called set_suspended + set_maximized + apply_geometry
+         * here directly, which fired three separate events at different
+         * layers and left Firefox/Chrome CSD with stale hit regions after
+         * restore-from-minimize. */
 
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
@@ -3008,6 +3013,14 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
+            /* Inform the xdg-shell client of its new maximized state.
+             * Without this, CSD buttons in Gtk/Qt apps render stale state
+             * when maximize is toggled via Lua (c.maximized = true) or via
+             * the foreign-toplevel protocol (wibar tasklist click). The xdg
+             * protocol path calls this directly in the request handler to
+             * also cover redundant requests where next==current. */
+            if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->initialized)
+                wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, c->maximized);
         }
 
         stack_windows();

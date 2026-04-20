@@ -11,6 +11,7 @@
 #include <math.h>
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/interfaces/wlr_keyboard.h>
@@ -417,11 +418,61 @@ some_set_seat_keyboard_focus(Client *c)
 			return;
 	}
 
-#ifdef XWAYLAND
-	/* Deactivate old surface if switching away from an X11 client */
-	if (c->client_type == X11 && seat->keyboard_state.focused_surface)
-		client_activate_surface(seat->keyboard_state.focused_surface, 0);
+	/* Resolve the previously-focused surface and apply the same old-surface
+	 * handling as focusclient() in focus.c. Without this, Path B diverges
+	 * from Path A on popup grabs, top-layer layer-shell focus (rofi-like
+	 * launchers) and exclusive_focus. The core xdg-shell fix for Chromium
+	 * paint-stall is the activation call further down — this block only
+	 * exists to keep Path B behaviorally equivalent to Path A when the old
+	 * focus holder requires special treatment. */
+	{
+		struct wlr_surface *old = seat->keyboard_state.focused_surface;
+		Client *old_c = NULL;
+		LayerSurface *old_l = NULL;
+		int old_client_type = -1;
+		int unused_lx, unused_ly;
 
+		if (old) {
+			old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l);
+
+			/* Tear down popups rooted on the old XDG toplevel before we
+			 * change any state. Matches focus.c:65-69. */
+			if (old_client_type == XDGShell && old_c) {
+				struct wlr_xdg_popup *popup, *tmp;
+				wl_list_for_each_safe(popup, tmp,
+				                      &old_c->surface.xdg->popups, link)
+					wlr_xdg_popup_destroy(popup);
+			}
+
+			/* A top-layer layer-shell surface (rofi, session lock, etc.)
+			 * owns the seat until it relinquishes focus — skip activation
+			 * changes and let the layer surface dismiss itself first.
+			 * Matches focus.c:100-103. */
+			if (old_client_type == LayerShell && old_l
+			    && wlr_scene_node_coords(&old_l->scene->node,
+			                             &unused_lx, &unused_ly)
+			    && old_l->layer_surface->current.layer
+			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+				return;
+
+			/* The old client holds exclusive focus (e.g. drag grab).
+			 * Matches focus.c:104-105. */
+			if (old_c && old_c == exclusive_focus
+			    && client_wants_focus(old_c))
+				return;
+
+			/* Deactivate old managed client. Skip the deactivation if the
+			 * incoming client is a winecfg-like wants-focus unmanaged
+			 * XWayland window — in that case the parent toplevel stays
+			 * activated so the legacy input model keeps working. Matches
+			 * focus.c:106-114. */
+			if (old_c && !client_is_unmanaged(old_c)
+			    && !client_wants_focus(c))
+				client_activate_surface(old, 0);
+		}
+	}
+
+#ifdef XWAYLAND
 	/* Sway pattern: inform XWayland of the active seat on every focus
 	 * change to an X11 client. Required for proper keyboard delivery. */
 	if (c->client_type == X11) {
@@ -429,6 +480,19 @@ some_set_seat_keyboard_focus(Client *c)
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
 #endif
+
+	/* Activate the new surface before delivering keyboard enter. For XDG
+	 * toplevels this sends xdg_toplevel.configure{activated=true}; Chromium
+	 * (and to a lesser extent GTK4) throttles its content pipeline when it
+	 * sees wl_keyboard.enter without xdg-shell activation, and only resumes
+	 * when input forces invalidation (symptom: stale frame after restore
+	 * from minimize via wibar tasklist click). Path A (focusclient) already
+	 * sends activation; Path B must do it too so the Lua `client.focus = c`
+	 * path is protocol-equivalent to the C path. X11 activation is deferred
+	 * until after keyboard enter — see below. */
+	if (!client_is_x11(c))
+		client_activate_surface(surface, 1);
+
 	kb = wlr_seat_get_keyboard(seat);
 	if (kb) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
