@@ -1,7 +1,9 @@
 # Scope-aware wallpaper resolution (per-monitor orientation)
 
-Branch: `feat/monitor-portrait-wallpaper` (continues)
+Branch: `feat/monitor-portrait-wallpaper` (merged into main 2026-04-20)
 Started: 2026-04-20
+Status: **DONE** — shipped 2026-04-20. Live-verified on DELL + HP portrait.
+Follow-up stabilization (edge cases, polish) tracked separately.
 
 ## 1. Problem
 
