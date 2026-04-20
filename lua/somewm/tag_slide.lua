@@ -78,11 +78,18 @@ end
 
 local has = {
 	scene   = type(capi.awesome._client_scene_set_enabled) == "function",
+	strict  = type(capi.awesome._client_scene_set_strict_clip) == "function",
 	snap    = type(capi.root.wp_snapshot) == "function",
 	snap_p  = type(capi.root.wp_snapshot_path) == "function",
 	ovmove  = type(capi.root.wp_overlay_move) == "function",
 	ovdest  = type(capi.root.wp_overlay_destroy) == "function",
 }
+
+local function strict_clip_set(c, on)
+	if has.strict and c and c.valid then
+		pcall(capi.awesome._client_scene_set_strict_clip, c, on)
+	end
+end
 
 local tag_slide = {}
 tag_slide.enabled = false
@@ -155,6 +162,7 @@ local function cancel_and_snap(s)
 	if st.old then
 		for _, e in ipairs(st.old) do
 			if e.c.valid then
+				strict_clip_set(e.c, false)
 				e.c:_set_geometry_silent(e.geo)
 				if has.scene then
 					capi.awesome._client_scene_set_enabled(e.c, false)
@@ -164,7 +172,10 @@ local function cancel_and_snap(s)
 	end
 	if st.new then
 		for _, e in ipairs(st.new) do
-			if e.c.valid then e.c:_set_geometry_silent(e.target) end
+			if e.c.valid then
+				strict_clip_set(e.c, false)
+				e.c:_set_geometry_silent(e.target)
+			end
 		end
 	end
 
@@ -301,6 +312,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 		for _, e in ipairs(old_snap) do
 			if e.c.valid then
 				capi.awesome._client_scene_set_enabled(e.c, true)
+				strict_clip_set(e.c, true)
 				e.c:_set_geometry_silent(e.geo)
 			end
 		end
@@ -311,6 +323,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 		if e.c.valid then
 			e.target = { x = e.geo.x, y = e.geo.y,
 			             width = e.geo.width, height = e.geo.height }
+			strict_clip_set(e.c, true)
 			e.c:_set_geometry_silent({
 				x = e.target.x + sw * dir, y = e.target.y,
 				width = e.target.width, height = e.target.height,
@@ -361,6 +374,7 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 		function()
 			for _, e in ipairs(old_snap) do
 				if e.c.valid then
+					strict_clip_set(e.c, false)
 					e.c:_set_geometry_silent(e.geo)
 					if has.scene then
 						capi.awesome._client_scene_set_enabled(e.c, false)
@@ -368,7 +382,10 @@ local function run_animation(s, old_snap, dir, old_wp, new_wp)
 				end
 			end
 			for _, e in ipairs(new_snap) do
-				if e.c.valid then e.c:_set_geometry_silent(e.target) end
+				if e.c.valid then
+					strict_clip_set(e.c, false)
+					e.c:_set_geometry_silent(e.target)
+				end
 			end
 
 			cleanup(st)

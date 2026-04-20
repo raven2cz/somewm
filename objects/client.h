@@ -273,6 +273,13 @@ struct client_t
      * Note that the geometry remains unchanged and that the window is still mapped.
      */
     bool isbanned;
+    /** True if the client must not render outside its owning monitor.
+     * Used during tag slide animation so swinging clients don't bleed onto
+     * neighbouring outputs. Surface content is already source-clipped to the
+     * monitor in apply_geometry_to_wlroots(); when strict_clip is set we also
+     * hide borders/shadow/titlebars whenever the client is not fully inside
+     * its monitor. Default off preserves drag-to-edge decoration visibility. */
+    bool strict_clip;
     /** true if the client must be skipped from task bar client list */
     bool skip_taskbar;
     /** True if the client cannot have focus */

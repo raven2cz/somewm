@@ -1501,9 +1501,37 @@ apply_geometry_to_wlroots(Client *c)
 				clip.width = vr - vl;
 				clip.height = vb - vt;
 				wlr_scene_node_set_enabled(&c->scene_surface->node, true);
-				client_update_border_for_corners(c);
-				if (c->shadow.tree)
-					wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+				if (c->strict_clip) {
+					/* Tag-slide animation: decoration nodes (borders,
+					 * shadow, titlebars) have no scene-level clip API and
+					 * would render at their full width across the monitor
+					 * boundary onto neighbouring outputs. Hide them while
+					 * the client is mid-slide; they reappear once the
+					 * client lands fully inside its monitor. */
+					for (int i = 0; i < 4; i++) {
+						if (c->border[i])
+							wlr_scene_node_set_enabled(
+								&c->border[i]->node, false);
+					}
+#ifdef HAVE_SCENEFX
+					if (c->border_frame)
+						wlr_scene_node_set_enabled(
+							&c->border_frame->node, false);
+#endif
+					if (c->shadow.tree)
+						wlr_scene_node_set_enabled(
+							&c->shadow.tree->node, false);
+					for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+							bar < CLIENT_TITLEBAR_COUNT; bar++) {
+						if (c->titlebar[bar].scene_buffer)
+							wlr_scene_node_set_enabled(
+								&c->titlebar[bar].scene_buffer->node, false);
+					}
+				} else {
+					client_update_border_for_corners(c);
+					if (c->shadow.tree)
+						wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+				}
 			} else {
 				/* Fully offscreen: hide everything */
 				wlr_scene_node_set_enabled(&c->scene_surface->node, false);
