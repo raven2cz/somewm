@@ -1286,6 +1286,38 @@ luaA_root_wallpaper_cache_show(lua_State *L)
 	return 1;
 }
 
+/** root.wallpaper_cache_invalidate_screen(screen_index) - Drop cache entries
+ * for one screen, e.g. after its geometry/transform changed so subsequent
+ * preloads rebuild scene buffers at the new dimensions.
+ * Lua: root.wallpaper_cache_invalidate_screen(screen_index)
+ */
+static int
+luaA_root_wallpaper_cache_invalidate_screen(lua_State *L)
+{
+	int screen_index = (int)luaL_checkinteger(L, 1) - 1; /* Lua 1-based -> 0-based */
+
+	if (screen_index < 0 || screen_index >= WALLPAPER_MAX_SCREENS)
+		return 0;
+	if (!globalconf.wallpaper_cache.next)
+		return 0;
+
+	wallpaper_cache_entry_t *entry, *tmp;
+	wl_list_for_each_safe(entry, tmp, &globalconf.wallpaper_cache, link) {
+		if (entry->screen_index != screen_index)
+			continue;
+		wl_list_remove(&entry->link);
+		if (entry->scene_node)
+			wlr_scene_node_destroy(&entry->scene_node->node);
+		if (entry->surface)
+			cairo_surface_destroy(entry->surface);
+		free(entry->path);
+		free(entry);
+	}
+
+	globalconf.current_wallpaper_per_screen[screen_index] = NULL;
+	return 0;
+}
+
 /** root.wallpaper_cache_clear() - Clear all cached wallpapers
  * Frees GPU memory used by cached wallpaper textures.
  */
@@ -2090,6 +2122,7 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_has", luaA_root_wallpaper_cache_has },
 	{ "wallpaper_cache_show", luaA_root_wallpaper_cache_show },
 	{ "wallpaper_cache_clear", luaA_root_wallpaper_cache_clear },
+	{ "wallpaper_cache_invalidate_screen", luaA_root_wallpaper_cache_invalidate_screen },
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	/* Wallpaper overlay helpers for tag slide animation */
 	{ "wp_snapshot", luaA_root_wp_snapshot },
