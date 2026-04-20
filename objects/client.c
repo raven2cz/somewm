@@ -2823,16 +2823,6 @@ client_set_minimized(lua_State *L, int cidx, bool s)
 {
     client_t *c = luaA_checkudata(L, cidx, &client_class);
 
-    /* [CSD-DIAG] */
-    fprintf(stderr, "[CSD-DIAG] client_set_minimized name=%s: %d -> %d (max=%d, mapped=%d, geom=%dx%d@%d,%d)\n",
-        c->name ? c->name : "?",
-        c->minimized, s, c->maximized,
-        (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->surface)
-            ? (int)c->surface.xdg->surface->mapped : -1,
-        c->geometry.width, c->geometry.height,
-        c->geometry.x, c->geometry.y);
-    fflush(stderr);
-
     if(c->minimized != s)
     {
         c->minimized = s;

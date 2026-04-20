@@ -491,29 +491,6 @@ buttonpress(struct wl_listener *listener, void *data)
 		/* Change focus if the button was _pressed_ over a client or layer surface */
 		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
 
-		/* [CSD-DIAG] */
-		{
-			struct wlr_keyboard *kb = wlr_seat_get_keyboard(seat);
-			uint32_t m = kb ? wlr_keyboard_get_modifiers(kb) : 0;
-			fprintf(stderr, "[CSD-DIAG] buttonpress btn=0x%x state=PRESS coords=(%.1f,%.1f) "
-				"client=%s drawin=%s titlebar=%d mods=0x%x grabber_active=%d\n",
-				event->button,
-				cursor->x, cursor->y,
-				c ? (client_get_appid(c) ? client_get_appid(c) : "noappid") : "none",
-				drawin ? "yes" : "no",
-				titlebar_drawable ? 1 : 0,
-				m,
-				mousegrabber_isrunning() ? 1 : 0);
-			if (c) {
-				fprintf(stderr, "[CSD-DIAG]   client detail: geom=%dx%d@%d,%d min=%d max=%d fs=%d mapped=%d\n",
-					c->geometry.width, c->geometry.height,
-					c->geometry.x, c->geometry.y,
-					c->minimized, c->maximized, c->fullscreen,
-					client_surface(c) ? (int)client_surface(c)->mapped : -1);
-			}
-			fflush(stderr);
-		}
-
 		/* For Lua lock, only allow interaction with the lock surface */
 		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
 			return;
