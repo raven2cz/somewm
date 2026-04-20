@@ -480,6 +480,19 @@ some_set_seat_keyboard_focus(Client *c)
 		wlr_xwayland_set_seat(xwayland, seat);
 	}
 #endif
+
+	/* Activate the new surface before delivering keyboard enter. For XDG
+	 * toplevels this sends xdg_toplevel.configure{activated=true}; Chromium
+	 * (and to a lesser extent GTK4) throttles its content pipeline when it
+	 * sees wl_keyboard.enter without xdg-shell activation, and only resumes
+	 * when input forces invalidation (symptom: stale frame after restore
+	 * from minimize via wibar tasklist click). Path A (focusclient) already
+	 * sends activation; Path B must do it too so the Lua `client.focus = c`
+	 * path is protocol-equivalent to the C path. X11 activation is deferred
+	 * until after keyboard enter — see below. */
+	if (!client_is_x11(c))
+		client_activate_surface(surface, 1);
+
 	kb = wlr_seat_get_keyboard(seat);
 	if (kb) {
 		wlr_seat_keyboard_notify_enter(seat, surface,
