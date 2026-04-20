@@ -2040,10 +2040,23 @@ luaA_root_wp_snapshot(lua_State *L)
 		if (slot >= 0) { lua_pushinteger(L, slot + 1); return 1; }
 	}
 
-	/* Fallback: extract screen region from global wallpaper */
+	/* Fallback: extract screen region from global wallpaper.
+	 * globalconf.wallpaper is bbox-sized (covers the whole layout) with
+	 * its pixel (0, 0) at layout_box.x, layout_box.y — so when the
+	 * layout origin is negative (e.g. a portrait monitor to the left of
+	 * the primary at x = -2160) the source offsets must be relative to
+	 * layout_box, not the raw screen coordinates. Without this fixup
+	 * wp_overlay_create would sample from the wrong column of the
+	 * surface and the fallback cover would render a foreign screen's
+	 * wallpaper — visibly leaking the primary's image onto secondary
+	 * outputs during a tag-slide animation. */
 	if (globalconf.wallpaper) {
+		struct wlr_box layout_box;
+		wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+		int sx = scr_x - layout_box.x;
+		int sy = scr_y - layout_box.y;
 		int slot = wp_overlay_create(globalconf.wallpaper,
-			scr_x, scr_y, scr_w, scr_h, scr_x, scr_y);
+			sx, sy, scr_w, scr_h, scr_x, scr_y);
 		if (slot >= 0) { lua_pushinteger(L, slot + 1); return 1; }
 	}
 

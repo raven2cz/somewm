@@ -230,11 +230,23 @@ local function predict_wp_path(s, offset)
 	local ni = ((idx - 1 + offset) % #tags) + 1
 	local tag_name = tags[ni].name
 
-	-- Try wallpaper service _resolve() first (handles user-wallpapers, overrides)
+	-- Try the per-screen resolver first so scoped variants (e.g. a
+	-- portrait monitor's wallpapers/portrait/<tag>) win. Fall back to
+	-- the unscoped _resolve() for older wallpaper services, and to
+	-- direct path construction for configs that don't load the service
+	-- at all. Each layer is a separate check so that a nil return
+	-- from the scoped resolver still lets the unscoped path have a
+	-- chance to match.
 	local ok, wp_service = pcall(require, "fishlive.services.wallpaper")
-	if ok and wp_service and wp_service._resolve then
-		local path = wp_service._resolve(tag_name)
-		if path then return path end
+	if ok and wp_service then
+		if wp_service._resolve_for_screen then
+			local path = wp_service._resolve_for_screen(s, tag_name)
+			if path then return path end
+		end
+		if wp_service._resolve then
+			local path = wp_service._resolve(tag_name)
+			if path then return path end
+		end
 	end
 
 	-- Fallback: direct path construction
