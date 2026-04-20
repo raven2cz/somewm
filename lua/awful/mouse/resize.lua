@@ -102,6 +102,17 @@ local function handler(_, client, context, args) --luacheck: no unused_args
     args = args or {}
     context = context or "mouse.resize"
 
+    -- [CSD-DIAG] — instrumentation for min→restore→max bug
+    io.stderr:write(string.format(
+        "[CSD-DIAG] mouse.resize.handler ENTER context=%s client=%s maximized=%s minimized=%s fullscreen=%s\n",
+        tostring(context),
+        tostring(client and client.name or "?"),
+        tostring(client and client.maximized),
+        tostring(client and client.minimized),
+        tostring(client and client.fullscreen)))
+    io.stderr:write(debug.traceback("[CSD-DIAG] stack at resize.handler", 2) .. "\n")
+    io.stderr:flush()
+
     local placement = args.placement
 
     if type(placement) == "string" and aplace[placement] then

@@ -1297,6 +1297,16 @@ maximizenotify(struct wl_listener *listener, void *data)
 	toplevel = c->surface.xdg->toplevel;
 	wants = toplevel->requested.maximized;
 
+	/* [CSD-DIAG] */
+	fprintf(stderr, "[CSD-DIAG] maximizenotify ENTER appid=%s wants=%d cur_max=%d "
+		"min=%d fs=%d mapped=%d geom=%dx%d@%d,%d\n",
+		client_get_appid(c) ? client_get_appid(c) : "?",
+		wants, c->maximized, c->minimized, c->fullscreen,
+		c->surface.xdg->surface ? (int)c->surface.xdg->surface->mapped : -1,
+		c->geometry.width, c->geometry.height,
+		c->geometry.x, c->geometry.y);
+	fflush(stderr);
+
 	/* xdg-shell: set_maximized while fullscreen has no direct effect
 	 * (see xdg-shell.xml:1049). Keep our fullscreen/maximized mutual
 	 * exclusion and just ack the request with the current state. */
@@ -1350,6 +1360,16 @@ minimizenotify(struct wl_listener *listener, void *data)
 	 * anyway — the banning flag isn't meaningful before map either. */
 	if (!c->surface.xdg->initialized)
 		return;
+
+	/* [CSD-DIAG] */
+	fprintf(stderr, "[CSD-DIAG] minimizenotify ENTER appid=%s cur_min=%d cur_max=%d "
+		"mapped=%d geom=%dx%d@%d,%d\n",
+		client_get_appid(c) ? client_get_appid(c) : "?",
+		c->minimized, c->maximized,
+		c->surface.xdg->surface ? (int)c->surface.xdg->surface->mapped : -1,
+		c->geometry.width, c->geometry.height,
+		c->geometry.x, c->geometry.y);
+	fflush(stderr);
 
 	L = globalconf_get_lua_State();
 	if (!L)
