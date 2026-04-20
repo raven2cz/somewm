@@ -1,5 +1,7 @@
 /* window.c - Window lifecycle, geometry, and scene graph management */
 
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -340,6 +342,12 @@ commitnotify(struct wl_listener *listener, void *data)
 	 * apply_geometry_to_wlroots() directly to update clip, borders, scene
 	 * position, and re-send the configure event without clamping. */
 	if (some_client_get_floating(c) || c->fullscreen) {
+		fprintf(stderr, "[CSD-DIAG] callsite=commitnotify appid=%s geo=%dx%d@%d,%d prev=%dx%d@%d,%d fs=%d max=%d\n",
+			client_get_appid(c) ? client_get_appid(c) : "?",
+			c->geometry.width, c->geometry.height, c->geometry.x, c->geometry.y,
+			c->prev.width, c->prev.height, c->prev.x, c->prev.y,
+			c->fullscreen, c->maximized);
+		fflush(stderr);
 		resize(c, c->geometry, (some_client_get_floating(c) && !c->fullscreen));
 	} else {
 		/* Send toplevel bounds so wlroots schedules a configure that
@@ -1554,15 +1562,55 @@ void
 resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
+	struct wlr_box old_geo, passed_geo = geo;
 
 	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
 	bbox = interact ? &sgeom : &c->mon->w;
 
+	old_geo = c->geometry;
 	client_set_bounds(c, geo.width, geo.height);
 	c->geometry = geo;
 	applybounds(c, bbox);
+
+	/* [CSD-DIAG] Catch resize() callers that mutate c->geometry (XDG path). */
+	if (old_geo.x != c->geometry.x || old_geo.y != c->geometry.y
+		|| old_geo.width != c->geometry.width
+		|| old_geo.height != c->geometry.height) {
+		lua_State *L = globalconf_get_lua_State();
+		lua_Debug ar;
+		const char *lua_hint = "?";
+		char lua_buf[256];
+		Dl_info dli;
+		void *ra = __builtin_return_address(0);
+		const char *c_caller = "?";
+		char c_buf[256];
+		if (L && lua_getstack(L, 1, &ar) && lua_getinfo(L, "nSl", &ar)) {
+			snprintf(lua_buf, sizeof(lua_buf), "%s:%d %s",
+				ar.short_src, ar.currentline,
+				ar.name ? ar.name : (ar.what ? ar.what : "?"));
+			lua_hint = lua_buf;
+		}
+		if (ra && dladdr(ra, &dli) && dli.dli_sname) {
+			snprintf(c_buf, sizeof(c_buf), "%s+0x%lx",
+				dli.dli_sname,
+				(unsigned long)((char *)ra - (char *)dli.dli_saddr));
+			c_caller = c_buf;
+		}
+		fprintf(stderr, "[CSD-DIAG] window.resize appid=%s interact=%d "
+			"pass=%dx%d@%d,%d  %dx%d@%d,%d -> %dx%d@%d,%d  "
+			"lua=%s  c_caller=%s\n",
+			client_get_appid(c) ? client_get_appid(c) : "?",
+			interact,
+			passed_geo.width, passed_geo.height,
+			passed_geo.x, passed_geo.y,
+			old_geo.width, old_geo.height, old_geo.x, old_geo.y,
+			c->geometry.width, c->geometry.height,
+			c->geometry.x, c->geometry.y,
+			lua_hint, c_caller);
+		fflush(stderr);
+	}
 
 	/* Apply aspect ratio constraint on content area (excluding borders/titlebars).
 	 * Lua sets aspect_ratio = content_width / content_height, so we must
@@ -1600,12 +1648,43 @@ setfullscreen(Client *c, int fullscreen)
 {
 	int was_fullscreen;
 
+	{
+		Dl_info dli;
+		void *ra = __builtin_return_address(0);
+		const char *c_caller = "?";
+		char c_buf[256];
+		if (ra && dladdr(ra, &dli) && dli.dli_sname) {
+			snprintf(c_buf, sizeof(c_buf), "%s+0x%lx",
+				dli.dli_sname,
+				(unsigned long)((char *)ra - (char *)dli.dli_saddr));
+			c_caller = c_buf;
+		}
+		fprintf(stderr, "[CSD-DIAG] setfullscreen ENTER appid=%s cur=%d new=%d mapped=%d "
+			"geo=%dx%d@%d,%d prev=%dx%d@%d,%d  c_caller=%s\n",
+			client_get_appid(c) ? client_get_appid(c) : "?",
+			c->fullscreen, fullscreen,
+			(c->surface.xdg && c->surface.xdg->surface) ? (int)c->surface.xdg->surface->mapped : -1,
+			c->geometry.width, c->geometry.height, c->geometry.x, c->geometry.y,
+			c->prev.width, c->prev.height, c->prev.x, c->prev.y,
+			c_caller);
+		fflush(stderr);
+	}
+
 	if (!c->mon || !client_surface(c)->mapped) {
 		c->fullscreen = fullscreen;
 		return;
 	}
 
 	was_fullscreen = c->fullscreen;
+
+	/* Same-value transition for non-fullscreen clients is a no-op. We must
+	 * not run the exit branch's resize(c, c->prev, 0) because that would
+	 * restore geometry to a stale memento (e.g. initial configure size
+	 * before placement rules ran). Fullscreen → fullscreen is preserved
+	 * because setmon() re-applies setfullscreen(c, c->fullscreen) to
+	 * re-expand the client onto the new monitor's full area. */
+	if (!fullscreen && !was_fullscreen)
+		return;
 
 	/* Fullscreen is mutually exclusive with maximized states */
 	if (fullscreen && (c->maximized || c->maximized_horizontal || c->maximized_vertical)) {
@@ -1629,10 +1708,26 @@ setfullscreen(Client *c, int fullscreen)
 		 * fullscreennotify() can fire while already fullscreen) would
 		 * otherwise overwrite c->prev with the current fullscreen rect
 		 * — losing the original restore point. */
-		if (!was_fullscreen)
+		if (!was_fullscreen) {
+			fprintf(stderr, "[CSD-DIAG] c->prev SET (enter FS) appid=%s %dx%d@%d,%d -> %dx%d@%d,%d\n",
+				client_get_appid(c) ? client_get_appid(c) : "?",
+				c->prev.width, c->prev.height, c->prev.x, c->prev.y,
+				c->geometry.width, c->geometry.height, c->geometry.x, c->geometry.y);
+			fflush(stderr);
 			c->prev = c->geometry;
+		}
+		fprintf(stderr, "[CSD-DIAG] callsite=setfullscreen_enter appid=%s fs=%d->1 prev=%dx%d@%d,%d\n",
+			client_get_appid(c) ? client_get_appid(c) : "?",
+			was_fullscreen, c->prev.width, c->prev.height, c->prev.x, c->prev.y);
+		fflush(stderr);
 		resize(c, c->mon->m, 0);
 	} else {
+		fprintf(stderr, "[CSD-DIAG] callsite=setfullscreen_exit appid=%s was_fs=%d prev=%dx%d@%d,%d geo=%dx%d@%d,%d\n",
+			client_get_appid(c) ? client_get_appid(c) : "?",
+			was_fullscreen,
+			c->prev.width, c->prev.height, c->prev.x, c->prev.y,
+			c->geometry.width, c->geometry.height, c->geometry.x, c->geometry.y);
+		fflush(stderr);
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -1682,7 +1777,12 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	old_screen = c->screen;  /* Capture before update */
 
 	c->mon = m;
-	c->prev = c->geometry;
+	/* NOTE: c->prev is a restore-memento owned by setfullscreen() (and, in
+	 * the future, maximize). Monitor assignment must not touch it — doing
+	 * so pollutes the memento with the initial configure geometry (e.g.
+	 * 254x306 before placement rules have maximized the client) and the
+	 * next same-value setfullscreen(c, 0) resizes the client to that stub.
+	 * Restore points belong to their owning transition, not to setmon. */
 
 	/* Update c->screen to match c->mon for Lua property access */
 	c->screen = luaA_screen_get_by_monitor(L, m);
