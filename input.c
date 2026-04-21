@@ -797,11 +797,18 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		/* Update selected monitor when cursor crosses monitor boundaries.
 		 * Without this, layer-shell clients (rofi, etc.) that don't specify
-		 * an output get assigned to the stale selmon in createlayersurface(). */
+		 * an output get assigned to the stale selmon in createlayersurface().
+		 * Also emit screen::focus so Lua's awful.screen.focused() and any
+		 * QS panels gated on focusedScreenName follow the cursor — mirror of
+		 * the button-press path at the empty-space selmon update above.
+		 * mon != selmon fires at most once per boundary crossing, so this
+		 * is not per-motion-event spam. */
 		{
 			Monitor *mon = xytomon(cursor->x, cursor->y);
-			if (mon && mon != selmon)
+			if (mon && mon != selmon) {
 				selmon = mon;
+				luaA_emit_signal_global("screen::focus");
+			}
 		}
 	}
 
