@@ -48,7 +48,7 @@ not where the cursor is, so the user sees nothing.
 
 ## Root Cause
 
-`input.c` around line 794 (current code):
+`input.c` around line 759 (pre-fix code):
 
 ```c
 if (cursor_mode == CurPressed && !seat->drag
@@ -89,7 +89,7 @@ old screen even though the cursor is now over a different window.
 ## Immediate Fix (this commit)
 
 Replace `cursor_mode == CurPressed` with
-`seat->pointer_state.button_count > 0` at `input.c:794`.
+`seat->pointer_state.button_count > 0` at `input.c:759`.
 
 `button_count` is wlroots-maintained and reflects the actual held-button
 state at the seat level. It's decremented by
@@ -128,6 +128,25 @@ grab intentionally swallows a release before reaching wlroots.
 For now this is acceptable — the reported scenarios (MPV/Dolphin startup
 scroll, post-screen-migration scroll) all go through the normal
 press/release path.
+
+### Intentional behavioral side-effect: Lua mousegrabber
+
+During a Lua-driven mousegrabber session (e.g. `awful.mouse.client.move`),
+`mousegrabber_isrunning()` short-circuits the button handler before it
+can update `cursor_mode` or call `wlr_seat_pointer_notify_button()`.
+Consequently:
+
+- **Old behavior** (`cursor_mode == CurPressed`): if the grabber was
+  initiated by a held mouse button, `cursor_mode` kept whatever value
+  it had, and the pin block could fire unpredictably.
+- **New behavior** (`button_count > 0`): `button_count` stays at 0
+  throughout the grabber, so the pin block is bypassed for the whole
+  session. The cursor freely re-targets surfaces as it moves.
+
+This is the **correct** semantics: during a compositor-level grab the
+underlying Wayland pointer focus should follow the cursor, not be
+latched to a surface. Lua move/resize rely on cursor motion deltas,
+not on `wl_pointer.enter` delivery. No regressions expected.
 
 ## Generic follow-up (future commit, TBD)
 
