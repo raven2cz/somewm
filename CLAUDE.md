@@ -89,6 +89,15 @@ ninja -C build    # Direct meson build (faster iteration)
 
 ## Development & Testing Workflow
 
+### Agent bootstrap
+
+For AI-assisted sessions in this checkout, read this file first. It contains the
+fork-specific workflow, deploy/reload commands, nested compositor sandbox, and
+memory diagnostics.
+
+`AGENTS.md` is the equivalent bootstrap hint for Codex-style agents; keep both
+files aligned when workflow-critical commands change.
+
 ### Quick iteration cycle (no reboot)
 ```bash
 # 1. Edit code
@@ -117,35 +126,48 @@ ASAN dev build without SceneFX.
 
 ### Nested compositor sandbox (no reboot, limited fidelity)
 
+Use this when you need to run `somewm` inside the current Wayland session. It is
+the right workflow for quick MPV/client geometry checks, Lua IPC checks, and
+memory diagnostics without replacing the real session.
+
+```bash
+~/git/github/somewm/plans/scripts/somewm-sandbox.sh
+```
+
+The script prints the two values needed for follow-up commands:
+- `SOMEWM_SOCKET` - IPC socket for `somewm-client`
+- `WAYLAND_DISPLAY` - Wayland display for client apps inside the nested session
+
+Launch a client directly inside the nested compositor:
+```bash
+~/git/github/somewm/plans/scripts/somewm-sandbox.sh -- mpv --no-terminal /path/to/video.mp4
+```
+
+Or launch manually after the script prints the environment:
+```bash
+SOMEWM_SOCKET=/run/user/1000/somewm-sandbox-12345.sock somewm-client eval 'return #client.get()'
+WAYLAND_DISPLAY=wayland-1 mpv --no-terminal /path/to/video.mp4 &
+```
+
+For isolated upstream-style config instead of the live user config:
+```bash
+~/git/github/somewm/plans/scripts/somewm-sandbox.sh --test-config
+```
+
 **CRITICAL: Two different sockets exist — do NOT confuse them:**
-1. **IPC socket** (`SOMEWM_SOCKET=somewm-socket-test`) — for `somewm-client` commands
+1. **IPC socket** (`SOMEWM_SOCKET=...somewm-sandbox-*.sock`) — for `somewm-client` commands
 2. **Wayland display socket** (`WAYLAND_DISPLAY=wayland-N`) — for client apps, auto-created by wlroots
 
-**Step 1: Launch nested compositor**
+Manual equivalent, if the helper script is not available:
 ```bash
+SOCKET="$XDG_RUNTIME_DIR/somewm-sandbox-$$.sock"
 WLR_BACKENDS=wayland \
-SOMEWM_SOCKET=/run/user/1000/somewm-socket-test \
-/home/box/git/github/somewm/build/somewm -d 2>/tmp/somewm-nested-debug.log &
+SOMEWM_SOCKET="$SOCKET" \
+~/git/github/somewm/build-fx/somewm -d 2>/tmp/somewm-nested-debug.log &
 sleep 3
-SOMEWM_SOCKET=/run/user/1000/somewm-socket-test somewm-client ping
-```
-
-**Step 2: Discover the Wayland display socket**
-```bash
-ls /run/user/1000/wayland-*
-# Parent compositor uses wayland-0. Nested gets next number: wayland-1, wayland-2, etc.
-```
-
-**Step 3: Launch client apps (use WAYLAND_DISPLAY, NOT SOMEWM_SOCKET!)**
-```bash
-WAYLAND_DISPLAY=wayland-1 alacritty &
-WAYLAND_DISPLAY=wayland-1 mpv --no-terminal /path/to/video &
-# WRONG: WAYLAND_DISPLAY=somewm-socket-test alacritty  ← clients silently fail!
-```
-
-**Step 4: Verify via IPC**
-```bash
-SOMEWM_SOCKET=/run/user/1000/somewm-socket-test somewm-client eval 'return #client.get()'
+DISPLAY_NAME=$(SOMEWM_SOCKET="$SOCKET" somewm-client eval 'return os.getenv("WAYLAND_DISPLAY")')
+WAYLAND_DISPLAY="$DISPLAY_NAME" mpv --no-terminal /path/to/video.mp4 &
+SOMEWM_SOCKET="$SOCKET" somewm-client eval 'return #client.get()'
 ```
 
 - XWayland display: `somewm-client eval 'return os.getenv("DISPLAY")'` (will be different from parent, e.g. `:4`)
@@ -162,6 +184,73 @@ somewm-client exec somewm                              # hot-swap binary (CAREFU
 somewm-client restart                                  # restart with same binary
 ```
 **IPC syntax:** Single-line Lua only. Multi-line fails. Use `;` to chain statements.
+
+### Memory diagnostics
+
+somewm has explicit memory diagnostics for early leak tracking. Use these before
+assuming RSS growth is a compositor leak: wallpaper/tag-slide cache, NVIDIA,
+SceneFX, Cairo/Pango/font caches, and allocator high-water retention are all
+expected to keep memory resident.
+
+**Live one-shot snapshot:**
+```bash
+~/git/github/somewm/plans/scripts/somewm-memory-snapshot.sh
+~/git/github/somewm/plans/scripts/somewm-memory-snapshot.sh --tsv
+```
+
+The snapshot combines `/proc`, `smaps_rollup`, `pmap`, and `root.memory_stats(true)`.
+Key fields:
+- `rss_kb`, `pss_kb`, `private_dirty_kb`, `anonymous_kb` — host process memory
+- `drawable_shm_kb` / `drawable_shm_count` — live `memfd:drawable-shm` maps
+- `lua_bytes` — Lua heap after forced double GC
+- `wallpaper_estimated_bytes` — C-side wallpaper cache estimate
+- `drawable_surface_bytes`, `wibox_surface_bytes` — somewm-owned Cairo surfaces
+- `malloc_used_bytes`, `malloc_free_bytes`, `malloc_releasable_bytes` — glibc allocator view
+
+**Live trend/stress runner:**
+```bash
+# Idle stability sample
+~/git/github/somewm/plans/scripts/somewm-memory-trend.sh --idle 60
+
+# Tag-switch workload against the current session
+~/git/github/somewm/plans/scripts/somewm-memory-trend.sh --tag-switch 500
+
+# Reload leak check
+~/git/github/somewm/plans/scripts/somewm-memory-trend.sh --reload 5
+
+# Combined smoke test
+~/git/github/somewm/plans/scripts/somewm-memory-trend.sh --all
+```
+
+Results are written under `tests/bench/results/memory/YYYYMMDD-HHMMSS/` with
+`samples.tsv` and `summary.txt`. Treat monotonic growth as suspicious only when
+it remains after `root.memory_stats(true)` GC and is not explained by
+`wallpaper_estimated_bytes` or `drawable_shm_kb`.
+
+**Lua-side stats API:**
+```bash
+somewm-client eval 'local s=root.memory_stats(true); return s.lua_bytes'
+somewm-client eval 'local s=root.wallpaper_cache_stats(); return s.entries.." entries "..s.estimated_bytes.." bytes"'
+somewm-client eval 'local s=root.drawable_stats(); return s.surface_bytes'
+```
+
+`root.memory_stats(true)` forces two Lua GC passes before reporting. The API is
+read-only and intentionally coarse; it tracks somewm-owned buffers, not all
+driver or wlroots internals.
+
+**Tests:**
+```bash
+# Upstream-friendly compositor API coverage
+make test-one TEST=tests/test-memory-stats.lua
+
+# Fork-local CLI/script smoke test, no live compositor required
+~/git/github/somewm/plans/tests/test-memory-diagnostics.sh
+```
+
+**Upstream note:** The `root.memory_stats()`/`root.wallpaper_cache_stats()`
+introspection is potentially upstreamable as debug tooling. The live scripts in
+`plans/scripts/` are fork workflow tooling and may need to stay fork-only unless
+upstream asks for them.
 
 ### Log analysis
 ```bash
@@ -343,6 +432,9 @@ After editing, run `deploy.sh` to sync.
 - `plans/done/` - Archived completed plans and investigations
 - `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
 - `plans/scripts/start.sh` - Launch somewm with debug logging from TTY
+- `plans/scripts/somewm-sandbox.sh` - Launch nested/headless somewm sandbox for client and IPC debugging
+- `plans/scripts/somewm-memory-snapshot.sh` - One-shot live memory snapshot
+- `plans/scripts/somewm-memory-trend.sh` - Live memory trend/stress runner
 - `plans/scripts/somewm-debug-wrapper.sh` - Debug session wrapper with timestamped logs
 
 ## Reference Projects
