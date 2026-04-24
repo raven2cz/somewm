@@ -101,6 +101,7 @@ typedef struct {
 	uint32_t format;     /* DRM_FORMAT_ARGB8888 */
 	int width, height;
 	size_t stride;
+	size_t size;
 	bool accessed;       /* Track if currently being accessed */
 } DrawableShmBuffer;
 
@@ -110,7 +111,7 @@ drawable_shm_buffer_destroy(struct wlr_buffer *wlr_buffer)
 	DrawableShmBuffer *buffer = wl_container_of(wlr_buffer, buffer, base);
 
 	if (buffer->data) {
-		munmap(buffer->data, buffer->height * buffer->stride);
+		munmap(buffer->data, buffer->size);
 	}
 	if (buffer->fd >= 0) {
 		close(buffer->fd);
@@ -236,6 +237,7 @@ drawable_create_empty_buffer(int width, int height)
 	buffer->format = DRM_FORMAT_ARGB8888;
 	buffer->width = width;
 	buffer->height = height;
+	buffer->size = size;
 	buffer->accessed = false;
 
 	/* Initialize wlr_buffer */
@@ -313,6 +315,7 @@ drawable_create_buffer_from_data(int width, int height, const void *cairo_data, 
 	buffer->format = DRM_FORMAT_ARGB8888;
 	buffer->width = width;
 	buffer->height = height;
+	buffer->size = size;
 	buffer->accessed = false;
 
 	/* Initialize wlr_buffer */
