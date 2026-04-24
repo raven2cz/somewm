@@ -364,6 +364,20 @@ for f in "$SHELL_DIR/services/MemoryDetail.qml" \
 done
 pass "every Process in detail services wraps in timeout (safe SIGTERM)"
 
+# 6a. Central panel registry must keep the load-bearing asymmetry:
+# sidebar-left is in overlayPanels (scroll-guard fires) but NOT in
+# exclusivePanels (sidebar can coexist with dashboard or detail panels).
+# Regressing this silently would make every sidebar open close the
+# dashboard.
+awk '/readonly property var overlayPanels:/,/\]/' "$SHELL_DIR/core/Panels.qml" \
+    | grep -q '"sidebar-left"' \
+    || fail "Panels.qml: sidebar-left missing from overlayPanels"
+if awk '/readonly property var exclusivePanels:/,/\]/' "$SHELL_DIR/core/Panels.qml" \
+    | grep -q '"sidebar-left"' ; then
+    fail "Panels.qml: sidebar-left must NOT be in exclusivePanels (asymmetry)"
+fi
+pass "Panels.qml: overlay/exclusive asymmetry for sidebar-left preserved"
+
 # 6b. onDetailActiveChanged must force-stop every declared Process on
 # close. A regression would mean a slow du / journalctl keeps running
 # after the user closed the panel — the bug gemini flagged as CRITICAL
