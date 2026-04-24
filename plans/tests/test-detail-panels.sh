@@ -41,8 +41,17 @@ if command -v qmllint >/dev/null; then
         "$SHELL_DIR/modules/storage-detail/HotspotsSection.qml"
         "$SHELL_DIR/modules/storage-detail/TopDirsSection.qml"
         "$SHELL_DIR/modules/storage-detail/FooterActions.qml"
+        "$SHELL_DIR/modules/cpu-detail/CpuDetailPanel.qml"
+        "$SHELL_DIR/modules/cpu-detail/SystemSection.qml"
+        "$SHELL_DIR/modules/cpu-detail/CoresSection.qml"
+        "$SHELL_DIR/modules/cpu-detail/TopCpuProcessesSection.qml"
+        "$SHELL_DIR/modules/cpu-detail/GpuSection.qml"
+        "$SHELL_DIR/modules/cpu-detail/TopGpuProcessesSection.qml"
+        "$SHELL_DIR/modules/cpu-detail/FastfetchFooter.qml"
+        "$SHELL_DIR/modules/cpu-detail/FooterActions.qml"
         "$SHELL_DIR/services/MemoryDetail.qml"
         "$SHELL_DIR/services/StorageDetail.qml"
+        "$SHELL_DIR/services/CpuDetail.qml"
         "$SHELL_DIR/core/DetailController.qml"
         "$SHELL_DIR/core/Panels.qml"
         "$SHELL_DIR/shell.qml"
@@ -76,17 +85,23 @@ grep -q "^singleton MemoryDetail MemoryDetail\\.qml$" "$SHELL_DIR/services/qmldi
     || fail "services/qmldir: MemoryDetail"
 grep -q "^singleton StorageDetail StorageDetail\\.qml$" "$SHELL_DIR/services/qmldir" \
     || fail "services/qmldir: StorageDetail"
+grep -q "^singleton CpuDetail CpuDetail\\.qml$" "$SHELL_DIR/services/qmldir" \
+    || fail "services/qmldir: CpuDetail"
 grep -q "^singleton DetailController DetailController\\.qml$" "$SHELL_DIR/core/qmldir" \
     || fail "core/qmldir: DetailController"
 
-for m in memory-detail storage-detail; do
+for m in memory-detail storage-detail cpu-detail; do
     [[ -f "$SHELL_DIR/modules/$m/qmldir" ]] || fail "modules/$m/qmldir missing"
 done
 
 grep -q 'MemoryDetailPanel' "$SHELL_DIR/shell.qml" || fail "shell.qml does not load MemoryDetailPanel"
 grep -q 'StorageDetailPanel' "$SHELL_DIR/shell.qml" || fail "shell.qml does not load StorageDetailPanel"
+grep -q 'CpuDetailPanel' "$SHELL_DIR/shell.qml" || fail "shell.qml does not load CpuDetailPanel"
 grep -q 'DetailController._refresh' "$SHELL_DIR/shell.qml" \
     || fail "shell.qml does not kick DetailController"
+
+grep -q 'CpuDetail.detailActive' "$SHELL_DIR/core/DetailController.qml" \
+    || fail "DetailController: CpuDetail.detailActive not driven"
 
 grep -q 'toggleOnScreen' "$SHELL_DIR/core/Panels.qml" \
     || fail "Panels.qml: toggleOnScreen missing"
@@ -94,16 +109,22 @@ grep -q 'memory-detail' "$SHELL_DIR/core/Panels.qml" \
     || fail "Panels.qml: memory-detail not in anyOverlayOpen/exclusive"
 grep -q 'storage-detail' "$SHELL_DIR/core/Panels.qml" \
     || fail "Panels.qml: storage-detail not in anyOverlayOpen/exclusive"
+grep -q 'cpu-detail' "$SHELL_DIR/core/Panels.qml" \
+    || fail "Panels.qml: cpu-detail not in anyOverlayOpen/exclusive"
 
 grep -q 'detailPanel: "memory-detail"'  "$SHELL_DIR/modules/dashboard/PerformanceTab.qml" \
     || fail "PerformanceTab: gear not wired to memory-detail"
 grep -q 'detailPanel: "storage-detail"' "$SHELL_DIR/modules/dashboard/PerformanceTab.qml" \
     || fail "PerformanceTab: gear not wired to storage-detail"
+grep -q 'detailPanel: "cpu-detail"'     "$SHELL_DIR/modules/dashboard/PerformanceTab.qml" \
+    || fail "PerformanceTab: gear not wired to cpu-detail"
 
 grep -q 'toggleOnScreen' "$ONE_DIR/fishlive/components/memory.lua" \
     || fail "memory.lua: left-click not wired to toggleOnScreen"
 grep -q 'toggleOnScreen' "$ONE_DIR/fishlive/components/disk.lua" \
     || fail "disk.lua: left-click not wired to toggleOnScreen"
+grep -q 'toggleOnScreen' "$ONE_DIR/fishlive/components/cpu.lua" \
+    || fail "cpu.lua: left-click not wired to toggleOnScreen"
 
 pass "registration ok"
 
@@ -329,11 +350,13 @@ pass "MemoryDetail._expectedStatKeys matches test contract"
 echo "-- lifecycle timeout-wrapper invariant --"
 
 for f in "$SHELL_DIR/services/MemoryDetail.qml" \
-         "$SHELL_DIR/services/StorageDetail.qml"; do
+         "$SHELL_DIR/services/StorageDetail.qml" \
+         "$SHELL_DIR/services/CpuDetail.qml"; do
     # Extract each `Process { … }` block, then within each grab the first
     # `command: [ … ]` array and confirm argv[0] == "timeout". Skip blocks
-    # whose command starts empty (paccacheDryProc / paccacheRunProc rebuild
-    # their command at call-time in JS — those are audited manually below).
+    # whose command starts empty (paccacheDryProc / paccacheRunProc /
+    # CpuDetail.spawnProc rebuild their command at call-time in JS — those
+    # are audited manually below).
     awk '
         /^[[:space:]]*Process[[:space:]]*\{/ { depth=1; buf=""; next }
         depth > 0 {
@@ -383,13 +406,17 @@ pass "Panels.qml: overlay/exclusive asymmetry for sidebar-left preserved"
 # after the user closed the panel — the bug gemini flagged as CRITICAL
 # in round-1 review.
 for f in "$SHELL_DIR/services/MemoryDetail.qml" \
-         "$SHELL_DIR/services/StorageDetail.qml"; do
+         "$SHELL_DIR/services/StorageDetail.qml" \
+         "$SHELL_DIR/services/CpuDetail.qml"; do
     proc_ids=$(grep -oE 'id: [a-zA-Z]+Proc' "$f" | awk '{print $2}' | sort -u)
     handler=$(awk '/onDetailActiveChanged:/,/^    }$/' "$f")
     for pid in $proc_ids; do
         # paccacheRunProc is user-initiated (pkexec clean) — exempt from
         # force-stop. Panel close must not half-prune the package cache.
+        # CpuDetail.spawnProc is user-initiated (htop/btop/nvidia-smi) —
+        # same exemption: panel close must not kill a freshly-launched term.
         [[ "$pid" == "paccacheRunProc" ]] && continue
+        [[ "$pid" == "spawnProc" ]] && continue
         echo "$handler" | grep -q "${pid}.running = false" \
             || fail "$(basename "$f"): onDetailActiveChanged does not stop $pid on close"
     done
