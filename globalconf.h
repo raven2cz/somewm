@@ -25,6 +25,7 @@
 
 #include <lua.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <xkbcommon/xkbcommon.h>
 #include "common/array.h"
@@ -48,6 +49,9 @@ typedef struct wallpaper_cache_entry {
     struct wl_list link;
     char *path;                          /* Filepath (part of cache key) */
     int screen_index;                    /* Screen index (part of cache key) */
+    int width, height;                   /* Cached surface dimensions */
+    size_t cairo_bytes;                  /* CPU-side cairo image surface bytes */
+    size_t shm_bytes;                    /* drawable-shm buffer bytes */
     struct wlr_scene_buffer *scene_node; /* Positioned at screen coords, hidden when not active */
     cairo_surface_t *surface;            /* For getter compatibility */
 } wallpaper_cache_entry_t;
@@ -57,6 +61,17 @@ typedef struct wallpaper_cache_entry {
 
 /** Look up a cached wallpaper entry by path and screen index */
 wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
+
+/** Coarse live memory accounting for somewm-owned buffers.
+ * These counters intentionally track only allocations that somewm creates
+ * directly. They complement /proc smaps/PSS data and make leak checks
+ * attributable without changing runtime behaviour. */
+typedef struct MemoryStats {
+    size_t drawable_shm_bytes;
+    size_t drawable_shm_count;
+    size_t wibox_surface_bytes;
+    size_t wibox_count;
+} MemoryStats;
 
 /* Forward declare button types */
 typedef struct button_t button_t;
@@ -298,6 +313,9 @@ typedef struct
     /** True while hot-reload is tearing down/rebuilding the Lua state.
      *  Used to suppress expected warnings (e.g. stale object decrefs). */
     bool hot_reload_in_progress;
+
+    /* Live memory accounting exposed through root.memory_stats(). */
+    MemoryStats memory_stats;
 
     /* ========== WALLPAPER SUPPORT ========== */
 

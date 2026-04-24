@@ -13,6 +13,7 @@
 #include "../somewm_api.h"
 #include "../somewm_types.h"
 #include "../common/util.h"
+#include "../globalconf.h"
 
 #include <cairo.h>
 #include <wayland-server-core.h>
@@ -159,6 +160,8 @@ luaA_wibox_create(lua_State *L)
 		free(wb);
 		return luaL_error(L, "Failed to create Cairo surface");
 	}
+	globalconf.memory_stats.wibox_count++;
+	globalconf.memory_stats.wibox_surface_bytes += (size_t)wb->stride * (size_t)wb->height;
 
 	/* Create Cairo context */
 	wb->cr = cairo_create(wb->cairo_surface);
@@ -464,9 +467,16 @@ luaA_wibox_destroy(lua_State *L)
 		wb->cairo_surface = NULL;
 	}
 	if (wb->data) {
+		size_t data_size = (size_t)wb->stride * (size_t)wb->height;
+		if (globalconf.memory_stats.wibox_surface_bytes >= data_size)
+			globalconf.memory_stats.wibox_surface_bytes -= data_size;
+		else
+			globalconf.memory_stats.wibox_surface_bytes = 0;
 		free(wb->data);
 		wb->data = NULL;
 	}
+	if (globalconf.memory_stats.wibox_count > 0)
+		globalconf.memory_stats.wibox_count--;
 
 	/* Free the wibox itself */
 	free(wb);
