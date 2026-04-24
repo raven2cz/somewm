@@ -773,3 +773,288 @@ Each step is independently shippable — they all live behind the same
   don't fork them.
 - `plans/docs/memory-baseline.md` remains the written reference the
   panel points the user at.
+
+---
+
+## 13. Revisions — post-Codex gpt-5.5 review (2026-04-24)
+
+Codex reviewed §§3–11 and flagged several concrete issues. Verified
+against repo before accepting. The changes below supersede the matching
+earlier sections — read them as authoritative, not additive.
+
+### 13.1 Eval shape corrections (supersedes §4.2 `somewmProc`)
+
+**Verified on the live process:**
+
+- `somewm-client eval` prefixes output with `OK\n`. Any QS parser must
+  strip the first line / `OK` marker.
+- `root.memory_stats(true)` does **not** expose `rss_kb` or `pss_kb`. The
+  actual fields are:
+  `clients, drawable_shm_bytes, drawable_shm_count, drawables, drawins,
+  lua_bytes, malloc_{arena,free,releasable,used}_bytes, screens, tags,
+  wallpaper, wibox_count, wibox_surface_bytes`.
+  `wallpaper` is a nested table (`entries`, `estimated_bytes`,
+  `cairo_bytes`, `shm_bytes`, …); `drawables` is a nested table
+  (`surface_bytes`, …).
+- The snapshot script adds `rss_kb`/`pss_kb` from
+  `/proc/self/smaps_rollup`, not from the Lua API.
+
+**Corrected plan:**
+
+- `MemoryDetail.qml` reads somewm RSS/PSS from
+  `/proc/<somewm_pid>/smaps_rollup` itself. The pid is already known —
+  `Services.Compositor` owns it. (Fallback: resolve `pidof somewm` once
+  on service init; re-resolve if the read fails.)
+- The `somewm-client eval` call flattens the correct fields only:
+
+  ```lua
+  local ok,m = pcall(function() return root.memory_stats(true) end)
+  if not ok then return "error=memory_stats_failed" end
+  return string.format(
+    "lua_bytes=%d clients=%d drawable_shm_count=%d drawable_shm_bytes=%d " ..
+    "wibox_count=%d wibox_surface_bytes=%d " ..
+    "wallpaper_entries=%d wallpaper_estimated_bytes=%d " ..
+    "wallpaper_cairo_bytes=%d wallpaper_shm_bytes=%d " ..
+    "drawable_surface_bytes=%d " ..
+    "malloc_used_bytes=%d malloc_free_bytes=%d malloc_releasable_bytes=%d",
+    m.lua_bytes or 0, m.clients or 0,
+    m.drawable_shm_count or 0, m.drawable_shm_bytes or 0,
+    m.wibox_count or 0, m.wibox_surface_bytes or 0,
+    m.wallpaper and m.wallpaper.entries or 0,
+    m.wallpaper and m.wallpaper.estimated_bytes or 0,
+    m.wallpaper and m.wallpaper.cairo_bytes or 0,
+    m.wallpaper and m.wallpaper.shm_bytes or 0,
+    m.drawables and m.drawables.surface_bytes or 0,
+    m.malloc_used_bytes or 0, m.malloc_free_bytes or 0,
+    m.malloc_releasable_bytes or 0)
+  ```
+
+- QS-side parser: split stdout into lines, drop lines that equal `OK`
+  (first and, in the `ping` case, only line), then parse `k=v` tokens.
+  Mirror the parse loop already used by the snapshot TSV path.
+
+### 13.2 Race guard on long-running processes (supersedes §4.2 timer bodies)
+
+Every expensive process (`psProc`, `hotspotsProc`, `topDirsProc`,
+`topFilesProc`) must be skipped while already running:
+
+```qml
+onTriggered: if (!psProc.running) psProc.running = true
+```
+
+Otherwise a 5 s timer collides with a slow `/proc` scan on the user's
+machine. Also wrap the expensive shell one-liners in `timeout 4`
+(coreutils) so a hung read cannot wedge the service:
+
+```qml
+command: ["timeout", "4", "bash", "-c", "for d in /proc/[0-9]*; do …"]
+```
+
+### 13.3 PSS scan precision (supersedes §4.2 `psProc` shell)
+
+Codex is right that the draft read `smaps_rollup` twice. Single awk pass:
+
+```bash
+timeout 4 bash -c '
+for d in /proc/[0-9]*; do
+    pid=${d##*/}
+    [ -r "$d/smaps_rollup" ] || continue
+    read pss rss < <(awk "/^Pss:/ {p+=\$2} /^Rss:/ {r+=\$2}
+                           END {print p+0, r+0}" "$d/smaps_rollup")
+    name=$(tr -d "\0" <"$d/comm" 2>/dev/null || echo ?)
+    printf "%s\t%s\t%s\t%s\n" "$pss" "$rss" "$pid" "$name"
+done | sort -k1,1 -nr | head -15
+'
+```
+
+Also relabel §4.4 row: **"kernel ground truth for *readable* processes"**.
+Add a small footer hint in the UI when any pid scan failed (e.g.
+`hidepid=2`), so the user knows the list isn't exhaustive.
+
+### 13.4 Multi-monitor: pin to the wibar's screen (supersedes §3.2)
+
+The current wibar click sends a plain `toggle memory-detail`, which means
+the panel opens on whatever screen `Services.Compositor.isActiveScreen`
+says is active — not necessarily the screen the user clicked on.
+
+**Resolution:** add `toggleOnScreen(name: string, screen: string)` to the
+`somewm-shell:panels` IpcHandler. The Lua click captures `mouse.screen`
+(or `screen` via the `awful.button` callback signature) and sends:
+
+```lua
+widget:buttons(gears.table.join(
+    awful.button({}, 1, function()
+        local s = awful.screen.focused()  -- wibar click happens on focused screen
+        local name = s and (s.name or tostring(s.index)) or ""
+        awful.spawn({"qs", "ipc", "-c", "somewm", "call",
+            "somewm-shell:panels", "toggleOnScreen",
+            "memory-detail", name})
+    end)
+))
+```
+
+`Core.Panels` stores `panelPin[name] = screenName`. The
+`MemoryDetailPanel` `Variants` instance prefers `modelData.name === pin`
+when pin is set, falling back to `isActiveScreen` otherwise. For the
+dashboard gear click we keep the plain `toggle(name)` path — that click
+happens inside the dashboard, which is already screen-pinned by its own
+logic, so the detail panel inherits the same screen.
+
+### 13.5 External launches (supersedes §5.2 `openBaobab`/`openFilelight`)
+
+- `Qt.resolvedUrl("~")` does not expand `$HOME`. Wrong API.
+- `Process` has `startDetached()`, not a `detached` property.
+
+Use `Quickshell.execDetached` with argv list + `Quickshell.env("HOME")`:
+
+```qml
+function openBaobab()    { Quickshell.execDetached(["baobab",    "/"]) }
+function openFilelight() {
+    var home = Quickshell.env("HOME") || "."
+    Quickshell.execDetached(["filelight", home])
+}
+```
+
+Matches the pattern already used in `Wallpapers.qml` / `Portraits.qml`.
+
+### 13.6 WlrLayershell import (adds to §4.3)
+
+`MemoryDetailPanel.qml` and `StorageDetailPanel.qml` must import
+`Quickshell.Wayland` (not just `Quickshell`) for `WlrLayershell`,
+`WlrLayer`, `WlrKeyboardFocus`. `WeatherPanel.qml:4` does this; copying
+the header verbatim is the safest move.
+
+### 13.7 paccache flow tightening (supersedes §5.3)
+
+- Drop the `keep 0` button from v1. Ship `keep 2` only.
+- Use absolute paths in the argv (`/usr/bin/pkexec`, `/usr/bin/paccache`)
+  to sidestep any weird `$PATH` in the QS environment.
+- Treat three distinct states in UI: polkit-not-installed (disable button
+  with tooltip), auth-cancelled (snackbar "Cancelled, no changes"),
+  auth-succeeded (snackbar "Removed N packages, freed X MiB").
+- Button copy: **"Clean old cache (keep 2) — requires admin approval"**.
+  Not "polkit prompt".
+
+### 13.8 Overlay stacking decision (closes §3.3)
+
+**Exclusive**, per Codex. Opening a detail panel closes
+`dashboard` / `wallpapers` / `weather` / `ai-chat`. No "Esc returns to
+dashboard" promise — v1 Esc just closes the detail panel, user re-opens
+the dashboard manually.
+
+Rationale: we already have `focusable: true` on both weather and the new
+panels. Two simultaneous `WlrKeyboardFocus.Exclusive` layer surfaces are
+a bug factory — easier to enforce exclusivity than to build an overlay
+stack.
+
+### 13.9 Trend sparkline rendering (supersedes §4.1 "Trend" and §10.4)
+
+`components/Graph.qml` supports a single series. Don't fake a
+three-series legend over one array — render three small graphs
+side-by-side (stacked Column inside the `TrendSection`), one each for
+RSS, Lua, wallpaper. Same height, shared x-axis, labelled.
+
+### 13.10 Storage mount parse (supersedes §5.1 mounts bullet)
+
+`df --output` is fragile for mount targets with spaces and pulls odd
+mounts (`efivarfs`, autofs, gvfs). Switch to `findmnt -J -b --real`
+(already installed on Arch, verified):
+
+```qml
+Process {
+    id: mountsProc
+    command: ["timeout", "3", "findmnt", "-J", "-b", "--real",
+              "-o", "SOURCE,TARGET,FSTYPE,SIZE,USED,AVAIL,USE%"]
+    stdout: StdioCollector { onStreamFinished: root._parseMounts(text) }
+}
+```
+
+`timeout 3` guards against NFS/SSHFS stalls. JSON output parses cleanly
+via `JSON.parse()` — no awk/regex. For btrfs specifically, collapse rows
+by SOURCE device: one header row per pool, subvolumes (same SOURCE,
+different TARGET) shown as expandable children.
+
+Label top dirs/files as **"logical size estimate"** — on btrfs with
+reflinks/snapshots, `du` does not report "reclaimable bytes".
+
+### 13.11 UX missing pieces (adds to §6)
+
+Added explicitly to the design:
+
+- Per-section loading skeleton while the first process completes.
+- Per-section error state with icon + short message + "Retry".
+- Empty state for each section ("No hotspots found", "No files > 256
+  MiB in $HOME").
+- Stale-timestamp footer ("Updated 12 s ago") when a timer is paused.
+- Disabled buttons with tooltip when a tool is missing (flatpak, duf).
+- Panel `implicitHeight` is a cap, not a hard number. Inner
+  `ScrollArea` handles overflow so content decides the true height up to
+  `Math.min(720, screen.height - 120)`.
+
+### 13.12 Implementation order (supersedes §11)
+
+Codex pushed back: `Panels.qml` registration isn't a blocker, services
+can come first. New order:
+
+1. `services/MemoryDetail.qml` — `/proc/meminfo` only, with
+   `detailActive` gate and full parser. Stand-alone testable.
+2. `services/StorageDetail.qml` — same shape, `findmnt` only.
+3. `modules/memory-detail/MemoryDetailPanel.qml` shell +
+   `SystemOverviewSection`. Wire via a **single controller outside
+   `Variants`** — a top-level `Connections { target: Core.Panels; ... }`
+   in `shell.qml` or a new `core/DetailController.qml`. Not per-screen
+   setters, which would have each `Variants` instance fighting for the
+   singleton.
+4. `core/Panels.qml` + `shell.qml` — register names, load modules.
+5. Dashboard gear buttons (`PerformanceTab.qml`).
+6. Extend `MemoryDetail` with `somewm-client eval` path and
+   `SomewmInternalsSection`.
+7. PSS top-processes scanner + `TopProcessesSection`.
+8. Trend ring + three small `Graph.qml` instances + `TrendSection`.
+9. FooterActions (GC, copy, open baseline) for Memory.
+10. Remaining Storage sections (hotspots, top dirs, top files, paccache
+    two-click flow).
+11. Lua wibar left-click bindings (`memory.lua`, `disk.lua`) +
+    `toggleOnScreen` IPC extension.
+12. Testing matrix (§8), deploy, reload.
+
+Each step shippable on its own; half-built sections just don't render.
+
+### 13.13 v1 / v2 split (new — adds to §9)
+
+**v1 (ship):**
+
+Memory detail:
+- System overview (`/proc/meminfo`)
+- somewm internals (corrected eval)
+- PSS top processes
+- In-memory trend (5 min × 5 s)
+- Footer: Force GC, Copy snapshot, Open baseline
+
+Storage detail:
+- Mounts (via `findmnt`)
+- Arch hotspots (pacman cache, journald, coredumps, AUR cache)
+- Top-level `$HOME` dirs
+- Pacman cache dry-run + keep-2 clean (with polkit)
+- Launchers: baobab, filelight
+
+Triggers:
+- Gear button on Memory + Storage `GaugeCard`
+- Left-click on Lua wibar `memory` + `disk` widgets
+- `toggleOnScreen` IPC from wibar
+
+**v2 (deferred):**
+
+- `paccache -rk0` aggressive button
+- Biggest-files scan (`find ~ -size +256M`)
+- Persistent trend (CSV on disk)
+- User-configurable hotspot list
+- Network mount special handling
+- Deep btrfs subvolume explorer (just collapse visually in v1)
+- Multi-series in a single `Graph.qml` instance
+
+### 13.14 Codex review verdict
+
+Direction OK. Several integration details were off — all fixable before
+touching code. No fundamental architecture change required. Plan is
+ready for implementation in the order listed in §13.12.
