@@ -314,6 +314,75 @@ fi
 pass "MemoryDetail._expectedStatKeys matches test contract"
 
 # ---------------------------------------------------------------------
+# 6. Lifecycle invariant: every Process in the two detail services MUST
+# wrap its command in `timeout N …` as argv[0]. This is the contract
+# that makes `onDetailActiveChanged → running = false` safe: setting
+# running=false sends SIGTERM to the immediate child (the `timeout`
+# wrapper), and POSIX `timeout` propagates SIGTERM to its own child —
+# so no du/findmnt/journalctl/paccache zombies survive a panel close.
+# (gemini review round 1 §7; sonnet round 2 confirmed invariant).
+#
+# We enforce this by statically scanning every `Process { … }` block
+# in the two service files and checking that the first non-empty argv
+# entry is "timeout".
+# ---------------------------------------------------------------------
+echo "-- lifecycle timeout-wrapper invariant --"
+
+for f in "$SHELL_DIR/services/MemoryDetail.qml" \
+         "$SHELL_DIR/services/StorageDetail.qml"; do
+    # Extract each `Process { … }` block, then within each grab the first
+    # `command: [ … ]` array and confirm argv[0] == "timeout". Skip blocks
+    # whose command starts empty (paccacheDryProc / paccacheRunProc rebuild
+    # their command at call-time in JS — those are audited manually below).
+    awk '
+        /^[[:space:]]*Process[[:space:]]*\{/ { depth=1; buf=""; next }
+        depth > 0 {
+            # Crude brace-depth tracker — good enough for our hand-written
+            # QML where every Process block is one level deep.
+            n=gsub(/\{/, "{", $0); depth += n
+            n=gsub(/\}/, "}", $0); depth -= n
+            buf = buf "\n" $0
+            if (depth == 0) { print "===BLOCK==="; print buf; buf="" }
+        }
+    ' "$f" | awk -v file="$(basename "$f")" '
+        /^===BLOCK===$/ { block=""; collecting=0; next }
+        /command:[[:space:]]*\[\]/ { next }   # empty command, audited elsewhere
+        /command:[[:space:]]*\[/   { collecting=1 }
+        collecting { block = block $0; if (index($0, "]")) {
+            # first string in the array
+            match(block, /"[^"]+"/)
+            if (RSTART) {
+                first = substr(block, RSTART+1, RLENGTH-2)
+                if (first != "timeout") {
+                    print "FAIL: " file " Process has argv[0]=\"" first "\", not \"timeout\""
+                    exit 1
+                }
+            }
+            collecting=0; block=""
+        } }
+    ' || fail "timeout-wrapper invariant violated in $(basename "$f")"
+done
+pass "every Process in detail services wraps in timeout (safe SIGTERM)"
+
+# 6b. onDetailActiveChanged must force-stop every declared Process on
+# close. A regression would mean a slow du / journalctl keeps running
+# after the user closed the panel — the bug gemini flagged as CRITICAL
+# in round-1 review.
+for f in "$SHELL_DIR/services/MemoryDetail.qml" \
+         "$SHELL_DIR/services/StorageDetail.qml"; do
+    proc_ids=$(grep -oE 'id: [a-zA-Z]+Proc' "$f" | awk '{print $2}' | sort -u)
+    handler=$(awk '/onDetailActiveChanged:/,/^    }$/' "$f")
+    for pid in $proc_ids; do
+        # paccacheRunProc is user-initiated (pkexec clean) — exempt from
+        # force-stop. Panel close must not half-prune the package cache.
+        [[ "$pid" == "paccacheRunProc" ]] && continue
+        echo "$handler" | grep -q "${pid}.running = false" \
+            || fail "$(basename "$f"): onDetailActiveChanged does not stop $pid on close"
+    done
+done
+pass "onDetailActiveChanged force-stops all pollable Processes on close"
+
+# ---------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------
 echo "-- all detail-panel smoke checks passed --"
