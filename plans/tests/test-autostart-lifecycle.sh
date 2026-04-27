@@ -134,14 +134,14 @@ eval_lua() {
 }
 
 # IPC accepts connections before luaA_parserc() finishes, so wait until the
-# rc.lua fixture has run autostart.start_all() and the two entries appear
+# rc.lua fixture has run autostart.start_all() and all three entries appear
 # in the status snapshot.
 for _ in $(seq 1 100); do
     n=$(eval_lua "local ok,m=pcall(require,'fishlive.autostart'); if not ok then return '0' end; local s=m.status(); local c=0; for _ in pairs(s.entries) do c=c+1 end; return tostring(c)" || true)
-    [ "$n" = "2" ] && break
+    [ "$n" = "3" ] && break
     sleep 0.1
 done
-if [ "$n" != "2" ]; then
+if [ "$n" != "3" ]; then
     echo "Error: timeout waiting for rc.lua to register autostart entries (got n='$n')" >&2
     exit 1
 fi
@@ -200,6 +200,12 @@ echo "test: lifecycle-fail reaches failed (oneshot, retries=1)"
 state=$(wait_for_state "lifecycle-fail" "failed" 50)
 require_eq "lifecycle-fail state=failed" "failed" "$state"
 
+echo "test: lifecycle-success reaches done (oneshot exit=0 launcher contract)"
+state=$(wait_for_state "lifecycle-success" "done" 50)
+require_eq "lifecycle-success state=done" "done" "$state"
+exit_code=$(eval_lua "return tostring((require('fishlive.autostart').status().entries['lifecycle-success'] or {}).exit_code or 'nil')")
+require_eq "lifecycle-success exit_code=0" "0" "$exit_code"
+
 echo "test: stop() transitions running -> pending and SIGTERMs the pid"
 eval_lua "require('fishlive.autostart').stop('lifecycle-sleep'); return 'ok'" >/dev/null
 state=$(eval_lua "return (require('fishlive.autostart').status().entries['lifecycle-sleep'] or {}).state or 'missing'")
@@ -224,12 +230,12 @@ eval_lua "return tostring(require('fishlive.autostart').restart('lifecycle-fail'
 state=$(wait_for_state "lifecycle-fail" "failed" 50)
 require_eq "lifecycle-fail restart -> failed" "failed" "$state"
 
-echo "test: status() lists both registered entries"
+echo "test: status() lists all three registered entries"
 n=$(eval_lua "local s=require('fishlive.autostart').status(); local n=0; for _ in pairs(s.entries) do n=n+1 end; return tostring(n)")
-require_eq "entries count" "2" "$n"
+require_eq "entries count" "3" "$n"
 
 echo "test: list() returns names in registration order"
 order=$(eval_lua "return table.concat(require('fishlive.autostart').list(), ',')")
-require_eq "registration order" "lifecycle-sleep,lifecycle-fail" "$order"
+require_eq "registration order" "lifecycle-sleep,lifecycle-fail,lifecycle-success" "$order"
 
 echo "PASS"

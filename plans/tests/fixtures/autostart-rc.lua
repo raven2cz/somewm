@@ -63,6 +63,18 @@ autostart.add{
 	timeout = 5,
 }
 
+-- Launcher contract: oneshot exits 0 within milliseconds. The entry
+-- must land in `done`, NOT `failed` (regression from synology-drive bug
+-- where exit=0 was misclassified as a crash).
+autostart.add{
+	name    = "lifecycle-success",
+	cmd     = { "/bin/true" },
+	when    = { "ready::somewm" },
+	mode    = "oneshot",
+	delay   = 0,
+	timeout = 5,
+}
+
 autostart.start_all()
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80
