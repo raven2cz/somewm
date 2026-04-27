@@ -63,6 +63,7 @@ Item {
                 usage: Services.SystemStats.cpuPercent / 100.0
                 temperature: Services.SystemStats.cpuTemp
                 accentColor: Core.Theme.widgetCpu
+                detailPanel: "cpu-detail"
             }
         }
 
@@ -80,6 +81,7 @@ Item {
                 percentage: Services.SystemStats.memPercent / 100.0
                 subtitle: Services.SystemStats.memUsedGB.toFixed(1) + " / " + Services.SystemStats.memTotalGB.toFixed(0) + " GiB"
                 accentColor: Core.Theme.widgetMemory
+                detailPanel: "memory-detail"
             }
 
             GaugeCard {
@@ -91,6 +93,7 @@ Item {
                 percentage: Services.SystemStats.diskPercent / 100.0
                 subtitle: Services.SystemStats.diskUsedGB + " / " + Services.SystemStats.diskTotalGB + " GiB"
                 accentColor: Core.Theme.widgetDisk
+                detailPanel: "storage-detail"
             }
         }
     }
@@ -108,6 +111,9 @@ Item {
         property real usage: 0
         property real temperature: 0
         property color accentColor: Core.Theme.accent
+        // When non-empty, shows a gear that toggles the named detail panel
+        // (same idiom as GaugeCard below).
+        property string detailPanel: ""
         readonly property real maxTemp: 100
         readonly property real tempProgress: Math.min(1, Math.max(0, temperature / maxTemp))
 
@@ -175,6 +181,26 @@ Item {
                 font.pixelSize: Math.round(12 * sp)
                 color: Core.Theme.fgMain
                 elide: Text.ElideRight
+            }
+
+            Text {
+                visible: heroCard.detailPanel !== ""
+                text: "\ue8b8"   // settings
+                font.family: Core.Theme.fontIcon
+                font.pixelSize: Math.round(16 * sp)
+                color: heroGearMouse.containsMouse ? heroCard.accentColor
+                                                   : Core.Theme.fgDim
+                Behavior on color {
+                    ColorAnimation { duration: Core.Anims.duration.fast }
+                }
+                MouseArea {
+                    id: heroGearMouse
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Core.Panels.toggle(heroCard.detailPanel)
+                }
             }
         }
 
@@ -285,6 +311,8 @@ Item {
         property real percentage: 0
         property string subtitle
         property color accentColor: Core.Theme.accent
+        // When non-empty, shows a gear that toggles the named detail panel.
+        property string detailPanel: ""
 
         property real animatedPercentage: 0
 
@@ -300,7 +328,7 @@ Item {
             anchors.margins: padLg
             spacing: Math.round(6 * sp)
 
-            // Header: icon + title
+            // Header: icon + title + (optional) gear
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Math.round(8 * sp)
@@ -319,6 +347,26 @@ Item {
                     font.pixelSize: Math.round(12 * sp)
                     color: Core.Theme.fgMain
                     elide: Text.ElideRight
+                }
+
+                Text {
+                    visible: gaugeCard.detailPanel !== ""
+                    text: "\ue8b8"   // settings
+                    font.family: Core.Theme.fontIcon
+                    font.pixelSize: Math.round(16 * sp)
+                    color: gearMouse.containsMouse ? gaugeCard.accentColor
+                                                    : Core.Theme.fgDim
+                    Behavior on color {
+                        ColorAnimation { duration: Core.Anims.duration.fast }
+                    }
+                    MouseArea {
+                        id: gearMouse
+                        anchors.fill: parent
+                        anchors.margins: -6
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Core.Panels.toggle(gaugeCard.detailPanel)
+                    }
                 }
             }
 

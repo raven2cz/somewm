@@ -1,0 +1,6 @@
+MemoryDetailPanel MemoryDetailPanel.qml
+SystemOverviewSection SystemOverviewSection.qml
+SomewmInternalsSection SomewmInternalsSection.qml
+TopProcessesSection TopProcessesSection.qml
+TrendSection TrendSection.qml
+FooterActions FooterActions.qml

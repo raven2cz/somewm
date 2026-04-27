@@ -11,6 +11,9 @@ import "modules/controlpanel" as ControlPanelModule
 import "modules/dock" as DockModule
 import "modules/hotedges" as HotEdgesModule
 import "modules/sidebar-left" as SidebarLeftModule
+import "modules/memory-detail" as MemoryDetailModule
+import "modules/storage-detail" as StorageDetailModule
+import "modules/cpu-detail" as CpuDetailModule
 
 ShellRoot {
     // Dashboard — Caelestia-style overlay with border strip + panel
@@ -58,6 +61,20 @@ ShellRoot {
         sourceComponent: Component { SidebarLeftModule.SidebarLeft {} }
     }
 
+    // Memory / Storage detail overlay panels (dashboard gear + wibar left-click)
+    Modules.ModuleLoader {
+        moduleName: "memory-detail"
+        sourceComponent: Component { MemoryDetailModule.MemoryDetailPanel {} }
+    }
+    Modules.ModuleLoader {
+        moduleName: "storage-detail"
+        sourceComponent: Component { StorageDetailModule.StorageDetailPanel {} }
+    }
+    Modules.ModuleLoader {
+        moduleName: "cpu-detail"
+        sourceComponent: Component { CpuDetailModule.CpuDetailPanel {} }
+    }
+
     // Force NotifStore singleton instantiation at shell startup so its
     // IpcHandler (somewm-shell:notifications) registers even when no
     // consumer panel is visible yet. Without this, the handler is lazy
@@ -65,5 +82,11 @@ ShellRoot {
     // returns "Target not found" until the sidebar/dashboard is opened.
     // A method call is required — property access gets optimized away
     // by the JS engine and leaves the singleton uninstantiated.
-    Component.onCompleted: Core.NotifStore.refresh()
+    // Also kick DetailController so its Panels listener is active from
+    // the start (its first _refresh() syncs MemoryDetail/StorageDetail
+    // `.detailActive` flags).
+    Component.onCompleted: {
+        Core.NotifStore.refresh()
+        Core.DetailController._refresh()
+    }
 }
