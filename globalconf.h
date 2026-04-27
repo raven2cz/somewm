@@ -62,6 +62,10 @@ typedef struct wallpaper_cache_entry {
 /** Look up a cached wallpaper entry by path and screen index */
 wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
 
+/** Whether @entry is currently displayed on any screen (eviction guard).
+ * Defined in root.c; exported for somewm_memory.c stats reporting. */
+bool wallpaper_cache_entry_is_current(wallpaper_cache_entry_t *entry);
+
 /** Coarse live memory accounting for somewm-owned buffers.
  * These counters intentionally track only allocations that somewm creates
  * directly. They complement /proc smaps/PSS data and make leak checks
@@ -314,7 +318,7 @@ typedef struct
      *  Used to suppress expected warnings (e.g. stale object decrefs). */
     bool hot_reload_in_progress;
 
-    /* Live memory accounting exposed through root.memory_stats(). */
+    /* Live memory accounting exposed through somewm.memory.stats(). */
     MemoryStats memory_stats;
 
     /** Compositor readiness milestones, set by the C side once and re-emitted

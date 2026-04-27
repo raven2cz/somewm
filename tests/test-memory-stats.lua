@@ -1,12 +1,17 @@
 ---------------------------------------------------------------------------
--- Test: root memory diagnostics API
+-- Test: somewm.memory diagnostics API
 --
 -- Verifies the read-only memory stats helpers used by leak diagnostics.
+-- The API previously lived under root.* and was moved to somewm.memory.*
+-- per issue #508 review.
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
 local awful = require("awful")
 local wibox = require("wibox")
+
+local memory = require("somewm").memory or somewm and somewm.memory
+assert(memory, "somewm.memory namespace not available — C setup missing?")
 
 local test_wibox = nil
 local before = nil
@@ -17,7 +22,7 @@ local function assert_number(tbl, key)
 end
 
 local function assert_memory_stats_shape(stats)
-    assert(type(stats) == "table", "root.memory_stats() should return a table")
+    assert(type(stats) == "table", "somewm.memory.stats() should return a table")
 
     for _, key in ipairs({
         "lua_bytes",
@@ -68,27 +73,27 @@ end
 
 local steps = {
     function()
-        assert(type(root.memory_stats) == "function",
-            "root.memory_stats should be available")
-        assert(type(root.wallpaper_cache_stats) == "function",
-            "root.wallpaper_cache_stats should be available")
-        assert(type(root.drawable_stats) == "function",
-            "root.drawable_stats should be available")
+        assert(type(memory.stats) == "function",
+            "somewm.memory.stats should be available")
+        assert(type(memory.wallpaper_cache) == "function",
+            "somewm.memory.wallpaper_cache should be available")
+        assert(type(memory.drawables) == "function",
+            "somewm.memory.drawables should be available")
 
-        before = root.memory_stats(true)
+        before = memory.stats(true)
         assert_memory_stats_shape(before)
 
-        local wallpaper = root.wallpaper_cache_stats(true)
+        local wallpaper = memory.wallpaper_cache(true)
         assert(type(wallpaper) == "table",
-            "root.wallpaper_cache_stats(true) should return a table")
+            "somewm.memory.wallpaper_cache(true) should return a table")
         assert_number(wallpaper, "entries")
         assert_number(wallpaper, "max_entries")
         assert(type(wallpaper.items) == "table",
             "detailed wallpaper stats should include items table")
 
-        local drawables = root.drawable_stats()
+        local drawables = memory.drawables()
         assert(type(drawables) == "table",
-            "root.drawable_stats() should return a table")
+            "somewm.memory.drawables() should return a table")
         assert_number(drawables, "surface_bytes")
 
         return true
@@ -108,7 +113,7 @@ local steps = {
     end,
 
     function()
-        local after = root.memory_stats(true)
+        local after = memory.stats(true)
         assert_memory_stats_shape(after)
         assert(after.drawins >= before.drawins + 1,
             "creating a wibox should add a drawin")
@@ -128,7 +133,7 @@ local steps = {
         collectgarbage("collect")
         collectgarbage("collect")
 
-        local stats = root.memory_stats(true)
+        local stats = memory.stats(true)
         assert_memory_stats_shape(stats)
         return true
     end,

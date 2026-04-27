@@ -75,13 +75,13 @@ round-trip.
 
 This is a conscious design tradeoff, not a leak. The memory pattern is
 stable: counter values agree across `/proc`, pmap, and the API, and
-`root.memory_stats(true)` trend stays flat under idle / tag-switch /
+`somewm.memory.stats(true)` trend stays flat under idle / tag-switch /
 reload workloads (see `plans/scripts/somewm-memory-trend.sh`).
 
 ## On Lua GC
 
 Lua has a fully functional incremental GC. `collectgarbage("collect")`
-or `root.memory_stats(true)` (double pass) reliably drops `lua_bytes`
+or `somewm.memory.stats(true)` (double pass) reliably drops `lua_bytes`
 to the live set (currently ~7.8 MiB).
 
 The GC only reclaims **Lua-allocated** objects: tables, strings,
@@ -98,13 +98,13 @@ Consequence for leak hunting: `lua_bytes` is almost always a small
 fraction of RSS. A growing `lua_bytes` is a Lua leak; a growing
 `drawable_shm_bytes` / `wibox_surface_bytes` with stable `lua_bytes`
 is a C-side leak the GC cannot help with. The counters in
-`root.memory_stats()` let you tell the two apart.
+`somewm.memory.stats()` let you tell the two apart.
 
 ## Measurement toolchain
 
 Three layers, used together. Each one answers a different question.
 
-### Layer 1 — `root.memory_stats()` (Lua-side API, process-local)
+### Layer 1 — `somewm.memory.stats()` (Lua-side API, process-local)
 
 Cheapest probe. Runs inside the compositor, returns a table. Pass
 `true` to force a double Lua GC before sampling, so the number
@@ -112,19 +112,19 @@ reflects the live set, not transient allocations.
 
 ```bash
 # Lua heap after forced GC
-somewm-client eval 'local s = root.memory_stats(true); return s.lua_bytes'
+somewm-client eval 'local s = somewm.memory.stats(true); return s.lua_bytes'
 
 # Wallpaper cache summary
-somewm-client eval 'local s = root.wallpaper_cache_stats(); \
+somewm-client eval 'local s = somewm.memory.wallpaper_cache(); \
     return s.entries.." entries, "..s.estimated_bytes.." bytes"'
 
 # Per-entry wallpaper breakdown (path, screen, dimensions, bytes)
-somewm-client eval 'local s = root.wallpaper_cache_stats(true); \
+somewm-client eval 'local s = somewm.memory.wallpaper_cache(true); \
     for i, it in ipairs(s.items) do print(i, it.path, it.screen_index, \
     it.width, it.height, it.cairo_bytes, it.shm_bytes, it.current) end'
 
 # Drawable surface accounting
-somewm-client eval 'local s = root.drawable_stats(); return s.surface_bytes'
+somewm-client eval 'local s = somewm.memory.drawables(); return s.surface_bytes'
 ```
 
 Read-only. Counter values come from structs updated at create/destroy
@@ -185,7 +185,7 @@ plans/scripts/somewm-memory-trend.sh --reload 5
 plans/scripts/somewm-memory-trend.sh --all
 ```
 
-The script calls `collectgarbage(); collectgarbage(); root.memory_stats(true)`
+The script calls `collectgarbage(); collectgarbage(); somewm.memory.stats(true)`
 between samples so growth is not confused with transient allocations.
 `summary.txt` reports deltas in MiB for RSS, PSS, Lua, wallpaper, and
 drawable-shm.

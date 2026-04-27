@@ -309,6 +309,7 @@ add_project_arguments(
 somewm_sources = [
   'somewm.c',
   'somewm_api.c',
+  'somewm_memory.c',
   'xwayland.c',
   'protocols.c',
   'monitor.c',

@@ -42,9 +42,6 @@
 #include <drm_fourcc.h>
 #include <string.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#ifdef __GLIBC__
-#include <malloc.h>
-#endif
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
@@ -810,8 +807,9 @@ static int wallpaper_cache_count(void)
 	return count;
 }
 
-/** Check if entry is currently displayed on any screen */
-static bool wallpaper_cache_entry_is_current(wallpaper_cache_entry_t *entry)
+/** Check if entry is currently displayed on any screen.
+ * Exported so somewm_memory.c can reuse it for wallpaper cache stats. */
+bool wallpaper_cache_entry_is_current(wallpaper_cache_entry_t *entry)
 {
 	for (int i = 0; i < WALLPAPER_MAX_SCREENS; i++) {
 		if (globalconf.current_wallpaper_per_screen[i] == entry)
@@ -2135,189 +2133,11 @@ luaA_root_wp_overlay_destroy(lua_State *L)
 	return 0;
 }
 
-static size_t
-cairo_image_surface_bytes(cairo_surface_t *surface)
-{
-	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS ||
-			cairo_surface_get_type(surface) != CAIRO_SURFACE_TYPE_IMAGE)
-		return 0;
-	return (size_t)cairo_image_surface_get_stride(surface) *
-		(size_t)cairo_image_surface_get_height(surface);
-}
-
-static void
-lua_set_size_field(lua_State *L, const char *key, size_t value)
-{
-	lua_pushinteger(L, (lua_Integer)value);
-	lua_setfield(L, -2, key);
-}
-
-static void
-lua_set_int_field(lua_State *L, const char *key, int value)
-{
-	lua_pushinteger(L, value);
-	lua_setfield(L, -2, key);
-}
-
-static void
-push_wallpaper_cache_stats(lua_State *L, bool details)
-{
-	wallpaper_cache_entry_t *entry;
-	int count = 0, current = 0;
-	size_t cairo_bytes = 0, shm_bytes = 0;
-
-	lua_newtable(L);
-
-	if (globalconf.wallpaper_cache.next) {
-		wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
-			count++;
-			if (wallpaper_cache_entry_is_current(entry))
-				current++;
-			cairo_bytes += entry->cairo_bytes ? entry->cairo_bytes :
-				cairo_image_surface_bytes(entry->surface);
-			shm_bytes += entry->shm_bytes;
-		}
-	}
-
-	lua_set_int_field(L, "entries", count);
-	lua_set_int_field(L, "current_entries", current);
-	lua_set_int_field(L, "max_entries", WALLPAPER_CACHE_MAX);
-	lua_set_size_field(L, "cairo_bytes", cairo_bytes);
-	lua_set_size_field(L, "shm_bytes", shm_bytes);
-	lua_set_size_field(L, "estimated_bytes", cairo_bytes + shm_bytes);
-	lua_set_size_field(L, "current_wallpaper_bytes",
-		cairo_image_surface_bytes(globalconf.wallpaper));
-
-	if (details) {
-		int idx = 1;
-		lua_createtable(L, count, 0);
-		if (globalconf.wallpaper_cache.next) {
-			wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
-				lua_createtable(L, 0, 8);
-				lua_pushstring(L, entry->path ? entry->path : "");
-				lua_setfield(L, -2, "path");
-				lua_set_int_field(L, "screen_index", entry->screen_index + 1);
-				lua_set_int_field(L, "width", entry->width);
-				lua_set_int_field(L, "height", entry->height);
-				lua_set_size_field(L, "cairo_bytes", entry->cairo_bytes);
-				lua_set_size_field(L, "shm_bytes", entry->shm_bytes);
-				lua_pushboolean(L, wallpaper_cache_entry_is_current(entry));
-				lua_setfield(L, -2, "current");
-				lua_rawseti(L, -2, idx++);
-			}
-		}
-		lua_setfield(L, -2, "items");
-	}
-}
-
-static void
-accumulate_drawable_surface(drawable_t *drawable, int *count, size_t *surface_bytes)
-{
-	if (!drawable)
-		return;
-	(*count)++;
-	*surface_bytes += cairo_image_surface_bytes(drawable->surface);
-}
-
-static void
-push_drawable_stats(lua_State *L)
-{
-	int drawin_drawables = 0, titlebar_drawables = 0;
-	size_t drawin_surface_bytes = 0, titlebar_surface_bytes = 0;
-	size_t shape_bytes = 0;
-
-	for (int i = 0; i < globalconf.drawins.len; i++) {
-		drawin_t *drawin = globalconf.drawins.tab[i];
-		if (!drawin)
-			continue;
-		accumulate_drawable_surface(drawin->drawable,
-			&drawin_drawables, &drawin_surface_bytes);
-		shape_bytes += cairo_image_surface_bytes(drawin->shape_bounding);
-		shape_bytes += cairo_image_surface_bytes(drawin->shape_clip);
-		shape_bytes += cairo_image_surface_bytes(drawin->shape_input);
-		shape_bytes += cairo_image_surface_bytes(drawin->shape_border);
-	}
-
-	for (int i = 0; i < globalconf.clients.len; i++) {
-		client_t *client = globalconf.clients.tab[i];
-		if (!client)
-			continue;
-		for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
-				bar < CLIENT_TITLEBAR_COUNT; bar++) {
-			accumulate_drawable_surface(client->titlebar[bar].drawable,
-				&titlebar_drawables, &titlebar_surface_bytes);
-		}
-	}
-
-	lua_newtable(L);
-	lua_set_int_field(L, "drawin_drawables", drawin_drawables);
-	lua_set_size_field(L, "drawin_surface_bytes", drawin_surface_bytes);
-	lua_set_int_field(L, "titlebar_drawables", titlebar_drawables);
-	lua_set_size_field(L, "titlebar_surface_bytes", titlebar_surface_bytes);
-	lua_set_size_field(L, "shape_surface_bytes", shape_bytes);
-	lua_set_size_field(L, "surface_bytes",
-		drawin_surface_bytes + titlebar_surface_bytes + shape_bytes);
-	lua_set_size_field(L, "drawable_shm_count",
-		globalconf.memory_stats.drawable_shm_count);
-	lua_set_size_field(L, "drawable_shm_bytes",
-		globalconf.memory_stats.drawable_shm_bytes);
-}
-
-static int
-luaA_root_wallpaper_cache_stats(lua_State *L)
-{
-	bool details = lua_toboolean(L, 1);
-	push_wallpaper_cache_stats(L, details);
-	return 1;
-}
-
-static int
-luaA_root_drawable_stats(lua_State *L)
-{
-	push_drawable_stats(L);
-	return 1;
-}
-
-static int
-luaA_root_memory_stats(lua_State *L)
-{
-	if (lua_toboolean(L, 1)) {
-		lua_gc(L, LUA_GCCOLLECT, 0);
-		lua_gc(L, LUA_GCCOLLECT, 0);
-	}
-
-	int lua_kb = lua_gc(L, LUA_GCCOUNT, 0);
-	int lua_b = lua_gc(L, LUA_GCCOUNTB, 0);
-
-	lua_newtable(L);
-	lua_set_size_field(L, "lua_bytes", (size_t)lua_kb * 1024 + (size_t)lua_b);
-	lua_set_int_field(L, "clients", globalconf.clients.len);
-	lua_set_int_field(L, "screens", globalconf.screens.len);
-	lua_set_int_field(L, "tags", globalconf.tags.len);
-	lua_set_int_field(L, "drawins", globalconf.drawins.len);
-	lua_set_size_field(L, "drawable_shm_count",
-		globalconf.memory_stats.drawable_shm_count);
-	lua_set_size_field(L, "drawable_shm_bytes",
-		globalconf.memory_stats.drawable_shm_bytes);
-	lua_set_size_field(L, "wibox_count", globalconf.memory_stats.wibox_count);
-	lua_set_size_field(L, "wibox_surface_bytes",
-		globalconf.memory_stats.wibox_surface_bytes);
-
-#ifdef __GLIBC__
-	struct mallinfo2 mi = mallinfo2();
-	lua_set_size_field(L, "malloc_arena_bytes", (size_t)mi.arena);
-	lua_set_size_field(L, "malloc_used_bytes", (size_t)mi.uordblks);
-	lua_set_size_field(L, "malloc_free_bytes", (size_t)mi.fordblks);
-	lua_set_size_field(L, "malloc_releasable_bytes", (size_t)mi.keepcost);
-#endif
-
-	push_wallpaper_cache_stats(L, false);
-	lua_setfield(L, -2, "wallpaper");
-	push_drawable_stats(L);
-	lua_setfield(L, -2, "drawables");
-
-	return 1;
-}
+/* Memory introspection helpers (memory_stats / wallpaper_cache_stats /
+ * drawable_stats) used to live here under root.*. They moved to
+ * somewm_memory.c per issue #508 review — the AwesomeWM-compatible
+ * `root.*` surface should mirror upstream, while observation helpers
+ * belong with the somewm-specific extensions under `somewm.*`. */
 
 const luaL_Reg root_methods[] = {
 	/* AwesomeWM-compatible exports (following Prime Directive) */
@@ -2332,9 +2152,6 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_clear", luaA_root_wallpaper_cache_clear },
 	{ "wallpaper_cache_invalidate_screen", luaA_root_wallpaper_cache_invalidate_screen },
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
-	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
-	{ "drawable_stats", luaA_root_drawable_stats },
-	{ "memory_stats", luaA_root_memory_stats },
 	/* Wallpaper overlay helpers for tag slide animation */
 	{ "wp_snapshot", luaA_root_wp_snapshot },
 	{ "wp_snapshot_path", luaA_root_wp_snapshot_path },

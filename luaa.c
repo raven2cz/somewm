@@ -30,6 +30,7 @@
 #include "objects/wibox.h"
 #include "objects/ipc.h"
 #include "objects/root.h"
+#include "somewm_memory.h"
 #include "objects/button.h"
 #include "objects/mouse.h"
 #include "objects/selection_getter.h"
@@ -2923,6 +2924,7 @@ luaA_init(void)
 	luaA_keybinding_setup(globalconf_L);
 	luaA_awesome_setup(globalconf_L);
 	luaA_root_setup(globalconf_L);
+	luaA_somewm_memory_setup(globalconf_L);
 	button_class_setup(globalconf_L); /* Setup button class (AwesomeWM class system) */
 
 	/* Setup selection classes (must be before selection_setup) */
@@ -4893,6 +4895,7 @@ luaA_create_fresh_state(void)
 	luaA_keybinding_setup(L);
 	luaA_awesome_setup(L);
 	luaA_root_setup(L);
+	luaA_somewm_memory_setup(L);
 	button_class_setup(L);
 
 	/* Selection classes */

@@ -198,7 +198,7 @@ expected to keep memory resident.
 ~/git/github/somewm/plans/scripts/somewm-memory-snapshot.sh --tsv
 ```
 
-The snapshot combines `/proc`, `smaps_rollup`, `pmap`, and `root.memory_stats(true)`.
+The snapshot combines `/proc`, `smaps_rollup`, `pmap`, and `somewm.memory.stats(true)`.
 Key fields:
 - `rss_kb`, `pss_kb`, `private_dirty_kb`, `anonymous_kb` — host process memory
 - `drawable_shm_kb` / `drawable_shm_count` — live `memfd:drawable-shm` maps
@@ -224,19 +224,20 @@ Key fields:
 
 Results are written under `tests/bench/results/memory/YYYYMMDD-HHMMSS/` with
 `samples.tsv` and `summary.txt`. Treat monotonic growth as suspicious only when
-it remains after `root.memory_stats(true)` GC and is not explained by
+it remains after `somewm.memory.stats(true)` GC and is not explained by
 `wallpaper_estimated_bytes` or `drawable_shm_kb`.
 
 **Lua-side stats API:**
 ```bash
-somewm-client eval 'local s=root.memory_stats(true); return s.lua_bytes'
-somewm-client eval 'local s=root.wallpaper_cache_stats(); return s.entries.." entries "..s.estimated_bytes.." bytes"'
-somewm-client eval 'local s=root.drawable_stats(); return s.surface_bytes'
+somewm-client eval 'local s=somewm.memory.stats(true); return s.lua_bytes'
+somewm-client eval 'local s=somewm.memory.wallpaper_cache(); return s.entries.." entries "..s.estimated_bytes.." bytes"'
+somewm-client eval 'local s=somewm.memory.drawables(); return s.surface_bytes'
 ```
 
-`root.memory_stats(true)` forces two Lua GC passes before reporting. The API is
-read-only and intentionally coarse; it tracks somewm-owned buffers, not all
-driver or wlroots internals.
+`somewm.memory.stats(true)` forces two Lua GC passes before reporting. The API
+is read-only and intentionally coarse; it tracks somewm-owned buffers, not all
+driver or wlroots internals. The same surface is reachable via
+`require("somewm").memory.stats(true)` for callers using Lua module imports.
 
 **Tests:**
 ```bash
@@ -247,10 +248,13 @@ make test-one TEST=tests/test-memory-stats.lua
 ~/git/github/somewm/plans/tests/test-memory-diagnostics.sh
 ```
 
-**Upstream note:** The `root.memory_stats()`/`root.wallpaper_cache_stats()`
-introspection is potentially upstreamable as debug tooling. The live scripts in
-`plans/scripts/` are fork workflow tooling and may need to stay fork-only unless
-upstream asks for them.
+**Upstream note:** The `somewm.memory.*` introspection is potentially
+upstreamable as debug tooling. Per issue #508 review (JimmyCozza), the API
+lives under `somewm.*` rather than `root.*` — `root.*` mirrors AwesomeWM's
+compatible surface, while observation helpers belong with the somewm-specific
+extensions that 2.x cleanup is consolidating. The live scripts in
+`plans/scripts/` are fork workflow tooling and may need to stay fork-only
+unless upstream asks for them.
 
 ### Log analysis
 ```bash

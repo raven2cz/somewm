@@ -52,7 +52,7 @@ snapshot_line() {
 }
 
 gc_once() {
-    "$SOMEWM_CLIENT" eval 'collectgarbage(); collectgarbage(); if root.memory_stats then root.memory_stats(true) end; return "ok"' >/dev/null 2>&1 || true
+    "$SOMEWM_CLIENT" eval 'collectgarbage(); collectgarbage(); if somewm and somewm.memory then somewm.memory.stats(true) end; return "ok"' >/dev/null 2>&1 || true
 }
 
 sample_idle() {
