@@ -53,7 +53,9 @@ local steps = {
                 "XWayland likely unavailable in this environment\n")
             io.stderr:write("Test finished successfully.\n")
             awesome.quit()
-            return false  -- runner stops
+            -- Return true so the runner does not record this as a
+            -- failed step; the SKIP message above is the real signal.
+            return true
         end
     end,
 

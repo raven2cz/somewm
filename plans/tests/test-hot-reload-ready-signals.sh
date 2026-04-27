@@ -145,6 +145,27 @@ echo "  ok  awesome.somewm_ready = true after cold boot"
 PRE_LINES=$(wc -l < "$SIGLOG")
 echo "  pre-restart somewm-line count: $PRE_LINES"
 
+# Kick lazy XWayland so xwayland::ready fires before the restart. Without
+# the kick the C-side flag never flips, the post-restart re-emit also
+# never happens, and we silently lose coverage of luaa.c:5571-5572.
+# xprop is small + ubiquitous; if XWayland is compile-time disabled or
+# unavailable the spawn is harmless and the post-restart xwayland count
+# check below will naturally see zero (we report it but do not fail).
+"$CLIENT" eval 'local awful = require("awful"); awful.spawn.easy_async({"xprop","-root","_NET_SUPPORTED"}, function() end); return "ok"' >/dev/null 2>&1 || true
+
+# Wait briefly for xwayland::ready to land (best-effort, capped at 5s).
+for _ in $(seq 1 50); do
+    if grep -q "^xwayland $VM_ID_BOOT$" "$SIGLOG" 2>/dev/null; then break; fi
+    sleep 0.1
+done
+HAD_XWAYLAND_BOOT=$(grep -c "^xwayland " "$SIGLOG" || true)
+if [ "$HAD_XWAYLAND_BOOT" -gt 0 ]; then
+    echo "  ok  xwayland::ready fired in initial VM (count=$HAD_XWAYLAND_BOOT)"
+else
+    echo "  note: xwayland::ready not observed pre-restart — XWayland likely unavailable; xwayland-replay assertion will be skipped"
+fi
+PRE_LINES=$(wc -l < "$SIGLOG")
+
 "$CLIENT" eval 'awesome.restart(); return "ok"' >/dev/null 2>&1 || true
 
 # Wait for the new VM to come back up (rc.lua re-runs and adds new line).
@@ -178,5 +199,18 @@ if [ "$SOMEWM_COUNT" -lt 2 ]; then
     exit 1
 fi
 echo "  ok  somewm::ready re-emitted on hot reload (total fires: $SOMEWM_COUNT)"
+
+# xwayland replay assertion only when XWayland was alive pre-restart.
+# Headless CI without XWayland still gets meaningful somewm coverage.
+if [ "$HAD_XWAYLAND_BOOT" -gt 0 ]; then
+    XWAYLAND_COUNT=$(grep -c "^xwayland " "$SIGLOG" || true)
+    if [ "$XWAYLAND_COUNT" -le "$HAD_XWAYLAND_BOOT" ]; then
+        echo "FAIL: expected xwayland::ready replay after hot reload, " \
+             "boot=$HAD_XWAYLAND_BOOT post=$XWAYLAND_COUNT" >&2
+        cat "$SIGLOG" >&2
+        exit 1
+    fi
+    echo "  ok  xwayland::ready re-emitted on hot reload (total fires: $XWAYLAND_COUNT)"
+fi
 
 echo "PASS"
