@@ -194,7 +194,41 @@ client.connect_signal("mouse::enter", function(c)
 end)
 
 -- {{{ Autostart
-awful.spawn.once("nm-applet")
+local autostart = require("fishlive.autostart")
+
+autostart.add{
+    name = "nm-applet",
+    cmd  = { "nm-applet" },
+    mode = "respawn",
+}
+
+autostart.add{
+    name = "blueman-applet",
+    cmd  = { "blueman-applet" },
+    when = { "ready::tray" },
+    mode = "respawn",
+}
+
+autostart.add{
+    name = "synology-drive",
+    cmd  = { "synology-drive" },
+    when = { "ready::xwayland" },
+    -- `synology-drive` is a launcher script: it forks the real daemons
+    -- (cloud-drive-ui / -connect / -daemon) and exits 0 within ~5 ms.
+    -- mode="oneshot" treats that exit as success, so the entry parks in
+    -- `done` instead of crash-looping the launcher every backoff window
+    -- while the real daemons happily continue running.
+    mode = "oneshot",
+}
+
+-- somewm initializes XWayland in lazy mode (xwayland.c:286,
+-- wlr_xwayland_create with lazy=1) -- the server only spins up after the
+-- first X11 client connects. Without an early kick the ready::xwayland
+-- gate would deadlock for the synology entry. xprop is small, ubiquitous,
+-- and exits immediately, so it is the cheapest way to wake XWayland.
+awful.spawn.easy_async({ "xprop", "-root", "_NET_SUPPORTED" }, function() end)
+
+autostart.start_all()
 
 awful.spawn.easy_async(os.getenv("HOME") .. "/git/github/somewm/plans/project/somewm-shell/theme-export.sh", function()
     awful.spawn.easy_async_with_shell(
