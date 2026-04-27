@@ -317,6 +317,13 @@ typedef struct
     /* Live memory accounting exposed through root.memory_stats(). */
     MemoryStats memory_stats;
 
+    /** Compositor readiness milestones, set by the C side once and re-emitted
+     * to Lua on hot-reload. Allows late subscribers (rc.lua, modules loaded
+     * after startup) to learn that "somewm::ready" or "xwayland::ready" has
+     * already fired in this process lifetime. */
+    bool somewm_ready_seen;
+    bool xwayland_ready_seen;
+
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)
