@@ -6,7 +6,7 @@ Lua wibar (left-click on the `memory` / `disk` widgets).
 
 - **Memory detail panel** — what eats how much, PSS-aware per-process
   breakdown, system "free" reality check, somewm-internal counters from
-  `root.memory_stats()` + wallpaper cache.
+  `somewm.memory.stats()` + wallpaper cache.
 - **Storage detail panel** — biggest directories / files, pacman cache,
   mount-by-mount pressure, "one-click" cleanups, escape hatch to `baobab` /
   `filelight`.
@@ -229,7 +229,7 @@ same 50/20 margins as the weather panel):
 ║  └─────────────────────────────────────────────────────────────────┘  ║
 ║                                                                       ║
 ║  ┌─────────────────────────────────────────────────────────────────┐  ║
-║  │ somewm internals (root.memory_stats / wallpaper_cache_stats)    │  ║
+║  │ somewm internals (somewm.memory.stats / .wallpaper_cache)       │  ║
 ║  │                                                                 │  ║
 ║  │  RSS         1316 MiB    PSS        1129 MiB                    │  ║
 ║  │  Lua heap       7.8 MiB  Clients            3                   │  ║
@@ -267,8 +267,8 @@ Key design notes:
   the only honest per-process memory attribution available without root.
   Without it, everything that mmaps `libc` looks fat.
 - **somewm internals** come from the existing
-  `root.memory_stats(true)` / `root.wallpaper_cache_stats()` /
-  `root.drawable_stats()` APIs — exact same fields the snapshot script
+  `somewm.memory.stats(true)` / `somewm.memory.wallpaper_cache()` /
+  `somewm.memory.drawables()` APIs — exact same fields the snapshot script
   already consumes. The three lines "api ≡ pmap", baseline comparison,
   and "no drift" are rendered from the counters themselves.
 - The **trend sparkline** is *in-memory only*, lives as long as the
@@ -318,7 +318,7 @@ Singleton {
     property var topProcesses: []   // [{pid, name, pssKB, rssKB, pct}]
 
     // ---- somewm-internal (from somewm-client eval) ----
-    property var somewm: ({})       // parsed root.memory_stats + wallpaper_cache_stats
+    property var somewm: ({})       // parsed somewm.memory.stats + .wallpaper_cache
     property bool apiPmapAgrees: true
     property string baselineNote: ""
 
@@ -366,9 +366,9 @@ Singleton {
         // Single eval that returns a flat key=value stream for robust parse.
         // Uses the same format as our memory-snapshot script.
         command: ["somewm-client", "eval",
-          "local m=root.memory_stats(true); " +
-          "local w=root.wallpaper_cache_stats(); " +
-          "local d=root.drawable_stats(); " +
+          "local m=somewm.memory.stats(true); " +
+          "local w=somewm.memory.wallpaper_cache(); " +
+          "local d=somewm.memory.drawables(); " +
           "return string.format('rss=%d pss=%d lua=%d shm_api=%d shm_buf=%d " +
           "wp_entries=%d wp_est=%d wp_cairo=%d wp_shm=%d ds=%d wb=%d " +
           "mal_used=%d mal_free=%d mal_rel=%d clients=%d', " +
@@ -459,11 +459,11 @@ Component.onDestruction: Services.MemoryDetail.detailActive = false
 |--------------------------------|------------------------------------------------------|-------|
 | Total / Used / Free / Cached   | `/proc/meminfo` MemTotal / MemAvailable / MemFree / Cached | kernel, ground truth |
 | Top processes PSS              | `/proc/$pid/smaps_rollup`                            | kernel, ground truth |
-| somewm RSS/PSS                 | `root.memory_stats(true)` which reads `/proc/self/smaps_rollup` | kernel, ground truth |
+| somewm RSS/PSS                 | `somewm.memory.stats(true)` which reads `/proc/self/smaps_rollup` | kernel, ground truth |
 | Lua heap                       | `collectgarbage("count") × 1024`                     | exact after double GC |
-| Wallpaper cache                | `root.wallpaper_cache_stats()` C counter             | exact (tracked at set/free) |
-| drawable SHM                   | `root.memory_stats().drawable_shm_bytes_api`         | exact; pmap cross-check  |
-| glibc retention                | `mallinfo2()` inside `root.memory_stats`             | allocator-internal view  |
+| Wallpaper cache                | `somewm.memory.wallpaper_cache()` C counter          | exact (tracked at set/free) |
+| drawable SHM                   | `somewm.memory.stats().drawable_shm_bytes_api`       | exact; pmap cross-check  |
+| glibc retention                | `mallinfo2()` inside `somewm.memory.stats`           | allocator-internal view  |
 | Baseline "~2× sway"            | Static string pulled from `plans/docs/memory-baseline.md` | human-authored |
 
 No estimation or guessing anywhere. If a value is unavailable (e.g. old
@@ -661,7 +661,7 @@ plans/project/somewm-one/fishlive/components/disk.lua
 
 1. **Smoke**: launch sandbox via `plans/scripts/somewm-sandbox.sh`, open
    Performance tab, click gear on Memory — panel opens and shows numbers
-   that match `root.memory_stats()`. Click gear on Storage — panel opens
+   that match `somewm.memory.stats()`. Click gear on Storage — panel opens
    and shows `df` that matches `df -h`.
 2. **Wibar left-click**: inside the same sandbox, run
    `qs ipc -c somewm call somewm-shell:panels toggle memory-detail`
@@ -788,7 +788,7 @@ earlier sections — read them as authoritative, not additive.
 
 - `somewm-client eval` prefixes output with `OK\n`. Any QS parser must
   strip the first line / `OK` marker.
-- `root.memory_stats(true)` does **not** expose `rss_kb` or `pss_kb`. The
+- `somewm.memory.stats(true)` does **not** expose `rss_kb` or `pss_kb`. The
   actual fields are:
   `clients, drawable_shm_bytes, drawable_shm_count, drawables, drawins,
   lua_bytes, malloc_{arena,free,releasable,used}_bytes, screens, tags,
@@ -808,7 +808,7 @@ earlier sections — read them as authoritative, not additive.
 - The `somewm-client eval` call flattens the correct fields only:
 
   ```lua
-  local ok,m = pcall(function() return root.memory_stats(true) end)
+  local ok,m = pcall(function() return somewm.memory.stats(true) end)
   if not ok then return "error=memory_stats_failed" end
   return string.format(
     "lua_bytes=%d clients=%d drawable_shm_count=%d drawable_shm_bytes=%d " ..
