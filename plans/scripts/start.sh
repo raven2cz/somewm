@@ -59,4 +59,25 @@ STATS_LOG=~/.local/log/somewm-stats.log
 ) &
 disown
 
-exec dbus-run-session somewm -d 2>&1 | tee ~/.local/log/somewm-debug.log
+# Propagate display/session env to the systemd user bus so user services
+# (xdg-desktop-portal, gnome-keyring, polkit, gpg-agent, ...) know which
+# display to talk to. Mirrors the canonical sequence in
+# /usr/local/bin/somewm-session (the systemd-integrated launcher used
+# by ~/bin/session-launcher), so manual start.sh and DM/launcher paths
+# end up on the same user@1000.service D-Bus.
+#
+# Do NOT wrap in dbus-run-session: that creates an isolated private bus
+# so child apps can no longer reach gnome-keyring / polkit on the
+# user@1000.service bus and time out on libsecret/portal calls (~25s
+# D-Bus default), surfacing as 20s+ delays before password prompts and
+# slow Spotify/Electron startup.
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-somewm}"
+export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}"
+
+systemctl --user import-environment \
+    DISPLAY WAYLAND_DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
+    XDG_RUNTIME_DIR XDG_DATA_DIRS XDG_CONFIG_DIRS PATH \
+    SSH_AUTH_SOCK 2>/dev/null || true
+dbus-update-activation-environment --all 2>/dev/null || true
+
+exec somewm -d 2>&1 | tee ~/.local/log/somewm-debug.log
