@@ -14,6 +14,7 @@ local beautiful = require("beautiful")
 local color     = require("gears.color")
 local shape     = require("gears.shape")
 local cairo     = require("lgi").cairo
+local GLib      = require("lgi").GLib
 local alayout   = require("awful.layout")
 
 local capi = {
@@ -26,7 +27,13 @@ local capi = {
 
 local module = {
     default_distance  = 8,
-    aerosnap_distance = 16
+    aerosnap_distance = 16,
+    -- Minimum time the cursor must dwell inside an aerosnap edge zone
+    -- before the placeholder is shown.  Flying past an edge during a
+    -- cross-monitor drag (typical: <50 ms in the edge band) never
+    -- lights up the placeholder and never damages the second output.
+    -- Set to 0 to restore the legacy behaviour (show on first tick).
+    snap_dwell_ms     = 150,
 }
 
 local placeholder_w = nil
@@ -105,6 +112,12 @@ local function detect_screen_edges(c, snap)
 end
 
 local current_snap, current_axis = nil
+-- Monotonic timestamp (µs) at which the cursor first entered the
+-- current snap zone.  Used to enforce `module.snap_dwell_ms`: the
+-- placeholder is only shown once the cursor has been in the same
+-- edge zone for at least that long.  0 means "not currently in any
+-- snap zone".
+local current_snap_entered_us = 0
 
 local function detect_areasnap(c, distance)
     if (not c.floating) and alayout.get(c.screen) ~= alayout.suit.floating then
@@ -120,32 +133,62 @@ local function detect_areasnap(c, distance)
         current_snap = v or h or nil
     end
 
-    if old_snap == current_snap then return end
+    -- Snap zone changed: refresh axis + dwell timestamp and hide any
+    -- previously visible placeholder.  We'll re-show only after the
+    -- dwell threshold below, never on the first tick of entering a
+    -- new zone — that's what eliminates the flicker when the cursor
+    -- briefly grazes an edge while flying between monitors.
+    if old_snap ~= current_snap then
+        current_axis = ((v and not h) and "horizontally")
+            or ((h and not v) and "vertically")
+            or nil
+        current_snap_entered_us = current_snap and GLib.get_monotonic_time() or 0
+        show_placeholder(nil)
+        return
+    end
 
-    current_axis = ((v and not h) and "horizontally")
-        or ((h and not v) and "vertically")
-        or nil
+    -- Same zone as last tick: defer placeholder until the cursor
+    -- has dwelled long enough.  Fast cross-monitor flights graze
+    -- the edge band for <50 ms and never satisfy the dwell, so the
+    -- destination output is never damaged with a placeholder.
+    if not current_snap or current_snap_entered_us == 0 then return end
 
-    -- Show the expected geometry outline
-    show_placeholder(
-        current_snap and build_placement(current_snap, current_axis)(c, {
-            to_percent     = 0.5,
-            honor_workarea = true,
-            honor_padding  = true,
-            pretend        = true,
-            margins         = beautiful.snapper_gap
-        }) or nil
-    )
+    local dwell_ms = module.snap_dwell_ms or 0
+    if dwell_ms > 0 then
+        local elapsed_us = GLib.get_monotonic_time() - current_snap_entered_us
+        if elapsed_us < dwell_ms * 1000 then return end
+    end
 
+    show_placeholder(build_placement(current_snap, current_axis)(c, {
+        to_percent     = 0.5,
+        honor_workarea = true,
+        honor_padding  = true,
+        pretend        = true,
+        margins        = beautiful.snapper_gap
+    }))
 end
 
 local function apply_areasnap(c, args)
     if not current_snap then return end
 
+    -- If the dwell threshold never elapsed, the placeholder was
+    -- never shown, so the user got no visual confirmation that a
+    -- snap was about to happen.  Treat release as a no-op in that
+    -- case rather than surprising them with a layout change.
+    local dwell_ms = module.snap_dwell_ms or 0
+    if dwell_ms > 0 and current_snap_entered_us > 0
+        and (GLib.get_monotonic_time() - current_snap_entered_us) < dwell_ms * 1000
+    then
+        current_snap = nil
+        current_snap_entered_us = 0
+        return
+    end
+
     -- Remove the move offset
     args.offset = {}
 
     placeholder_w.visible = false
+    current_snap_entered_us = 0
 
     return build_placement(current_snap, current_axis)(c,{
         to_percent     = 0.5,
