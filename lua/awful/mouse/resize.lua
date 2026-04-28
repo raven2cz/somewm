@@ -13,12 +13,31 @@ local aplace = require("awful.placement")
 local capi = {mousegrabber = mousegrabber, client = client}
 local beautiful = require("beautiful")
 local floating = require("awful.layout.suit.floating")
+local GLib = require("lgi").GLib
 
 local module = {}
 
 local mode      = "live"
 local req       = "request::geometry"
 local callbacks = {enter={}, move={}, leave={}}
+
+-- Cap live `request::geometry` emit rate during a mouse-driven move.
+-- High-refresh mice (240+Hz) on a multi-monitor scene-graph compositor
+-- otherwise drive both the source and destination outputs into
+-- per-event damage during cross-monitor drag, which is the dominant
+-- cause of the visible flicker and frame drops.  120Hz is a safe
+-- ceiling: well above 60Hz minimum perceptual smoothness, well below
+-- typical NVIDIA mouse motion rates.  Set to nil/0 to disable.
+--
+-- NOTE: when a tick is throttled the inner grabber callback returns
+-- early, which means *all* registered move callbacks (snap, drag-to-
+-- tag, custom effects) are skipped for that tick — not just the
+-- final `request::geometry` emit.  This is intentional: those
+-- callbacks are the per-event work this throttle exists to amortize.
+-- Set `module.throttle_hz = 0` to restore per-event firing if a
+-- consumer truly needs every motion event.  The release path is
+-- always allowed through (see `buttons_held` check below).
+module.throttle_hz = 120
 
 local cursors = {
     ["mouse.move"               ] = "fleur",
@@ -147,9 +166,37 @@ local function handler(_, client, context, args) --luacheck: no unused_args
         or cursors[context]
         or "fleur"
 
+    -- Throttle gate state for the live emit path.  Per-grab so each
+    -- drag starts with a clean slate.
+    local last_tick_us = 0
+    local throttle_interval_us = (module.throttle_hz and module.throttle_hz > 0)
+        and math.floor(1e6 / module.throttle_hz) or 0
+
     -- Execute the placement function and use request::geometry
     capi.mousegrabber.run(function (coords)
         if not client.valid then return end
+
+        -- Detect button-release (drag complete) up front so the
+        -- throttle gate below can still let the release path through
+        -- on a throttled tick.
+        local buttons_held = false
+        for _, v in pairs(coords.buttons) do
+            if v then buttons_held = true; break end
+        end
+
+        -- Throttle: while a button is still held in live mode, skip
+        -- the geometry recompute / signal emit for ticks that arrive
+        -- faster than throttle_interval_us.  We still keep the
+        -- grabber alive so we don't drop the drag.  The release path
+        -- (leave callbacks, final emit) is never throttled — it runs
+        -- exactly once per drag.
+        if buttons_held and args.mode == "live" and throttle_interval_us > 0 then
+            local now_us = GLib.get_monotonic_time()
+            if now_us - last_tick_us < throttle_interval_us then
+                return true
+            end
+            last_tick_us = now_us
+        end
 
         -- Resize everytime the mouse moves (default behavior) in live mode,
         -- otherwise keep the current geometry
@@ -188,9 +235,7 @@ local function handler(_, client, context, args) --luacheck: no unused_args
         end
 
         -- Quit when the button is released
-        for _,v in pairs(coords.buttons) do
-            if v then return true end
-        end
+        if buttons_held then return true end
 
         -- Only resize after the mouse is released, this avoids losing content
         -- in resize sensitive apps such as XTerm or allows external modules

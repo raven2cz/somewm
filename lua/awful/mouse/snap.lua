@@ -30,10 +30,16 @@ local module = {
 }
 
 local placeholder_w = nil
+-- Geometry signature of the last drawn placeholder.  We avoid
+-- rebuilding the cairo ImageSurface and re-running the shape draw
+-- when the requested geometry hasn't actually changed since the last
+-- call — this used to fire on every move callback and was a major
+-- amplifier of cross-monitor drag flicker.
+local placeholder_last_geo = nil
 
 local function show_placeholder(geo)
     if not geo then
-        if placeholder_w then
+        if placeholder_w and placeholder_w.visible then
             placeholder_w.visible = false
         end
         return
@@ -43,6 +49,21 @@ local function show_placeholder(geo)
         ontop = true,
         bg    = color(beautiful.snap_bg or beautiful.bg_urgent or "#ff0000"),
     }
+
+    -- Cache hit: same geometry as last successful draw.  Just make
+    -- sure the wibox is visible (it may have been hidden by a
+    -- nil-geo call or screen-flip skip) and return without
+    -- reallocating the cairo surface.
+    local last = placeholder_last_geo
+    if last
+        and last.x == geo.x and last.y == geo.y
+        and last.width == geo.width and last.height == geo.height
+    then
+        if not placeholder_w.visible then
+            placeholder_w.visible = true
+        end
+        return
+    end
 
     placeholder_w:geometry(geo)
 
@@ -72,6 +93,7 @@ local function show_placeholder(geo)
     placeholder_w._shape_bounding_surface = img  -- Keep reference to prevent GC
 
     placeholder_w.visible = true
+    placeholder_last_geo = { x = geo.x, y = geo.y, width = geo.width, height = geo.height }
 end
 
 local function build_placement(snap, axis)
@@ -105,11 +127,44 @@ local function detect_screen_edges(c, snap)
 end
 
 local current_snap, current_axis = nil
+-- Track which screen the dragged client was on the previous tick.
+-- When a cross-monitor drag flips c.screen mid-grab the new screen's
+-- geometry produces different edge results, which would otherwise
+-- oscillate current_snap (edge → nil → edge) at the boundary and
+-- flicker the placeholder wibox.  We hide the placeholder on the
+-- transition tick and resume detection once the cursor settles on
+-- the new screen.
+local last_drag_screen = nil
+
+local function reset_drag_state()
+    last_drag_screen = nil
+    current_snap = nil
+    current_axis = nil
+    placeholder_last_geo = nil
+    if placeholder_w and placeholder_w.visible then
+        placeholder_w.visible = false
+    end
+end
 
 local function detect_areasnap(c, distance)
     if (not c.floating) and alayout.get(c.screen) ~= alayout.suit.floating then
         return
     end
+
+    -- Cross-monitor transition: only skip detection when we already
+    -- recorded a screen and it just changed.  On the very first tick
+    -- of a drag last_drag_screen is nil — fall through to normal
+    -- detection so single-monitor drags aren't stalled by one tick.
+    if last_drag_screen and last_drag_screen ~= c.screen then
+        last_drag_screen = c.screen
+        if current_snap ~= nil then
+            current_snap = nil
+            current_axis = nil
+            show_placeholder(nil)
+        end
+        return
+    end
+    last_drag_screen = c.screen
 
     local old_snap = current_snap
     local v, h = detect_screen_edges(c, distance)
@@ -264,6 +319,19 @@ function module.snap(c, snap, x, y, fixed_x, fixed_y)
 
     return geom
 end
+
+-- Reset all aerosnap drag state at the start of every grab.  Ensures
+-- that when the previous drag ended via an abort path (mousegrabber.stop,
+-- client invalidated mid-drag) — which never invokes leave callbacks —
+-- the next drag still starts with a clean placeholder cache, snap
+-- state, and last_drag_screen.  Note: this does not clean up the
+-- aborted drag itself; if the placeholder wibox was visible at abort
+-- time it stays visible until the next grab starts (or until reset
+-- explicitly).  Doing better would require hooking client unmanage /
+-- mousegrabber stop — left as future work.
+resize.add_enter_callback(function()
+    reset_drag_state()
+end, "mouse.move")
 
 -- Enable edge snapping
 resize.add_move_callback(function(c, geo, args)
