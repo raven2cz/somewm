@@ -18,8 +18,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SHELL_DIR="$ROOT_DIR/plans/project/somewm-shell"
-ONE_DIR="$ROOT_DIR/plans/project/somewm-one"
+# somewm-shell and somewm-one are sibling repos since 2026-04-29; override
+# checkout location with SOMEWM_SHELL_PATH / SOMEWM_ONE_PATH if needed.
+SHELL_DIR="${SOMEWM_SHELL_PATH:-$HOME/git/github/somewm-shell}"
+ONE_DIR="${SOMEWM_ONE_PATH:-$HOME/git/github/somewm-one}"
+[ -d "$SHELL_DIR" ] || { echo "SKIP: somewm-shell not found at $SHELL_DIR (set SOMEWM_SHELL_PATH)"; exit 0; }
+[ -d "$ONE_DIR" ]   || { echo "SKIP: somewm-one not found at $ONE_DIR (set SOMEWM_ONE_PATH)"; exit 0; }
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }

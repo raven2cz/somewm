@@ -33,8 +33,8 @@ We are **~20 commits behind upstream/main**. Notable upstream changes since last
 | 10 | Pointer enter for newly mapped layer surfaces | `somewm.c` | [PR #421](https://github.com/trip-zip/somewm/pull/421) |
 | 11 | Wibox opacity/border propagation to C drawin | `objects/drawin.c` | [PR #407](https://github.com/trip-zip/somewm/pull/407) |
 | 12 | Notification FX (fadeIn, shadow, visual refresh) | `lua/naughty/`, `objects/drawin.c` | — |
-| 13 | somewm-shell (Quickshell desktop shell) | `plans/project/somewm-shell/` | — |
-| 14 | somewm-one config project | `plans/project/somewm-one/` | — |
+| 13 | somewm-shell (Quickshell desktop shell) | extracted 2026-04-29 → [`raven2cz/somewm-shell`](https://github.com/raven2cz/somewm-shell) | — |
+| 14 | somewm-one config project | extracted 2026-04-29 → [`raven2cz/somewm-one`](https://github.com/raven2cz/somewm-one) | — |
 
 ### SceneFX integration (merged 2026-03-30)
 

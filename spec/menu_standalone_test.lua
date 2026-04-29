@@ -8,8 +8,9 @@
 
 -- Add paths. somewm-one is a sibling repo (raven2cz/somewm-one); override
 -- the checkout location with SOMEWM_ONE_PATH (defaults to $HOME/git/github/somewm-one).
+local home = os.getenv("HOME") or "."
 local somewm_one = os.getenv("SOMEWM_ONE_PATH")
-    or (os.getenv("HOME") .. "/git/github/somewm-one")
+    or (home .. "/git/github/somewm-one")
 package.path = somewm_one .. "/?.lua;"
     .. somewm_one .. "/?/init.lua;"
     .. "lua/?.lua;lua/?/init.lua;"

@@ -12,8 +12,9 @@
 -- Add somewm-one to package path so fishlive.menu can be required.
 -- somewm-one is now a sibling repo (raven2cz/somewm-one); checkout path is
 -- overridable via SOMEWM_ONE_PATH (defaults to $HOME/git/github/somewm-one).
+local home = os.getenv("HOME") or "."
 local somewm_one = os.getenv("SOMEWM_ONE_PATH")
-    or (os.getenv("HOME") .. "/git/github/somewm-one")
+    or (home .. "/git/github/somewm-one")
 package.path = somewm_one .. "/?.lua;"
     .. somewm_one .. "/?/init.lua;"
     .. package.path

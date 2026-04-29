@@ -418,7 +418,7 @@ commit IDs were rewritten so cross-references break (acceptable trade-off).
 
 `plans/` contains development plans, issue tracking, and fix documentation.
 - `plans/upstream/` - Upstream sync records and fork status
-- `plans/repo-split/` - 2026-04-29 split-out playbook + paper trail
+- `plans/done/repo-split/` - 2026-04-29 split-out playbook + paper trail
 - `plans/done/` - Archived completed plans and investigations
 - `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
 - `plans/scripts/start.sh` - Launch somewm with debug logging from TTY

@@ -94,7 +94,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-export FISHLIVE_ROOT="$ROOT_DIR/plans/project/somewm-one"
+# somewm-one is a sibling repo since 2026-04-29 (raven2cz/somewm-one).
+# Override checkout path with SOMEWM_ONE_PATH; default $HOME/git/github/somewm-one.
+export FISHLIVE_ROOT="${SOMEWM_ONE_PATH:-$HOME/git/github/somewm-one}"
+[ -d "$FISHLIVE_ROOT" ] || { echo "SKIP: somewm-one not found at $FISHLIVE_ROOT (set SOMEWM_ONE_PATH)"; exit 0; }
 export XDG_CONFIG_HOME="$TMP_DIR/config"
 export XDG_RUNTIME_DIR="$TEST_RUNTIME_DIR"
 export WLR_BACKENDS=headless
