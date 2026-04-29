@@ -1,9 +1,0 @@
-module cpu-detail
-CpuDetailPanel CpuDetailPanel.qml
-SystemSection SystemSection.qml
-CoresSection CoresSection.qml
-TopCpuProcessesSection TopCpuProcessesSection.qml
-GpuSection GpuSection.qml
-TopGpuProcessesSection TopGpuProcessesSection.qml
-FastfetchFooter FastfetchFooter.qml
-FooterActions FooterActions.qml

@@ -6,9 +6,12 @@
 -- Execute: lua spec/menu_standalone_test.lua
 ---------------------------------------------------------------------------
 
--- Add paths
-package.path = "plans/project/somewm-one/?.lua;"
-    .. "plans/project/somewm-one/?/init.lua;"
+-- Add paths. somewm-one is a sibling repo (raven2cz/somewm-one); override
+-- the checkout location with SOMEWM_ONE_PATH (defaults to $HOME/git/github/somewm-one).
+local somewm_one = os.getenv("SOMEWM_ONE_PATH")
+    or (os.getenv("HOME") .. "/git/github/somewm-one")
+package.path = somewm_one .. "/?.lua;"
+    .. somewm_one .. "/?/init.lua;"
     .. "lua/?.lua;lua/?/init.lua;"
     .. "spec/?.lua;"
     .. package.path

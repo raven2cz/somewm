@@ -4,30 +4,30 @@ Split `plans/project/somewm-one` and `plans/project/somewm-shell` out of the
 `raven2cz/somewm` fork into their own GitHub repositories, keeping the fork
 as a working tree for upstream PRs.
 
-**Status:** v2 DRAFT — incorporates Codex review of v1. v1 is preserved as
-`plan-v1-rejected.md` for paper trail.
+**Status:** v2 EXECUTING — Step 1 (cleanup commit `5f62fae`) and Step 2
+(subtree split: `export/somewm-one`, `export/somewm-shell`) DONE. v1
+preserved as `plan-v1-rejected.md`.
 
-**v1 → v2 changes (Codex review summary)**
+**v1 → v2 changes (Codex review summary + user direction)**
 
-1. New repos created **private** first; flipped to public only after history
-   audit. Public exposure is irreversible — `gh repo delete` is not a rollback
-   for disclosure.
-2. New **Step 6 "Path-decoupling"** added before any deploy: live runtime
-   refs to monorepo paths exist (rc.lua:278, MemoryDetail.qml:574,
-   tests/test-all.sh, IPC.md, docs). These break standalone use unless fixed.
-3. New **Step 7 "History audit on private repo"** added: scan extracted
-   commit history (not just the tree) for personal operational detail
-   (hardware specs, hostnames, hardcoded `/home/box` paths, Synology mentions).
+1. **Visibility: public from the start** (per user, restoring v1 decision
+   after a brief private-first detour). Operational detail in history is
+   user-accepted; secret/token scan came back clean.
+2. **Step 6 "Path-decoupling"** added with full audit table: live runtime
+   refs to monorepo paths exist in `rc.lua:278`, `MemoryDetail.qml:574`,
+   `tests/test-all.sh`, `IPC.md`, docs. These break standalone use unless
+   fixed.
+3. **Step 7 "Codex re-review of path-decoupling"** added per user: after
+   the fixes are committed to new repos, pipe diff into Codex for a
+   second-pass review before deploy.
 4. "Preserve full history" claim softened. `git subtree split` preserves
    commits that touched the prefix; it rewrites commit IDs and does **not**
-   carry tags, signatures, PR metadata, or ancestry from before files lived
-   under the prefix.
-5. Step 8 (`somewm-shell` deploy) backs up `~/.config/quickshell/somewm`
-   before rsync. v1 missed this.
-6. Fork-cleanup commit (was Step 8) and doc rewrites (was Step 9) merged
-   into one commit so the fork is never published in a state where docs
-   point at deleted paths.
-7. Dirty-tree inventory refreshed to match real `git status`.
+   carry tags, signatures, PR metadata.
+5. `somewm-shell` deploy now backs up `~/.config/quickshell/somewm` before
+   rsync. v1 missed this.
+6. Fork-cleanup commit and doc rewrites merged into one commit so fork is
+   never published pointing at deleted paths.
+7. Dirty-tree inventory refreshed (Step 1 already executed).
 
 ## Goals
 
@@ -74,7 +74,7 @@ as a working tree for upstream PRs.
 | # | Question | Decision |
 |---|---|---|
 | 1 | History | **Preserve commits that touched prefix** via `git subtree split`. Commit IDs are rewritten; tags/signatures/PR-metadata not carried. |
-| 2 | New repo visibility | **Private at creation. Audit history. Flip to public only after audit + smoke-test pass.** README on flip leads with upstream `trip-zip/somewm` + `somewm.org`. |
+| 2 | New repo visibility | **Public at creation.** README leads with upstream `trip-zip/somewm` + `somewm.org`. Operational detail in history is user-accepted; secret scan clean. |
 | 3 | Scripts (`install-scenefx.sh`, `start.sh`, `somewm-sandbox.sh`, memory snapshot/trend) | Stay in fork under `plans/scripts/`. Each project repo carries only its own `deploy.sh`. |
 | 4 | LICENSE in new repos | **MIT** in both `somewm-one` and `somewm-shell` (treated as library-style code). |
 | 5 | History audit findings | **Accept** as-is. Hardcoded `/home/box`, Synology autostart, hardware refs are operational detail, not secrets. No `git filter-repo` pass. |
@@ -89,34 +89,59 @@ Severity:
 - **TEST** — test scripts break, runtime unaffected
 - **DOC** — only documentation is wrong; safe but noisy
 
+**Audit run 2026-04-29 — exhaustive grep of all `*.lua`, `*.qml`, `*.sh`,
+`*.md`, `*.json` files in both prefixes for `plans/project`,
+`plans/scripts`, `plans/docs`, `git/github/somewm`.**
+
 ### somewm-one
 
-| File | Line | Severity | What it does | Fix |
+| File | Line | Severity | Current | Fix |
 |---|---|---|---|---|
-| `rc.lua` | 278 | RUNTIME | spawns `~/git/github/somewm/plans/project/somewm-shell/theme-export.sh` | Change to `~/git/github/somewm-shell/theme-export.sh` |
-| `spec/*.lua` | various | TEST | `package.path = "./plans/project/somewm-one/?.lua;..."` | Change to `./?.lua;./?/init.lua` (run from repo root) |
-| `spec/animations_spec.lua` `spec/autostart_spec.lua` | header comments | TEST | busted invocation example uses old path | Update comment |
-| `README.md`, `GUIDE.md`, `STYLE.md` | various | DOC | `plans/project/somewm-one/...` references | Strip `plans/project/` prefix |
-| `deploy.sh` | header | DOC | comment mentions `plans/project/somewm-one/` | Update comment |
-| `GUIDE.md` (`plans/scripts/check-headers.sh`) | line 439 | DOC | references compositor-side helper | Document as "fork-side helper, optional" |
+| `rc.lua` | 278 | 🔴 RUNTIME | spawn `os.getenv("HOME") .. "/git/github/somewm/plans/project/somewm-shell/theme-export.sh"` | `os.getenv("HOME") .. "/git/github/somewm-shell/theme-export.sh"` |
+| `rc.lua` | 8 | 🟡 DOC comment | "See plans/project/somewm-one/ for the full tree." | "See this repo for the full tree." |
+| `deploy.sh` | ~33 | 🟡 RUNTIME (graceful) | `SNAPSHOT_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/somewm-snapshot.sh"` | `SNAPSHOT_SCRIPT="${SOMEWM_FORK_PATH:-$HOME/git/github/somewm}/plans/scripts/somewm-snapshot.sh"` (already `if [[ -x ]]` guarded — silently skips if missing) |
+| `deploy.sh` | 6 | 🟡 DOC | comment mentions `plans/project/somewm-one/` | strip `plans/project/` |
+| `spec/portraits_spec.lua` | 5 | 🟢 TEST | `package.path = "./plans/project/somewm-one/?.lua;" ..` | `"./?.lua;./?/init.lua;" ..` |
+| `spec/exit_screen_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/autostart_spec.lua` | 9 | 🟢 TEST | same pattern | same fix |
+| `spec/broker_spec.lua` | 6 | 🟢 TEST | same pattern | same fix |
+| `spec/service_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/factory_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/test_exit_screen_theme.lua` | 7 | 🟢 TEST | same pattern | same fix |
+| `spec/services_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/wallpaper_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/themes_spec.lua` | 5 | 🟢 TEST | same pattern | same fix |
+| `spec/animations_spec.lua` | 2-4 | 🟢 TEST (header comment) | busted invocation comment | strip `plans/project/somewm-one/` |
+| `spec/autostart_spec.lua` | 4-6 | 🟢 TEST (header comment) | busted invocation comment | strip `plans/project/somewm-one/` |
+| `README.md` | 97, 102 | 🟢 DOC | `plans/project/somewm-one/`, `plans/scripts/check-headers.sh` | strip prefix; check-headers → `~/git/github/somewm/plans/scripts/check-headers.sh` |
+| `GUIDE.md` | 232, 235, 241, 247, 357, 426 | 🟢 DOC | `plans/project/somewm-one/...` | strip prefix |
+| `GUIDE.md` | 439 | 🟢 DOC | `plans/scripts/check-headers.sh` | `~/git/github/somewm/plans/scripts/check-headers.sh` |
+| `STYLE.md` | 117 | 🟢 DOC | `plans/scripts/check-headers.sh` | same fix |
 
 ### somewm-shell
 
-| File | Line | Severity | What it does | Fix |
+| File | Line | Severity | Current | Fix |
 |---|---|---|---|---|
-| `services/MemoryDetail.qml` | 574 | RUNTIME | execDetached `~/git/github/somewm/plans/scripts/somewm-memory-snapshot.sh` | Use `Quickshell.env("SOMEWM_FORK_PATH")` with `~/git/github/somewm` default; if script absent, log warning and disable copy button |
-| `services/MemoryDetail.qml` | 583 | RUNTIME | `xdg-open ~/git/github/somewm/plans/docs/memory-baseline.md` | Same pattern (env var + fallback) or replace with bundled local copy |
-| `tests/test-all.sh` | 385 | TEST | hardcoded `/home/box/git/github/somewm/plans/project/somewm-shell/theme-export.sh` | Use `${BASH_SOURCE[0]}`-relative path (script lives in shell repo now) |
-| `tests/test-all.sh` | 583 | TEST | hardcoded path to `somewm-one/rc.lua` | Use env var `SOMEWM_ONE_PATH` with fallback `~/git/github/somewm-one/rc.lua` |
-| `tests/test-all.sh` | 1487 | TEST | hardcoded path to `somewm-one` | Same env-var fix |
-| `IPC.md` | 43-46 | DOC | references `plans/project/somewm-one/...` files | Update to `~/git/github/somewm-one/...` |
-| `modules/memory-detail/{Somewm,Trend}*.qml` | comments | DOC | mention `plans/...` | Update comments |
-| `STYLE.md`, `GUIDE.md`, `README.md` | various | DOC | `plans/project/somewm-shell/...` | Strip `plans/project/` prefix |
+| `services/MemoryDetail.qml` | 574 | 🔴 RUNTIME | `var script = home + "/git/github/somewm/plans/scripts/somewm-memory-snapshot.sh"` | `var fork = Quickshell.env("SOMEWM_FORK_PATH") \|\| (home + "/git/github/somewm"); var script = fork + "/plans/scripts/somewm-memory-snapshot.sh"` — keep `if (FileSystem.exists)` guard or just let `execDetached` no-op silently |
+| `services/MemoryDetail.qml` | 583 | 🔴 RUNTIME | xdg-open `home + "/git/github/somewm/plans/docs/memory-baseline.md"` | same env-var pattern |
+| `services/MemoryDetail.qml` | 14 | 🟡 DOC comment | mention | update path |
+| `modules/memory-detail/TrendSection.qml` | 197 | 🟡 UI text | "See `plans/scripts/somewm-memory-trend.sh` for long traces." | "See `~/git/github/somewm/plans/scripts/somewm-memory-trend.sh`" |
+| `modules/memory-detail/SomewmInternalsSection.qml` | 154 | 🟡 UI text | "See plans/docs/memory-baseline.md." | "See `~/git/github/somewm/plans/docs/memory-baseline.md`" |
+| `tests/test-all.sh` | 385 | 🟢 TEST | `theme_export="/home/box/git/github/somewm/plans/project/somewm-shell/theme-export.sh"` | `theme_export="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/theme-export.sh"` (same repo) |
+| `tests/test-all.sh` | 583 | 🟢 TEST | `RC_LUA="/home/box/git/github/somewm/plans/project/somewm-one/rc.lua"` | `RC_LUA="${SOMEWM_ONE_PATH:-$HOME/git/github/somewm-one}/rc.lua"` |
+| `tests/test-all.sh` | 1487 | 🟢 TEST | `ONE_DIR="/home/box/git/github/somewm/plans/project/somewm-one"` | `ONE_DIR="${SOMEWM_ONE_PATH:-$HOME/git/github/somewm-one}"` |
+| `IPC.md` | 43-46 | 🟢 DOC | `plans/project/somewm-one/fishlive/...` | `~/git/github/somewm-one/fishlive/...` |
+| `STYLE.md` | 119 | 🟢 DOC | `plans/scripts/check-headers.sh` | `~/git/github/somewm/plans/scripts/check-headers.sh` |
+| `README.md` | 134 | 🟢 DOC | `plans/project/somewm-shell/` | strip prefix |
+| `GUIDE.md` | 311, 541, 542, 545, 551, 554, 583, 586, 772, 920, 923, 926, 929, 935 | 🟢 DOC | `plans/project/somewm-shell/...` | strip prefix |
+| `GUIDE.md` | 854 | 🟢 DOC | `plans/project/somewm-one/rc.lua` | `~/git/github/somewm-one/rc.lua` |
 
-**Order matters:** these fixes ride on top of the **split branch**, not the
-fork's main. So Step 6 (patching) commits the fixes onto each new repo's
-`main` directly. The fork's existing `plans/project/...` paths are not
-disturbed until Step 9.
+**Files audited and confirmed clean (no changes needed):** `theme-export.sh`,
+`*.json`, `core/*.qml`, `components/*.qml`, all other `modules/` directories.
+
+**Apply order:** fixes commit onto each cloned new repo's `main` (Step 6),
+not onto the fork. Fork's `plans/project/...` paths stay until Step 9
+cleanup.
 
 ## Migration playbook
 
@@ -194,24 +219,21 @@ git ls-tree --name-only export/somewm-shell | head
 
 The `export/*` branches stay local — paper trail. Not pushed to fork.
 
-### Step 3 — Create new GitHub repos as **PRIVATE**
+### Step 3 — Create new GitHub repos as **PUBLIC**
 
 ```bash
 gh repo create raven2cz/somewm-one \
-    --private \
+    --public \
     --description "AwesomeWM-style rc.lua + themes for SomeWM" \
     --homepage "https://somewm.org"
 
 gh repo create raven2cz/somewm-shell \
-    --private \
+    --public \
     --description "Quickshell-based desktop shell for SomeWM" \
     --homepage "https://somewm.org"
 ```
 
-Private at creation = if the audit (Step 7) finds something we missed,
-nothing is exposed yet.
-
-### Step 4 — Push split branches as `main` to private repos
+### Step 4 — Push split branches as `main`
 
 ```bash
 cd /home/box/git/github/somewm
@@ -356,33 +378,31 @@ git commit -m "chore: standalone repo bootstrap (path-decoupling, .gitignore, CL
 git push origin main
 ```
 
-### Step 7 — Audit private repo history
+### Step 7 — Codex re-review of path-decoupling diff
 
-While repos are still **private**, scan the extracted commit history (not
-just the current tree) for anything we don't want public.
+Per user direction: after Step 6 commits the path fixes to both new repos,
+pipe the diff into Codex for a second-pass review. Goal: catch anything
+we missed in the audit, verify the env-var fallback patterns are sane,
+verify nothing broke that the audit didn't anticipate.
 
 ```bash
-cd /home/box/git/github/somewm-one
-# Personal-detail patterns we care about
-git log --all -p | grep -nE '/home/box|raven2cz@|tonda\.fischer@|Synology|RTX 5070' | head -50
-git log --all --source -- '*.env' '*.envrc' 'secrets/' '.netrc' 2>/dev/null
-
-cd /home/box/git/github/somewm-shell
-git log --all -p | grep -nE '/home/box|raven2cz@|tonda\.fischer@|Synology|RTX 5070' | head -50
-git log --all --source -- '*.env' '*.envrc' 'secrets/' '.netrc' 2>/dev/null
+cd /home/box/git/github
+{
+  echo "=== somewm-one path-decoupling diff ==="
+  git -C somewm-one log -1 --format='%H %s' main
+  git -C somewm-one diff main~1 main
+  echo ""
+  echo "=== somewm-shell path-decoupling diff ==="
+  git -C somewm-shell log -1 --format='%H %s' main
+  git -C somewm-shell diff main~1 main
+} | codex exec -m gpt-5.4 --full-auto \
+    "Review this path-decoupling diff. Two repos (somewm-one, somewm-shell) just split out of a monorepo. Check: (1) any hardcoded path I missed; (2) env-var fallback patterns are robust (graceful when fork dir is absent); (3) test scripts still work standalone; (4) no doc still claims the old path; (5) nothing else broke. Be blunt about gaps."
 ```
 
-Findings to expect (already known): hardcoded `/home/box` paths, user
-email in commit author lines, Synology autostart entry. **User decides:**
-acceptable to ship public, or rewrite history with `git filter-repo`
-before flipping to public.
+Apply Codex feedback as additional commits on each new repo's `main`
+before Step 8.
 
-If the user wants any of it gone, that is a `git filter-repo` pass on the
-private repo *before* Step 8. After flip to public, history rewrites are
-disruptive (force-push + everyone re-clones + leak still exists in any
-existing clone/cache).
-
-### Step 8 — Smoke test (still private)
+### Step 8 — Smoke test
 
 Critical: back up live deploy targets first.
 
@@ -413,16 +433,13 @@ copy button (validates the env-var fallback in Step 6).
 
 If anything fails, restore from `*.bak.$TS` and abort. Repos stay private.
 
-### Step 9 — Flip new repos to public + add topics + fork cleanup (atomic-ish)
+### Step 9 — Add topics + fork cleanup (destructive)
 
-This is the destructive moment. Order:
+Repos are already public from Step 3. This step adds topic tags and
+removes the now-obsolete `plans/project/somewm-{one,shell}/` from the fork.
 
 ```bash
-# 1. Flip private → public (still recoverable: gh repo edit --visibility private)
-gh repo edit raven2cz/somewm-one   --visibility public --accept-visibility-change-consequences
-gh repo edit raven2cz/somewm-shell --visibility public --accept-visibility-change-consequences
-
-# 1b. Topic tags (per Q6)
+# Topic tags (per Decision #6)
 gh repo edit raven2cz/somewm-one   \
     --add-topic wayland --add-topic awesomewm --add-topic lua --add-topic somewm
 gh repo edit raven2cz/somewm-shell \

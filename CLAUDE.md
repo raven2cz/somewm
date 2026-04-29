@@ -394,41 +394,31 @@ Current rc.lua includes:
 - Timer-based focus re-delivery for game windows (60s, 2s interval)
 - `steam_app_*` client rule (no titlebar, focusable)
 
-## somewm-one (User Config Project)
+## Sibling repos (split out of this fork on 2026-04-29)
 
-Our rc.lua + themes + plugins are versioned in `plans/project/somewm-one/`.
-This is the "release" copy — edit here, deploy to `~/.config/somewm`.
+User config and the Quickshell desktop shell live in standalone public repos:
 
-```bash
-# Edit config
-vim plans/project/somewm-one/rc.lua
+- **somewm-one** — rc.lua + themes + fishlive modules
+  - GitHub: <https://github.com/raven2cz/somewm-one>
+  - Local checkout: `~/git/github/somewm-one` (override with `SOMEWM_ONE_PATH`)
+  - Workflow: edit there → `./deploy.sh` → `somewm-client reload`
+- **somewm-shell** — Quickshell/QML desktop shell
+  - GitHub: <https://github.com/raven2cz/somewm-shell>
+  - Local checkout: `~/git/github/somewm-shell` (override with `SOMEWM_SHELL_PATH`)
+  - Workflow: edit there → `./deploy.sh` → kill+restart `qs -c somewm`
 
-# Deploy to active config (backs up rc.lua.bak first)
-plans/project/somewm-one/deploy.sh
+This fork goes back to being a working tree for upstream PRs to
+`trip-zip/somewm` and a home for fork-only ops scripts under `plans/scripts/`.
 
-# Dry run (show what would be synced)
-plans/project/somewm-one/deploy.sh --dry-run
-
-# Reload after deploy (from running somewm session)
-somewm-client reload
-```
-
-Contents:
-- `rc.lua` — main config (837 lines, AwesomeWM format)
-- `themes/default/` — theme with icons, backgrounds, layout PNGs
-- `layout-machi/` — layout-machi plugin (tiling layout engine)
-- `deploy.sh` — rsync to `~/.config/somewm` (excludes itself)
-
-**Rule:** Always edit `plans/project/somewm-one/rc.lua`, never `~/.config/somewm/rc.lua` directly.
-After editing, run `deploy.sh` to sync.
+History was preserved via `git subtree split`. Files that lived under
+`plans/project/somewm-{one,shell}/` were extracted with their commits;
+commit IDs were rewritten so cross-references break (acceptable trade-off).
 
 ## Plans Directory
 
 `plans/` contains development plans, issue tracking, and fix documentation.
 - `plans/upstream/` - Upstream sync records and fork status
-- `plans/project/somewm-one/` - User config project (rc.lua, themes, deploy script)
-- `plans/project/somewm-shell/` - Quickshell desktop shell (QML/Qt6)
-- `plans/project/somewm-shell-ai/` - AI-assisted shell modules
+- `plans/repo-split/` - 2026-04-29 split-out playbook + paper trail
 - `plans/done/` - Archived completed plans and investigations
 - `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
 - `plans/scripts/start.sh` - Launch somewm with debug logging from TTY
