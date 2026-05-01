@@ -58,10 +58,13 @@ type: short description
 
 Longer explanation of the change.
 Fixes #NNN if applicable.
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 Types: `fix:`, `feat:`, `test:`, `refactor:`, `docs:`
+
+**No `Co-Authored-By: Claude` trailer.** Commits in this fork (and especially
+those destined for upstream PRs to `trip-zip/somewm`) are authored by the human
+maintainer. Do not add Claude as co-author. Same applies to PR/issue bodies:
+no "Generated with Claude Code" footer, no AI tool mentions.
 
 ### Relevant upstream issues
 - **#137** - Steam games lose keyboard focus on launch (FIXED in our fork)
@@ -97,6 +100,12 @@ memory diagnostics.
 
 `AGENTS.md` is the equivalent bootstrap hint for Codex-style agents; keep both
 files aligned when workflow-critical commands change.
+
+For full workstation setup or "update all three projects" requests, see
+[INSTALL.md](INSTALL.md). It documents prerequisites, clone order, build +
+deploy commands, and the update workflow across `somewm` + `somewm-one` +
+`somewm-shell` together — i.e. the recipe to follow when moving to a fresh
+workstation or doing a clean reinstall.
 
 ### Quick iteration cycle (no reboot)
 ```bash
