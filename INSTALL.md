@@ -20,6 +20,11 @@ export SOMEWM_ONE_PATH="$HOME/git/github/somewm-one"
 export SOMEWM_SHELL_PATH="$HOME/git/github/somewm-shell"
 ```
 
+For the surrounding Arch environment — notification daemon, audio stack,
+portals, keyring, applets, themes, fonts, applications, and the WHY/WHERE of
+each setting around `somewm` — see [ARCH-DEP-INSTALL.md](ARCH-DEP-INSTALL.md).
+This file covers only the three somewm repos themselves.
+
 ---
 
 ## 1. System prerequisites (Arch Linux)
