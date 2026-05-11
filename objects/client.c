@@ -2149,8 +2149,9 @@ client_border_refresh(void)
         if(!c->scene || !c->border[0])
             continue;
 
-        /* Sync wlroots border width (bw) with Lua-facing border_width */
-        c->bw = c->border_width;
+        /* Sync wlroots border width (bw) with Lua-facing border_width.
+         * Fullscreen clients must keep bw=0 regardless of border_width. */
+        c->bw = c->fullscreen ? 0 : c->border_width;
 
         /* Update border geometry — handles both flat and rounded corners.
          * When corner_radius > 0, extends top/bottom borders and clips them.
