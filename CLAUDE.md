@@ -472,8 +472,8 @@ When debugging NVIDIA issues, check:
 For cross-model code review, these CLI tools are available:
 
 ```bash
-# OpenAI Codex CLI (gpt-5.4 model)
-cat diff.patch | codex exec -m gpt-5.4 --full-auto "Review prompt here"
+# OpenAI Codex CLI (gpt-5.5 model)
+cat diff.patch | codex exec -m gpt-5.5 --full-auto "Review prompt here"
 
 # Google Gemini CLI (gemini-3.1-pro-preview model)
 cat diff.patch | gemini -m gemini-3.1-pro-preview -p "Review prompt here"
