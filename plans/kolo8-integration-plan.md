@@ -167,21 +167,36 @@ the signal-emit hunks), `objects/layer_surface.c` (opacity subsystem only),
     `nested_inhibitor_attach_output` + include; RE-APPLY scenefx swap, `fx_renderer_create`,
     `optimized_blur_layer` resize, `rendermon` bench restructure, `banning_pending`/
     `motionnotify(0,...)` pointer-focus-after-hotplug fix.
-3.5 `property.c`/`property.h` — RE-APPLY xproperty stubs.
-3.6 `selection.c` — RE-APPLY `luaA_selection_get` hard-error. D4 RESOLVED: the change to
-    `luaL_error` is intentional API hardening — re-apply it.
-3.7 `bench.c`, `systray.c` — RE-APPLY `scenefx_compat.h` swap.
-3.8 `objects/drawable.c`, `objects/wibox.c` — RE-APPLY memory diagnostics + scenefx swap.
-3.9 `objects/button.c`/`objects/button.h` — RE-APPLY button-matching helper layer.
-3.10 `objects/client.c` feature subsystems — RE-APPLY corner_radius/backdrop_blur subsystems,
-    `client_border_refresh` rounded-corner+opacity, `client_apply_opacity_to_scene` extended,
-    `client_ban_unfocus` mousegrabber guard, `client_set_minimized` arrange rework,
-    `client_set_maximized_common` toplevel_set_maximized, `luaA_client_set_floating` +
-    `_c_floating`, titlebar corner hooks, `luaA_client_get_content` rewrite + `_scene_layer`
-    removal, `client_clear_scene_child_pointers`. DROP PR #394 leftovers. Re-add
-    `#include "../event_queue.h"`. **Mark every Phase-4 signal-emit hunk with a
-    `// TODO(kolo8-phase4)` comment instead of leaving it bare** — Phase 4 resolves the
-    TODOs. Codex diff review after 3.10 must confirm NO signal-emit hunk was modified.
+3.5 `property.c`/`property.h` — ~~RE-APPLY xproperty stubs~~ **DONE (skipped).** On
+    inspection the fork's `luaA_register/set/get_xproperty` are unreferenced dead code;
+    upstream's `luaA_awesome_register_xproperty` is the live wired-up version. Not
+    re-applied.
+3.6 `selection.c` — DONE (3a). RE-APPLIED `luaA_selection_get` hard-error (D4).
+3.7 `bench.c`, `systray.c` — DONE (3a). scenefx swap.
+3.8 `objects/drawable.c`, `objects/wibox.c` — DONE (3a). memory diagnostics + scenefx swap.
+3.9 `objects/button.c`/`objects/button.h` — ~~RE-APPLY button-matching helper~~ **DONE
+    (skipped).** `button_array_check` + helpers are unreferenced dead code with a TODO
+    inside (callback dispatch unimplemented). Not re-applied.
+3.10 `objects/client.c` feature subsystems + `objects/layer_surface.c` opacity subsystem
+    — **DEFERRED into the Phase 4 event-queue migration sub-plan (D3).** Rationale:
+    upstream touched `objects/client.c` with 12 commits in the sync window — the entire
+    event-queue refactor (`72a1504`/`c13d161`/`7119308`/`84a5d0b`/`affdf56`/`9c2d5da`/
+    `e609c61`/`6e5bcc3`) plus content-getter fixes (`5f3c4ef`/`551d4d5`/`100826c`) plus
+    `07ac746`. The fork's 30+ hunks are tightly interleaved feature-vs-signal-vs-
+    content-getter; separating "feature hunk" from "signal hunk" in this file IS the
+    event-queue migration analysis. Doing it as part of the Phase 4 sub-plan (designed
+    jointly with the user + Codex) is correct, not a separate Phase 3 step. Same for
+    `objects/layer_surface.c` (upstream `84a5d0b`/`e609c61` touched it).
+    The fork feature work that lands here: corner_radius/backdrop_blur subsystems,
+    `client_border_refresh`, `client_apply_opacity_to_scene` extension,
+    `client_ban_unfocus` mousegrabber guard, `client_set_minimized`/`_set_maximized_common`
+    rework, `luaA_client_set_floating` + `_c_floating`, titlebar corner hooks,
+    `client_clear_scene_child_pointers`, `_scene_layer` removal, layer-surface opacity
+    subsystem. DROP: PR #394 leftovers, the `luaA_client_get_content` "rewrite" (fork is
+    pre-`5f3c4ef` — #539 is Jimmy's issue, `5f3c4ef` his fix; take upstream).
+3.11 The luaa.c tag-slide helpers (`_client_scene_set_enabled`/`_set_strict_clip`,
+    deferred from Phase 2) land with the `objects/client.c` work — they depend on
+    `client_update_border_for_corners`.
 3.11 `objects/layer_surface.c` opacity subsystem — RE-APPLY (`ls_apply_opacity_to_tree`
     etc.). Downgrade the `[LS-OPACITY] SKIP` log from `WLR_ERROR` to `WLR_DEBUG`.
     Signal-emit hunks deferred to Phase 4.
