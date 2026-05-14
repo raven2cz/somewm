@@ -1026,9 +1026,12 @@ static void
 deferred_pointer_enter(void *data)
 {
 	(void)data;
-	pointer_enter_deferred_pending = 0;
-	/* Re-evaluate pointer focus with current cursor position */
+	/* Keep pending = 1 across the motionnotify() call: the pointerfocus()
+	 * it triggers must not re-arm another deferred re-delivery. One retry
+	 * resolves a genuine bind race; a client that still has no wl_pointer
+	 * resources here simply has none, and re-scheduling would spin forever. */
 	motionnotify(0, NULL, 0, 0, 0, 0);
+	pointer_enter_deferred_pending = 0;
 }
 
 void
