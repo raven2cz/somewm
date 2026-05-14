@@ -4,20 +4,22 @@ Date: 2026-05-14
 Sync branch: `sync/upstream-2026-05-13` (Phase 3b done at `d76122b`)
 Companion docs: `kolo8-migration-audit.md` (per-function A/B/C/D), `kolo8-integration-plan.md`
 
-**Status: v3 — Codex R1 (3 findings) + Sonnet independent 33-hunk audit + Codex R2
-(2 findings) all incorporated. R2 explicitly confirmed the reconciled
-objects/client.c table and all conversion rules are correct. One short R3
-confirming round on the v2→v3 fixes, then code. Per user instruction 2026-05-14:
-Codex is given the fork commit history so it understands the *essence and original
-placement* of every fork change.**
+**Status: v3 — GREEN. Codex R1 (3 findings) + Sonnet independent 33-hunk audit +
+Codex R2 (2 findings) + Codex R3 (1 doc-attribution nit) all incorporated. R2
+explicitly confirmed the reconciled objects/client.c table and all conversion
+rules are correct; R3 confirmed the xwayland.c / commitpopup / hunk-26 fixes.
+READY TO IMPLEMENT per §5 execution order. Per user instruction 2026-05-14: Codex
+was given the fork commit history across all 3 rounds so it understood the
+*essence and original placement* of every fork change.**
 
 v1→v2: Codex R1 — `_scene_layer` explicit KEEP-UPSTREAM, window.c idle-inhibit
 explicit DROP, double-emit grep expanded. Sonnet audit — objects/client.c §4
 replaced with the reconciled 33-hunk table; hunk 2 corrected; hunk 9 4-way split;
 hunk 15 flagged as deliberate fix.
 v2→v3: Codex R2 — xwayland.c must RE-APPLY `#include "objects/signal.h"` (the
-`xwayland::ready` emit needs it); `0c839f4` corrected — it touches window.c
-`commitpopup()` + objects/layer_surface.c, NOT objects/client.c.
+`xwayland::ready` emit needs it); `0c839f4` corrected — it touches protocols.c
+`commitlayersurfacenotify()` + window.c `commitpopup()` + objects/layer_surface.c,
+NOT objects/client.c. Codex R3 — `0c839f4` attribution line completed.
 
 This is the hardest phase. Upstream touched `objects/client.c` with 12 commits in
 the sync window — the entire event-queue refactor — so the fork's 30+ hunks there
@@ -148,9 +150,10 @@ are fork ports of commits upstream ALSO has — those are DUP, take upstream.
 - `25a1708`, `e7eb6c5`, `8eef823` fullscreen geometry preservation — window.c
   `setfullscreen` reentrance/no-op guards + max→fs→unfull memento.
 - `0c839f4` perf(opacity): skip no-op opacity re-apply at 1.0 — touches
-  **window.c `commitpopup()`** (popup opacity inheritance with `opacity >= 0 &&
-  opacity < 1.0f`) and **objects/layer_surface.c**. (Corrected per Codex R2 — NOT
-  objects/client.c.)
+  **protocols.c `commitlayersurfacenotify()`** (`ls->opacity >= 0` →
+  `ls->opacity >= 0 && ls->opacity < 1.0f`), **window.c `commitpopup()`** (popup
+  opacity inheritance), and **objects/layer_surface.c**. (Corrected per Codex R2/R3
+  — NOT objects/client.c.)
 - `867ba20` fix(stack): skip unmanaged clients in stack_refresh — == upstream `07ac746`
   (DUP, take upstream; stack.c already done Phase 3b).
 
