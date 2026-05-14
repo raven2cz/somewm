@@ -1,13 +1,21 @@
-# Kolo 8 — Phase 4: Event-Queue Migration Sub-Plan (v1)
+# Kolo 8 — Phase 4: Event-Queue Migration Sub-Plan (v2)
 
 Date: 2026-05-14
 Sync branch: `sync/upstream-2026-05-13` (Phase 3b done at `d76122b`)
 Companion docs: `kolo8-migration-audit.md` (per-function A/B/C/D), `kolo8-integration-plan.md`
 
-**Status: v1 — DRAFT. Must be reviewed by Codex (gpt-5.5) MULTIPLE rounds + a
-fresh audit before any code is written. Per user instruction 2026-05-14: Codex
-must be given the fork commit history so it understands the *essence and original
-placement* of every fork change, not just the raw diff.**
+**Status: v2 — incorporates Codex R1 (YELLOW, 3 findings) + a fresh independent
+Sonnet audit of all 33 objects/client.c hunks. The objects/client.c section is now
+a reconciled per-hunk table. Needs one more Codex confirming round before code is
+written. Per user instruction 2026-05-14: Codex is given the fork commit history
+so it understands the *essence and original placement* of every fork change.**
+
+v1→v2 changelog: Codex R1 — `_scene_layer` explicit KEEP-UPSTREAM (hunk 22/33),
+window.c idle-inhibit explicit DROP, double-emit grep expanded to all 3 emit
+helpers. Sonnet audit — objects/client.c §4 replaced with the reconciled 33-hunk
+table; hunk 2 corrected (Sonnet said apply fork's `event_queue.h` removal — wrong
+for the migrated file, it must stay); hunk 9 explicit 4-way split; hunk 15 flagged
+as a deliberate fix not fork-behind; hunk 14 confirmed RE-APPLY.
 
 This is the hardest phase. Upstream touched `objects/client.c` with 12 commits in
 the sync window — the entire event-queue refactor — so the fork's 30+ hunks there
@@ -250,6 +258,9 @@ Remaining:
   `setfullscreen` already emits it — double-emit).
 - DROP: the ~25 re-added forward declarations — header-dedup `ed4b4cf` moved them
   to `window.h`.
+- DROP (Codex R1): the fork's stale `some_recompute_idle_inhibit(...)` param-form
+  hunk in `window.c` (line ~230) — `7aa9351` removed the `exclude` param; keep
+  upstream's no-arg `some_recompute_idle_inhibit()` (consistent with Phase 2/3).
 - RE-APPLY fork features (NOT signal-related — clean adds):
   - `client_clear_scene_child_pointers()` + calls from both unmap paths.
   - `mapnotify()` call-site change for `schedule_flush_clients` (fork commit
@@ -271,73 +282,58 @@ Remaining:
   partially duplicate upstream `e7c14e6`/`2b6413c`/`9774101` — reconcile per the
   audit; do not double-apply.
 
-### objects/client.c — the hardest file, per-function plan
-30+ hunks. `/tmp/kolo8-client-c-delta.txt` has the full 953-line delta (regenerate
-with `git diff upstream/main..main -- objects/client.c`). Upstream's current queued
-signal sites (TAKE these, drop the fork's synchronous twins):
+### objects/client.c — the hardest file, reconciled 33-hunk plan
+The full delta (`git diff upstream/main..main -- objects/client.c`, ~953 lines, 33
+hunks) was independently audited by a fresh Sonnet agent AND cross-checked against
+Codex R1. The reconciled per-hunk classification below is authoritative. Upstream's
+current queued signal sites — TAKE these, drop the fork's synchronous twins:
 `client_unfocus_internal` 1921-1922, `client_focus_update` 2048-2049,
 `client_manage` 2419-2424 + 2469, `client_resize_do` 2695-2710, `client_unmanage`
 3191 + 3233, `luaA_client_swap` 3594-3603.
 
-Per-function classification:
-- `client_unfocus_internal` (hunk @1918): DROP fork synchronous emits — take
-  upstream's `SIG_PROPERTY_ACTIVE`/`SIG_UNFOCUS`. (Rule A)
-- `client_ban_unfocus` (hunk @1954): RE-APPLY — the mousegrabber early-return
-  (fork commit `f756ead`). Clean feature add, no signal interaction.
-- `client_focus_update` (hunk @2045): DROP fork synchronous — take upstream's
-  `SIG_PROPERTY_ACTIVE`/`SIG_FOCUS`. (Rule A)
-- `client_border_refresh` (hunk @2141): RE-APPLY — rounded-corner + opacity-alpha
-  preservation + the `c->fullscreen` border-hidden guard (fork commit `1809506`).
-  No signal interaction.
-- `client_manage` (hunks @2416, @2466, @2480): DROP the fork's synchronous
-  `property::*` + `client::list` + the bare `manage` emit (Rule A + `affdf56`).
-  RE-APPLY any fork feature lines NOT signal-related (check the hunk).
-- `client_resize_do` (hunk @2692): DROP the fork's synchronous geometry-signal
-  block — take upstream's `some_event_queue_signal0(SIG_PROPERTY_*)`. RE-APPLY any
-  fork aspect-ratio / content math interleaved. (Rule A + Rule E)
-- `client_resize` (hunk @2768): inspect — likely fork geometry math, RE-APPLY.
-- `client_set_minimized` (hunk @2824): RE-APPLY — the xdg-state-removal rework
-  (fork commit `f842847`). No signal interaction (the `property::minimized` emit
-  is unchanged / not in the SIG_ enum — verify).
-- `client_set_fullscreen` (hunk @2942): inspect — fork comment-only delta per
-  Group 2 audit; take upstream.
-- `client_set_maximized_common` (hunks @2991, @3007): RE-APPLY — the
-  `wlr_xdg_toplevel_set_maximized` sync (fork commit `748070e`).
-- `client_unmanage` (hunks @3188, @3228): DROP synchronous `SIG_MOUSE_LEAVE`/
-  `SIG_LIST` twins + bare `unmanage` emit — take upstream queued. RE-APPLY
-  `client_clear_scene_child_pointers` call if present. (Rule A + Rule D)
-- `luaA_client_swap` (hunk @3591): DROP fork synchronous `SIG_LIST`/`SIG_SWAPPED`
-  twins — take upstream queued. (Rule A)
-- `luaA_client_get_first_tag` area (hunk @3685, -39 lines): this is the
-  `luaA_client_get_content` rewrite + `_scene_layer` removal region. **DROP the
-  content-getter "rewrite"** — fork is pre-`5f3c4ef` (#539 is Jimmy's issue,
-  `5f3c4ef` his fix; root.c already kept upstream's `5f3c4ef` infra in Phase 3b).
-  Take upstream's scene-walk content getter. The `_scene_layer` removal — inspect:
-  if it's a deliberate fork API removal, RE-APPLY; if fork-behind, take upstream.
-- `titlebar_get_drawable` / `titlebar_resize` (hunks @3953, @4023): RE-APPLY —
-  titlebar corner-radius hooks.
-- `luaA_client_set_ontop` (hunk @4305): inspect — likely fork z-order/`_c_floating`
-  related, RE-APPLY.
-- `client_apply_opacity_to_scene` (hunk @4365): RE-APPLY — extended to borders/
-  shadow/frame + the no-op-at-1.0 skip (fork commit `0c839f4`).
-- `luaA_client_set_opacity` + the +285-line hunk @4407: RE-APPLY — the
-  corner_radius / backdrop_blur subsystems (`client_apply_corner_radius`,
-  `client_update_border_for_corners`, `client_apply_backdrop_blur`), the scenefx
-  disable-on-client-buffers fix (`f5164d2`), `luaA_client_set_floating` +
-  `_c_floating` property. The biggest single feature block.
-- hunks @4552, @4638 (+118 lines): inspect — more corner/blur/floating subsystem.
-- `luaA_client_border_is_*_color` (hunks @5224, @5248): inspect — likely
-  scenefx border_frame, RE-APPLY.
-- `client_class_setup` (hunks @5316, @5336): RE-APPLY — register the new Lua
-  properties (`corner_radius`, `backdrop_blur`, `_c_floating`, opacity extensions).
-- Header includes (hunks @92-@133): RE-APPLY `scenefx_compat.h` swap, re-add
-  `#include "../event_queue.h"`, `mousegrabber.h`. DROP `screenshot_compose.h`
-  removal — keep upstream's (root.c kept `5f3c4ef`'s screenshot infra).
-  ⚠ Note `screenshot_compose.h` decision: since we kept upstream's `5f3c4ef`,
-  objects/client.c must use upstream's content getter which `#include`s
-  `screenshot_compose.h` — keep it.
-- DROP throughout: PR #394 `initialized`-guard leftovers (client.h guards already
-  dropped Phase 2).
+| # | hunk / fn | verdict | notes |
+|---|-----------|---------|-------|
+| 1 | @92 includes | RE-APPLY | add `#include "objects/mousegrabber.h"` (needed by hunk 7) |
+| 2 | @101 includes | **KEEP UPSTREAM** | ⚠ Sonnet said "apply fork's `event_queue.h` removal" — WRONG for the migrated file. After migration objects/client.c USES the queue (we take upstream's `some_event_queue_*` sites). `#include "../event_queue.h"` MUST stay (Rule D). |
+| 3 | @110 includes | KEEP UPSTREAM | DROP the fork's `screenshot_compose.h` removal — paired with hunk 29; upstream's content getter needs it. |
+| 4 | @120 includes | RE-APPLY | `scenefx_compat.h` swap (SceneFX core) |
+| 5 | @133 globals | KEEP UPSTREAM | DROP the fork's `extern layers[NUM_LAYERS]` removal — upstream's `_scene_layer` (hunk 22/33) needs it. |
+| 6 | @1918 `client_unfocus_internal` | DROP-SIGNAL | take upstream `SIG_PROPERTY_ACTIVE`/`SIG_UNFOCUS` |
+| 7 | @1954 `client_ban_unfocus` | RE-APPLY | mousegrabber early-return (`f756ead`, PR #521) |
+| 8 | @2045 `client_focus_update` | DROP-SIGNAL | take upstream `SIG_PROPERTY_ACTIVE`/`SIG_FOCUS` |
+| 9 | @2141 `client_border_refresh` | **MIXED — split 4 ways** | RE-APPLY all four interleaved fork sub-features: (a) `c->bw = c->fullscreen ? 0 : c->border_width` fullscreen guard (`1809506`); (b) `client_update_border_for_corners(c)` dispatch instead of 4-rect resize (SceneFX corner-radius); (c) opacity-alpha preservation in border color (SceneFX opacity); (d) `#ifdef HAVE_SCENEFX … border_frame` color update. Do NOT treat as one block. |
+| 10 | @2416 `client_manage` | DROP-SIGNAL | take upstream `SIG_PROPERTY_X/Y/WIDTH/HEIGHT/GEOMETRY` |
+| 11 | @2466 `client_manage` | DROP-SIGNAL | take upstream `some_event_queue_class(SIG_LIST)` |
+| 12 | @2480 `client_manage` | DROP-SIGNAL | the fork's `/*TODO v6*/ "manage"` bare emit — `affdf56` removed it; no fork Lua connects to bare `manage` (verified). Discard. |
+| 13 | @2692 `client_resize_do` | DROP-SIGNAL | take upstream's 7 `some_event_queue_signal0(SIG_PROPERTY_*)` sites |
+| 14 | @2768 `client_resize` | RE-APPLY | aspect-ratio reworked to operate on **content area** (excl. borders/titlebars) — semantics fix; upstream applies ratio to full geometry (wrong with titlebars) |
+| 15 | @2824 `client_set_minimized` | RE-APPLY | ⚠ NOT fork-behind — the fork DELIBERATELY removed `wlr_xdg_toplevel_set_suspended()` here (`f842847`, KWin-aligned single-configure fix for Firefox/Chrome CSD stale hit regions). Upstream still has the call; re-applying the fork = removing it. |
+| 16 | @2942 `client_set_fullscreen` | KEEP UPSTREAM | fork delta is comment-only; upstream's comment is fine |
+| 17 | @2991 `client_set_maximized_common` | KEEP UPSTREAM | fork delta is comment truncation only |
+| 18 | @3007 `client_set_maximized_common` | RE-APPLY | `wlr_xdg_toplevel_set_maximized(...)` CSD sync (`748070e`) |
+| 19 | @3188 `client_unmanage` | DROP-SIGNAL | take upstream `some_event_queue_signal0(SIG_MOUSE_LEAVE)` |
+| 20 | @3228 `client_unmanage` | DROP-SIGNAL ×2 | (a) bare `unmanage` emit → discard (`affdf56`); (b) `list` → take upstream `SIG_LIST`. Both drop-signal. |
+| 21 | @3591 `luaA_client_swap` | DROP-SIGNAL | take upstream `SIG_LIST` + 2× `SIG_SWAPPED` |
+| 22 | @3685 `luaA_client_get__scene_layer` | KEEP UPSTREAM | DROP the fork's deletion — upstream's `_scene_layer` getter is from `07ac746` (override-redirect stacking tests); fork commit `867ba20` solved stacking differently and never removed it. |
+| 23 | @3953 `titlebar_get_drawable` | RE-APPLY | `#ifdef HAVE_SCENEFX` immediate `wlr_scene_buffer_set_corner_radius` on new titlebars |
+| 24 | @4023 `titlebar_resize` | RE-APPLY | `client_apply_corner_radius(c)` after titlebar resize |
+| 25 | @4305 `luaA_client_set_floating` (new fn) | RE-APPLY | `_c_floating` property setter — required by stack.c |
+| 26 | @4365 `client_apply_opacity_to_scene` | RE-APPLY | extend opacity to shadow tree + 4 border rects + `#ifdef HAVE_SCENEFX` border_frame + no-op-at-1.0 skip (`0c839f4`) |
+| 27 | @4407 (+285 lines, new fns) | RE-APPLY | the big SceneFX block: `apply_corner_radius_to_tree`, `client_apply_corner_radius`, `client_update_border_for_corners`, `luaA_client_get/set_corner_radius`, `apply_backdrop_blur_to_tree`, `client_apply_backdrop_blur`, `luaA_client_get/set_backdrop_blur` (incl. `f5164d2` `backdrop_blur_optimized=false` fix). No upstream equivalent — easy to omit; do NOT. |
+| 28 | @4552 export macro | RE-APPLY | `LUA_OBJECT_EXPORT_PROPERTY(client, client_t, floating, lua_pushboolean)` — pairs with hunk 25 |
+| 29 | @4638 `luaA_client_get_content` | DROP-TRIAGE | take upstream's `5f3c4ef` scene-walk getter; fork's is the pre-`5f3c4ef` direct-readback (Firefox-blank #539 = Jimmy's issue, `5f3c4ef` his fix). Paired with hunk 3. |
+| 30 | @5224 `luaA_client_border_is_focus_color` | RE-APPLY | check `border_frame` before `border[0]` (rounded-corner aware) |
+| 31 | @5248 `luaA_client_border_is_normal_color` | RE-APPLY | same as 30 for unfocused color |
+| 32 | @5316 `client_class_setup` | RE-APPLY | register `backdrop_blur` + `corner_radius` properties |
+| 33 | @5336 `client_class_setup` | **MIXED** | RE-APPLY the `_c_floating` registration; KEEP UPSTREAM's `_scene_layer` registration (DROP the fork's removal of it). |
+
+Cross-cutting: DROP throughout any PR #394 `initialized`-guard leftovers (client.h
+guards already dropped Phase 2). The `client_clear_scene_child_pointers` calls the
+audit mentioned are in **window.c**, not objects/client.c — see the window.c section.
+
+At-risk features (Sonnet flagged — extra care): hunk 9 (4-way split), hunk 15
+(deliberate fix, not fork-behind), hunk 27 (285-line block, no upstream context),
+hunk 33 (add `_c_floating` while keeping `_scene_layer`).
 
 ### objects/layer_surface.c — surgical
 - DROP (Rule A): `layer_surface_manage` / `layer_surface_emit_unmanage` synchronous
@@ -386,9 +382,16 @@ the `_client_scene_set_*` methods (fork commit `4dc0fbf`). No edit expected.
 - `somewm --check` 30/30.
 - The 4 upstream `tests/test-event-queue-*.lua` MUST pass.
 - focus / mouse / xwayland regression test suites.
-- **Double-emit grep:** after the phase, grep all Phase-4 files for any surviving
-  `luaA_object_emit_signal` of a name that maps to a `SIG_*` enum entry — must be
-  zero (except the Rule-B kept-synchronous `request::manage/unmanage/geometry`).
+- **Double-emit grep (expanded, Codex R1):** after the phase, grep all Phase-4
+  files for any surviving stale converted-signal emit — must be zero (except the
+  Rule-B kept-synchronous `request::manage/unmanage/geometry/keyboard` and the
+  Rule-C fork-new signals). Cover ALL three emit helpers:
+  - `luaA_object_emit_signal(...)` of `property::geometry/position/size/x/y/width/
+    height`, `property::active`, `focus`, `unfocus`, `mouse::enter/leave/move`,
+    `request::activate/urgent/tag/select`.
+  - `luaA_class_emit_signal(..., "list")` / `"swapped"`.
+  - `luaA_emit_signal_global("client::focus")` / `"client::unfocus"` /
+    `"client::property::geometry"`.
 - Sandbox (headless, lgi guard LD_PRELOADed):
   - startup, hot-reload, client map/unmap, focus changes.
   - mouse hover across monitors (screen::focus), drag (PR #521 cross-monitor).
