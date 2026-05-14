@@ -1886,9 +1886,66 @@ bool some_is_lock_drawin(drawin_t *d) {
 	return false;
 }
 
-/* NOTE: the tag-slide animation helpers (awesome._client_scene_set_enabled /
- * _client_scene_set_strict_clip) are added in Phase 3 — they depend on
- * client_update_border_for_corners(), defined in objects/client.c (Phase 3). */
+/* ==========================================================================
+ * Tag Slide Animation Helpers
+ * ========================================================================== */
+
+/** awesome._client_scene_set_enabled(c, bool)
+ * Toggle a client's scene node visibility without touching isbanned flag.
+ * Used by tag slide animation to temporarily show banned (old tag) clients.
+ */
+static int
+luaA_awesome_client_scene_set_enabled(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	bool enabled = lua_toboolean(L, 2);
+
+	if (c->scene)
+		wlr_scene_node_set_enabled(&c->scene->node, enabled);
+
+	return 0;
+}
+
+/** awesome._client_scene_set_strict_clip(c, bool)
+ * Toggle strict per-monitor clipping for a client. When enabled, decoration
+ * nodes (borders, shadow, titlebars) are hidden whenever the client is not
+ * fully inside its owning monitor, preventing bleed onto neighbouring
+ * outputs during tag slide animation. Surface content is already clipped by
+ * apply_geometry_to_wlroots() regardless of this flag. Default off preserves
+ * drag-to-edge decoration visibility.
+ *
+ * When disabling, restore decorations directly (bypassing the full
+ * apply_geometry_to_wlroots() path) to avoid spurious XDG
+ * reconfigure/commit round-trips that briefly expose a transparent frame
+ * on backdrop-blur surfaces (e.g. Ghostty). Enable just sets the flag —
+ * the next animation-driven geometry change picks it up naturally.
+ */
+static int
+luaA_awesome_client_scene_set_strict_clip(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	bool on = lua_toboolean(L, 2);
+	if (c->strict_clip == on)
+		return 0;
+	c->strict_clip = on;
+
+	if (!on && c->scene) {
+		/* Restore decorations in place: if the client is still partially
+		 * off-screen when the animation ends, apply_geometry_to_wlroots()
+		 * would hide them again via the existing per-mon clip logic; but
+		 * in the tag_slide finish() path the client is already landed at
+		 * its target, so the fully_inside branch would re-enable these
+		 * anyway. Re-enabling here keeps the decoration state consistent
+		 * even if geometry didn't change across the toggle. */
+		client_update_border_for_corners(c);
+		if (c->shadow.tree)
+			wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+		client_update_titlebar_positions(c);
+	}
+	return 0;
+}
 
 /* awesome module methods */
 #ifdef SOMEWM_BENCH
@@ -2089,7 +2146,10 @@ const luaL_Reg awesome_methods[] = {
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
 	/* Animation API */
 	{ "start_animation", luaA_start_animation },
-	/* _client_scene_set_enabled / _client_scene_set_strict_clip added in Phase 3 */
+	/* Client scene visibility toggle (used by tag slide animation) */
+	{ "_client_scene_set_enabled", luaA_awesome_client_scene_set_enabled },
+	/* Client strict per-monitor clip toggle (used by tag slide animation) */
+	{ "_client_scene_set_strict_clip", luaA_awesome_client_scene_set_strict_clip },
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
