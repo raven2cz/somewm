@@ -36,6 +36,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "input.h"
+#include "event_queue.h"
 #include "monitor.h"
 #include "globalconf.h"
 #include "client.h"
@@ -54,7 +55,6 @@
 #include "objects/signal.h"
 #include "event.h"
 #include "xkb.h"
-#include "bench.h"
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 
@@ -64,6 +64,7 @@
 #include "focus.h"
 #include "window.h"
 #include "somewm_internal.h"
+#include "bench.h"
 
 /* Module-private state */
 static unsigned int cursor_mode;
@@ -696,7 +697,7 @@ mouse_emit_leave(lua_State *L)
 	if (globalconf.mouse_under.type == UNDER_CLIENT) {
 		client_t *c = globalconf.mouse_under.ptr.client;
 		luaA_object_push(L, c);
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	} else if (globalconf.mouse_under.type == UNDER_DRAWIN) {
 		drawin_t *d = globalconf.mouse_under.ptr.drawin;
@@ -704,7 +705,7 @@ mouse_emit_leave(lua_State *L)
 		if (lua_isnil(L, -1)) {
 			warn("mouse::leave on unregistered drawin %p", (void*)d);
 		}
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 	}
 	globalconf.mouse_under.type = UNDER_NONE;
@@ -712,7 +713,7 @@ mouse_emit_leave(lua_State *L)
 	/* Also clear drawable tracking - emit leave on drawable if any */
 	if (globalconf.drawable_under_mouse != NULL) {
 		luaA_object_push(L, globalconf.drawable_under_mouse);
-		luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+		some_event_queue_signal0(L, -1, SIG_MOUSE_LEAVE);
 		lua_pop(L, 1);
 		luaA_object_unref(L, globalconf.drawable_under_mouse);
 		globalconf.drawable_under_mouse = NULL;
@@ -724,7 +725,7 @@ void
 mouse_emit_client_enter(lua_State *L, client_t *c)
 {
 	luaA_object_push(L, c);
-	luaA_object_emit_signal(L, -1, "mouse::enter", 0);
+	some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_CLIENT;
 	globalconf.mouse_under.ptr.client = c;
@@ -738,7 +739,7 @@ mouse_emit_drawin_enter(lua_State *L, drawin_t *d)
 	if (lua_isnil(L, -1)) {
 		warn("mouse::enter on unregistered drawin %p", (void*)d);
 	}
-	luaA_object_emit_signal(L, -1, "mouse::enter", 0);
+	some_event_queue_signal0(L, -1, SIG_MOUSE_ENTER);
 	lua_pop(L, 1);
 	globalconf.mouse_under.type = UNDER_DRAWIN;
 	globalconf.mouse_under.ptr.drawin = d;
@@ -935,14 +936,14 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				mouse_emit_client_enter(L, current_client);
 			}
 
-			/* Always emit mouse::move on current client */
+			/* Always emit mouse::move on current client (coalesced per frame) */
 			luaA_object_push(L, current_client);
 			if (lua_isnil(L, -1)) {
 				warn("mouse::move on unregistered client %p", (void*)current_client);
 			}
-			lua_pushinteger(L, (int)(cursor->x - current_client->geometry.x));
-			lua_pushinteger(L, (int)(cursor->y - current_client->geometry.y));
-			luaA_object_emit_signal(L, -3, "mouse::move", 2);
+			some_event_queue_move(L, -1,
+				(int)(cursor->x - current_client->geometry.x),
+				(int)(cursor->y - current_client->geometry.y));
 			lua_pop(L, 1);
 
 			/* Check if mouse is over a titlebar drawable - emit signals for widget hover */
@@ -958,9 +959,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				int tb_x = (int)(cursor->x - current_client->geometry.x);
 				int tb_y = (int)(cursor->y - current_client->geometry.y);
 				client_get_drawable_offset(current_client, &tb_x, &tb_y);
-				lua_pushinteger(L, tb_x);
-				lua_pushinteger(L, tb_y);
-				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+				some_event_queue_move(L, -1, tb_x, tb_y);
 
 				lua_pop(L, 2);  /* pop drawable and client */
 				}
@@ -987,9 +986,9 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 				luaA_object_push_item(L, -1, current_drawin->drawable);
 				event_drawable_under_mouse(L, -1);
 
-				lua_pushinteger(L, (int)cursor->x - current_drawin->x);
-				lua_pushinteger(L, (int)cursor->y - current_drawin->y);
-				luaA_object_emit_signal(L, -3, "mouse::move", 2);
+				some_event_queue_move(L, -1,
+					(int)cursor->x - current_drawin->x,
+					(int)cursor->y - current_drawin->y);
 
 				lua_pop(L, 2);
 			}
@@ -1027,9 +1026,12 @@ static void
 deferred_pointer_enter(void *data)
 {
 	(void)data;
-	pointer_enter_deferred_pending = 0;
-	/* Re-evaluate pointer focus with current cursor position */
+	/* Keep pending = 1 across the motionnotify() call: the pointerfocus()
+	 * it triggers must not re-arm another deferred re-delivery. One retry
+	 * resolves a genuine bind race; a client that still has no wl_pointer
+	 * resources here simply has none, and re-scheduling would spin forever. */
 	motionnotify(0, NULL, 0, 0, 0, 0);
+	pointer_enter_deferred_pending = 0;
 }
 
 void
@@ -1136,7 +1138,9 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 		if (sym == XKB_KEY_Terminate_Server) {
 			if (session_is_locked())
 				return 1;
-			wl_display_terminate(dpy);
+			/* Quits the GLib main loop. wl_display_terminate() alone
+			 * is a no-op here — g_main_loop_run() is the primary loop. */
+			some_compositor_quit();
 			return 1;
 		}
 		/* Ctrl-Alt-F1..F12: Switch to VT 1-12
@@ -1299,7 +1303,7 @@ keyrepeat(void *data)
 	 * and re-firing the binding that started it causes flicker for
 	 * toggle-style keybindings that alternate state at the repeat rate.
 	 * Mirrors the guard in keypress() above. */
-	if (some_keygrabber_is_running()) {
+	if (!locked && some_keygrabber_is_running()) {
 		group->nsyms = 0;
 		return 0;
 	}
@@ -1440,8 +1444,8 @@ createkeyboardgroup(void)
 	rules.layout = globalconf.keyboard.xkb_layout;
 	rules.variant = globalconf.keyboard.xkb_variant;
 	rules.options = globalconf.keyboard.xkb_options;
-	rules.rules = NULL;
-	rules.model = NULL;
+	rules.rules = globalconf.keyboard.xkb_rules;
+	rules.model = globalconf.keyboard.xkb_model;
 
 	if (!(keymap = xkb_keymap_new_from_names(context, &rules,
 				XKB_KEYMAP_COMPILE_NO_FLAGS)))

@@ -143,8 +143,13 @@ start_somewm() {
     # immediately and the IPC connection test fails.
     rm -f "$SOCKET"
 
-    # Start compositor (uses XDG_CONFIG_HOME for config)
-    timeout $TEST_TIMEOUT "$SOMEWM" > "$LOG" 2>&1 &
+    # Start compositor (uses XDG_CONFIG_HOME for config).
+    # Do NOT wrap in `timeout`: that makes $! the timeout-wrapper PID, so
+    # every kill -KILL "$SOMEWM_PID" below would kill the wrapper and leave
+    # the real compositor orphaned (one leaked compositor per test). The
+    # per-test deadline is already enforced by the bounded wait loop in
+    # run_test() and by the `timeout` on the IPC eval call.
+    "$SOMEWM" > "$LOG" 2>&1 &
     SOMEWM_PID=$!
 
     # Wait for socket

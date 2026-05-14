@@ -26,6 +26,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "event_queue.h"
 #include "globalconf.h"
 #include "client.h"
 #include "common/luaobject.h"
@@ -375,7 +376,7 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 
 /** Check if idle is effectively inhibited (for Lua API and idle timers). */
 bool
-some_is_idle_inhibited(struct wlr_surface *exclude)
+some_is_idle_inhibited(void)
 {
 	int unused_lx, unused_ly;
 	struct wlr_idle_inhibitor_v1 *inhibitor;
@@ -384,14 +385,19 @@ some_is_idle_inhibited(struct wlr_surface *exclude)
 		return false;
 
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
+		// Attention: When some_is_idle_inhibited() is called during
+		// destroyidleinhibitor() signal handler then
+		// idle_inhibit_mgr->inhibitors still contains the respective
+		// inhibitor, however, the below scene tree is already torn down and
+		// wlr_scene_node_coords() cannot be called.
+		if (!inhibitor->surface->mapped)
+			continue;
+
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		/* Direct surface->data read (not client_surface_get_scene_tree):
-		 * idle-inhibit surfaces may be non-Client (layer-shell, popups)
-		 * whose ->data semantics differ. !tree is treated as "visible". */
 		struct wlr_scene_tree *tree = surface->data;
 
-		if (exclude != surface && (globalconf.appearance.bypass_surface_visibility || (!tree
-				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly)))) {
+		if (globalconf.appearance.bypass_surface_visibility || (!tree
+				|| wlr_scene_node_coords(&tree->node, &unused_lx, &unused_ly))) {
 			return true;
 		}
 	}
@@ -429,7 +435,6 @@ some_push_idle_inhibitors(lua_State *L)
 	lua_newtable(L);
 	wl_list_for_each(inhibitor, &idle_inhibit_mgr->inhibitors, link) {
 		struct wlr_surface *surface = wlr_surface_get_root_surface(inhibitor->surface);
-		/* See some_is_idle_inhibited() for rationale on raw ->data read. */
 		struct wlr_scene_tree *tree = surface->data;
 		bool visible = globalconf.appearance.bypass_surface_visibility
 			|| (!tree || wlr_scene_node_coords(&tree->node, &lx, &ly));
@@ -458,15 +463,14 @@ createidleinhibitor(struct wl_listener *listener, void *data)
 	struct wlr_idle_inhibitor_v1 *idle_inhibitor = data;
 	LISTEN_STATIC(&idle_inhibitor->events.destroy, destroyidleinhibitor);
 
-	some_recompute_idle_inhibit(NULL);
+	some_recompute_idle_inhibit();
 }
 
 static void
 destroyidleinhibitor(struct wl_listener *listener, void *data)
 {
-	/* `data` is the wlr_surface of the idle inhibitor being destroyed,
-	 * at this point the idle inhibitor is still in the list of the manager */
-	some_recompute_idle_inhibit(wlr_surface_get_root_surface(data));
+	some_recompute_idle_inhibit();
+
 	wl_list_remove(&listener->link);
 	free(listener);
 }
@@ -602,7 +606,7 @@ foreign_toplevel_request_activate(struct wl_listener *listener, void *data)
 	lua_setfield(L, -2, "switch_to_tag");
 	lua_pushboolean(L, true);
 	lua_setfield(L, -2, "raise");
-	luaA_object_emit_signal(L, -3, "request::activate", 2);
+	some_event_queue_signal(L, -3, SIG_REQUEST_ACTIVATE, 2);
 	lua_pop(L, 1);
 }
 
@@ -805,12 +809,12 @@ void urgent(struct wl_listener *listener, void *data)
 	L = globalconf_get_lua_State();
 	luaA_object_push(L, c);
 	lua_pushstring(L, token_matched ? "startup" : "client");  /* context */
-	luaA_object_emit_signal(L, -2, "request::activate", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_ACTIVATE, 1);
 	lua_pop(L, 1);
 
 	/* Emit request::urgent and let Lua decide (matches AwesomeWM) */
 	luaA_object_push(L, c);
 	lua_pushboolean(L, true);
-	luaA_object_emit_signal(L, -2, "request::urgent", 1);
+	some_event_queue_signal(L, -2, SIG_REQUEST_URGENT, 1);
 	lua_pop(L, 1);
 }

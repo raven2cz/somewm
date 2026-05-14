@@ -115,9 +115,12 @@ local steps = {
     end,
 
     -- Kill first client for next test
-    function()
-        if c1 and c1.valid then c1:kill() end
-        return true
+    function(count)
+        if count == 1 then
+            c1:kill()
+        end
+        if not utils.find_client_by_class("peek_a") then return true end
+        if count >= 10 then return true end
     end,
 
     ---------------------------------------------------------------------------
@@ -202,9 +205,22 @@ local steps = {
     end,
 
     -- Cleanup
-    test_client.step_force_cleanup(function()
-        carousel.peek_width = 0
-    end),
+    function(count)
+        if count == 1 then
+            carousel.peek_width = 0
+            for _, c in ipairs(client.get()) do
+                if c.valid then c:kill() end
+            end
+        end
+        if #client.get() == 0 then return true end
+        if count >= 10 then
+            local pids = test_client.get_spawned_pids()
+            for _, pid in ipairs(pids) do
+                os.execute("kill -9 " .. pid .. " 2>/dev/null")
+            end
+            return true
+        end
+    end,
 }
 
 runner.run_steps(steps, { kill_clients = false })

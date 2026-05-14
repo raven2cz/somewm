@@ -17,6 +17,7 @@
 #include "common/luaclass.h"
 #include "common/luaobject.h"
 #include "somewm_api.h"
+#include "../event_queue.h"
 
 /* Layer surface class (global) */
 lua_class_t layer_surface_class;
@@ -87,7 +88,7 @@ void
 layer_surface_apply_opacity_to_scene(layer_surface_t *ls, float opacity)
 {
 	if (!ls || !ls->ls || !ls->ls->scene) {
-		wlr_log(WLR_ERROR, "[LS-OPACITY] SKIP: ls=%p ls->ls=%p scene=%p opacity=%.2f",
+		wlr_log(WLR_DEBUG, "[LS-OPACITY] SKIP: ls=%p ls->ls=%p scene=%p opacity=%.2f",
 			(void *)ls, ls ? (void *)ls->ls : NULL,
 			(ls && ls->ls) ? (void *)ls->ls->scene : NULL, opacity);
 		return;
@@ -464,7 +465,7 @@ layer_surface_manage(lua_State *L, LayerSurface *c_ls)
 	layer_surface_array_push(&globalconf.layer_surfaces, ls);
 
 	/* Emit class list signal */
-	luaA_class_emit_signal(L, &layer_surface_class, "list", 0);
+	some_event_queue_class(&layer_surface_class, SIG_LIST);
 
 	return ls;
 }
@@ -532,7 +533,7 @@ layer_surface_emit_unmanage(layer_surface_t *ls)
 	}
 
 	/* Emit class list signal */
-	luaA_class_emit_signal(L, &layer_surface_class, "list", 0);
+	some_event_queue_class(&layer_surface_class, SIG_LIST);
 }
 
 /*

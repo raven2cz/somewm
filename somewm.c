@@ -77,6 +77,7 @@
 #include "common/util.h"
 #include "common/lualib.h"
 #include "wlr_compat.h"
+#include "nested_inhibitor.h"
 #include "globalconf.h"
 #include "luaa.h"
 #include "stack.h"
@@ -91,6 +92,7 @@
 #include "objects/drawin.h"
 #include "objects/signal.h"
 #include "objects/mousegrabber.h"
+#include "event_queue.h"
 #include "xwayland.h"
 #include "protocols.h"
 #include "monitor.h"
@@ -246,14 +248,15 @@ sync_client_remove_from_arrays(Client *c)
 }
 
 void
-some_recompute_idle_inhibit(struct wlr_surface *exclude)
+some_recompute_idle_inhibit(void)
 {
-	bool inhibited = some_is_idle_inhibited(exclude) || some_is_lua_idle_inhibited();
+	bool inhibited = some_is_idle_inhibited() || some_is_lua_idle_inhibited();
 	wlr_idle_notifier_v1_set_inhibited(idle_notifier, inhibited);
 	some_idle_timers_set_inhibit(inhibited);
 
 	if (inhibited != last_idle_inhibited) {
 		last_idle_inhibited = inhibited;
+		// Note that this will cause a call to some_is_idle_inhibited() in luaa.
 		luaA_emit_signal_global("property::idle_inhibited");
 	}
 }
@@ -283,6 +286,12 @@ cleanup(void)
 
 	/* Free animations before Lua state (they hold registry refs) */
 	animation_cleanup();
+
+	/* Drain pending event queue refs before tearing down the Lua state.
+	 * client_unmanage() runs during wl_display_destroy_clients() and
+	 * queues mouse::leave / list events; wiping here releases their
+	 * registry refs and frees the buffer that was reallocated for them. */
+	some_event_queue_wipe();
 
 	/* Close Lua after clients are destroyed (matches AwesomeWM pattern) */
 	luaA_cleanup();
@@ -509,9 +518,20 @@ handlesig(int signo)
 			int res = write(sigchld_pipe[1], " ", 1);
 			(void) res;  /* Ignore write errors in signal handler */
 		}
-	} else if (signo == SIGINT || signo == SIGTERM) {
-		wl_display_terminate(dpy);
 	}
+}
+
+/** GLib callback for SIGINT/SIGTERM (registered via g_unix_signal_add).
+ * The primary loop is g_main_loop_run(), so wl_display_terminate() would be a
+ * no-op here — quit the GLib loop instead. Runs in main-loop context, so it is
+ * safe to touch GLib state directly. */
+static gboolean
+quit_signal_cb(gpointer data)
+{
+	(void) data;
+	if (globalconf.loop)
+		g_main_loop_quit(globalconf.loop);
+	return G_SOURCE_REMOVE;
 }
 
 /** GLib callback for SIGCHLD pipe (AwesomeWM pattern).
@@ -748,6 +768,12 @@ some_refresh(void)
 	stage_start = bench_start;
 #endif
 
+	/* Step 0: Drain queued events - dispatch batched signals to Lua.
+	 * Must happen before the refresh signal so Lua handlers see
+	 * up-to-date state when layout runs.
+	 * Included in the lua_refresh stage timing. */
+	some_event_queue_drain(globalconf_L);
+
 	/* Step 1: Emit refresh signal - triggers Lua layout calculations */
 	luaA_emit_signal_global("refresh");
 
@@ -885,6 +911,19 @@ run(char *startup_cmd)
 		/* Emit startup signal to initialize Lua modules (matches AwesomeWM) */
 		luaA_emit_signal_global("startup");
 
+		/* In a test instance, remap Mod4 -> Mod1 if the host can't forward shortcuts. */
+		if (getenv("SOMEWM_TEST_NAME")) {
+			if (luaL_dostring(globalconf_L,
+				"local ok, m = pcall(require, 'awful.test_marker'); "
+				"if ok and m and m.apply then m.apply() end") != 0) {
+				const char *err = lua_tostring(globalconf_L, -1);
+				fprintf(stderr,
+					"[test_marker] failed to apply: %s\n",
+					err ? err : "(no error)");
+				lua_pop(globalconf_L, 1);
+			}
+		}
+
 		/* Ensure all drawables created during startup have their content
 		 * pushed to scene buffers. This fixes the timing issue where wiboxes
 		 * don't appear until an external event triggers some_refresh().
@@ -1014,7 +1053,7 @@ run(char *startup_cmd)
 void
 setup(void)
 {
-	int i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
+	int i, sig[] = {SIGCHLD, SIGPIPE};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
 
@@ -1028,6 +1067,13 @@ setup(void)
 
 	/* Setup GLib watch for SIGCHLD pipe */
 	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
+
+	/* SIGINT/SIGTERM go through GLib's unix-signal source: the callback runs
+	 * in main-loop context and quits g_main_loop_run() cleanly. A bare
+	 * sigaction handler could only call wl_display_terminate(), which is a
+	 * no-op since the GLib loop — not wl_display_run() — is the primary loop. */
+	g_unix_signal_add(SIGINT, quit_signal_cb, NULL);
+	g_unix_signal_add(SIGTERM, quit_signal_cb, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
@@ -1045,6 +1091,9 @@ setup(void)
 	 * if an X11 server is running. */
 	if (!(backend = wlr_backend_autocreate(event_loop, &session)))
 		die("couldn't create backend");
+
+	/* Ask the host compositor to forward Mod4 combos when nested. */
+	nested_inhibitor_init(backend);
 
 	/* Initialize the scene graph used to lay out windows */
 	scene = wlr_scene_create();
@@ -1330,6 +1379,8 @@ setup(void)
 	globalconf.keyboard.xkb_layout = NULL;
 	globalconf.keyboard.xkb_variant = NULL;
 	globalconf.keyboard.xkb_options = NULL;
+	globalconf.keyboard.xkb_model = NULL;
+	globalconf.keyboard.xkb_rules = NULL;
 	globalconf.keyboard.repeat_rate = 25;
 	globalconf.keyboard.repeat_delay = 600;
 
@@ -1368,12 +1419,13 @@ setup(void)
 	xwayland_setup();
 
 	luaA_init();
+	some_event_queue_init();
 
 	/* Initialize animation subsystem (must be AFTER luaA_init for Lua state) */
 	animation_init(event_loop);
 	animation_setup(globalconf_get_lua_State());
 
-	/* Initialize wallpaper cache after luaA_init so Lua/globalconf state is available */
+	/* Initialize wallpaper cache (must be AFTER luaA_init which zeroes globalconf) */
 	wallpaper_cache_init();
 
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */

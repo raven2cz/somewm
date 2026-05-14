@@ -28,7 +28,7 @@ Display_p = ctypes.c_void_p
 Window = ctypes.c_ulong
 Atom = ctypes.c_ulong
 
-# XSetWindowAttributes structure (partial — only fields we need)
+# XSetWindowAttributes structure (partial, only fields we need)
 class XSetWindowAttributes(ctypes.Structure):
     _fields_ = [
         ("background_pixmap", ctypes.c_ulong),

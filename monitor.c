@@ -26,6 +26,7 @@
 #include "somewm.h"
 #include "somewm_api.h"
 #include "monitor.h"
+#include "nested_inhibitor.h"
 #include "protocols.h"
 #include "globalconf.h"
 #include "client.h"
@@ -38,7 +39,6 @@
 #include "objects/signal.h"
 #include "banning.h"
 #include "animation.h"
-#include "bench.h"
 
 /* macros */
 
@@ -46,6 +46,7 @@
 #include "window.h"
 #include "input.h"
 #include "somewm_internal.h"
+#include "bench.h"
 
 /* Module-private state */
 static int in_updatemons;
@@ -205,8 +206,23 @@ createmon(struct wl_listener *listener, void *data)
 	struct wlr_output_state state;
 	Monitor *m;
 
+	if (wlr_output->data) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] createmon duplicate ignored: %s already has monitor data",
+			wlr_output->name);
+		return;
+	}
+
+	if (wlr_output_layout_get(output_layout, wlr_output)) {
+		wlr_log(WLR_ERROR, "[HOTPLUG] createmon duplicate ignored: %s already in layout",
+			wlr_output->name);
+		return;
+	}
+
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
+
+	/* Inhibit host shortcuts for this output when nested. */
+	nested_inhibitor_attach_output(wlr_output);
 
 	wlr_log(WLR_ERROR, "[HOTPLUG] createmon: %s enabled=%d mons=%d",
 		wlr_output->name, wlr_output->enabled, wl_list_length(&mons));

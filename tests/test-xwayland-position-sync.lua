@@ -16,7 +16,6 @@
 ---------------------------------------------------------------------------
 
 local runner = require("_runner")
-local test_client = require("_client")
 local x11_client = require("_x11_client")
 local utils = require("_utils")
 
@@ -253,12 +252,27 @@ local steps = {
 	end,
 
 	-- Cleanup
-	test_client.step_force_cleanup(function()
-		os.execute("pkill -9 xterm 2>/dev/null")
-		for _, pid in ipairs(x11_client.get_spawned_pids()) do
-			os.execute("kill -9 " .. pid .. " 2>/dev/null")
+	function(count)
+		if count == 1 then
+			io.stderr:write("[TEST] Cleanup...\n")
+			if c_x11 and c_x11.valid then
+				c_x11:kill()
+			end
+			os.execute("pkill -9 xterm 2>/dev/null")
 		end
-	end),
+
+		if #client.get() == 0 then
+			return true
+		end
+
+		if count >= 10 then
+			local pids = x11_client.get_spawned_pids()
+			for _, pid in ipairs(pids) do
+				os.execute("kill -9 " .. pid .. " 2>/dev/null")
+			end
+			return true
+		end
+	end,
 }
 
 runner.run_steps(steps, { kill_clients = false })

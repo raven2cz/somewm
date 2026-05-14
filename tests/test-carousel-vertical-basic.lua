@@ -183,7 +183,23 @@ local steps = {
     end,
 
     -- Step 10: Cleanup
-    test_client.step_force_cleanup(),
+    function(count)
+        if count == 1 then
+            for _, c in ipairs(client.get()) do
+                if c.valid then c:kill() end
+            end
+        end
+        if #client.get() == 0 then
+            return true
+        end
+        if count >= 10 then
+            local pids = test_client.get_spawned_pids()
+            for _, pid in ipairs(pids) do
+                os.execute("kill -9 " .. pid .. " 2>/dev/null")
+            end
+            return true
+        end
+    end,
 }
 
 runner.run_steps(steps, { kill_clients = false })
