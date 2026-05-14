@@ -1,21 +1,23 @@
-# Kolo 8 — Phase 4: Event-Queue Migration Sub-Plan (v2)
+# Kolo 8 — Phase 4: Event-Queue Migration Sub-Plan (v3)
 
 Date: 2026-05-14
 Sync branch: `sync/upstream-2026-05-13` (Phase 3b done at `d76122b`)
 Companion docs: `kolo8-migration-audit.md` (per-function A/B/C/D), `kolo8-integration-plan.md`
 
-**Status: v2 — incorporates Codex R1 (YELLOW, 3 findings) + a fresh independent
-Sonnet audit of all 33 objects/client.c hunks. The objects/client.c section is now
-a reconciled per-hunk table. Needs one more Codex confirming round before code is
-written. Per user instruction 2026-05-14: Codex is given the fork commit history
-so it understands the *essence and original placement* of every fork change.**
+**Status: v3 — Codex R1 (3 findings) + Sonnet independent 33-hunk audit + Codex R2
+(2 findings) all incorporated. R2 explicitly confirmed the reconciled
+objects/client.c table and all conversion rules are correct. One short R3
+confirming round on the v2→v3 fixes, then code. Per user instruction 2026-05-14:
+Codex is given the fork commit history so it understands the *essence and original
+placement* of every fork change.**
 
-v1→v2 changelog: Codex R1 — `_scene_layer` explicit KEEP-UPSTREAM (hunk 22/33),
-window.c idle-inhibit explicit DROP, double-emit grep expanded to all 3 emit
-helpers. Sonnet audit — objects/client.c §4 replaced with the reconciled 33-hunk
-table; hunk 2 corrected (Sonnet said apply fork's `event_queue.h` removal — wrong
-for the migrated file, it must stay); hunk 9 explicit 4-way split; hunk 15 flagged
-as a deliberate fix not fork-behind; hunk 14 confirmed RE-APPLY.
+v1→v2: Codex R1 — `_scene_layer` explicit KEEP-UPSTREAM, window.c idle-inhibit
+explicit DROP, double-emit grep expanded. Sonnet audit — objects/client.c §4
+replaced with the reconciled 33-hunk table; hunk 2 corrected; hunk 9 4-way split;
+hunk 15 flagged as deliberate fix.
+v2→v3: Codex R2 — xwayland.c must RE-APPLY `#include "objects/signal.h"` (the
+`xwayland::ready` emit needs it); `0c839f4` corrected — it touches window.c
+`commitpopup()` + objects/layer_surface.c, NOT objects/client.c.
 
 This is the hardest phase. Upstream touched `objects/client.c` with 12 commits in
 the sync window — the entire event-queue refactor — so the fork's 30+ hunks there
@@ -145,8 +147,10 @@ are fork ports of commits upstream ALSO has — those are DUP, take upstream.
   objects/client.c scenefx.
 - `25a1708`, `e7eb6c5`, `8eef823` fullscreen geometry preservation — window.c
   `setfullscreen` reentrance/no-op guards + max→fs→unfull memento.
-- `0c839f4` perf(opacity): skip no-op opacity re-apply at 1.0 — objects/client.c
-  `client_apply_opacity_to_scene`, objects/layer_surface.c.
+- `0c839f4` perf(opacity): skip no-op opacity re-apply at 1.0 — touches
+  **window.c `commitpopup()`** (popup opacity inheritance with `opacity >= 0 &&
+  opacity < 1.0f`) and **objects/layer_surface.c**. (Corrected per Codex R2 — NOT
+  objects/client.c.)
 - `867ba20` fix(stack): skip unmanaged clients in stack_refresh — == upstream `07ac746`
   (DUP, take upstream; stack.c already done Phase 3b).
 
@@ -182,9 +186,12 @@ fork feature. **No edit needed.** Confirm empty diff.
   true; luaA_emit_signal_global("xwayland::ready");` + the explanatory comment
   (fork commit `85c227f`). Upstream restructured xwayland-ready into a
   `xwayland_ready_listener`; the flag still slots into `xwaylandready()`'s body.
+- ⚠ RE-APPLY (Codex R2): `#include "objects/signal.h"` — `luaA_emit_signal_global`
+  needs its declaration; if upstream's xwayland.c no longer includes it, the
+  `xwayland::ready` emit won't compile. Re-apply this include WITH the feature.
 - DROP (Rule A): the `request::activate`/`request::urgent` emit-call conversions,
-  the `client::list` emit, removed `event_queue.h`/`objects/signal.h` includes —
-  take upstream's queued forms.
+  the `client::list` emit — take upstream's queued forms. Keep upstream's
+  `#include "event_queue.h"` (Rule D — the queued calls need it).
 - RE-APPLY: `scenefx_compat.h` include swap.
 
 ### protocols.c — surgical
@@ -265,6 +272,8 @@ Remaining:
   - `client_clear_scene_child_pointers()` + calls from both unmap paths.
   - `mapnotify()` call-site change for `schedule_flush_clients` (fork commit
     `ed894df` — the helper itself is already in Phase 2; here only the call site).
+  - `commitpopup()` popup opacity inheritance — `opacity >= 0 && opacity < 1.0f`
+    (fork commit `0c839f4`, Codex R2 correction — this is window.c, not client.c).
   - `commitnotify()` bench-ordering + `client_apply_corner_radius/backdrop_blur`.
   - `maximizenotify()` + new `minimizenotify()` Lua-routing rework + listener
     lifecycle (fork commits `748070e`, `8a42b35`, `f842847`) — upstream still has
@@ -318,7 +327,7 @@ current queued signal sites — TAKE these, drop the fork's synchronous twins:
 | 23 | @3953 `titlebar_get_drawable` | RE-APPLY | `#ifdef HAVE_SCENEFX` immediate `wlr_scene_buffer_set_corner_radius` on new titlebars |
 | 24 | @4023 `titlebar_resize` | RE-APPLY | `client_apply_corner_radius(c)` after titlebar resize |
 | 25 | @4305 `luaA_client_set_floating` (new fn) | RE-APPLY | `_c_floating` property setter — required by stack.c |
-| 26 | @4365 `client_apply_opacity_to_scene` | RE-APPLY | extend opacity to shadow tree + 4 border rects + `#ifdef HAVE_SCENEFX` border_frame + no-op-at-1.0 skip (`0c839f4`) |
+| 26 | @4365 `client_apply_opacity_to_scene` | RE-APPLY | extend opacity to shadow tree + 4 border rects + `#ifdef HAVE_SCENEFX` border_frame. (NOT the `0c839f4` no-op skip — that's window.c/layer_surface.c, see Codex R2 correction.) |
 | 27 | @4407 (+285 lines, new fns) | RE-APPLY | the big SceneFX block: `apply_corner_radius_to_tree`, `client_apply_corner_radius`, `client_update_border_for_corners`, `luaA_client_get/set_corner_radius`, `apply_backdrop_blur_to_tree`, `client_apply_backdrop_blur`, `luaA_client_get/set_backdrop_blur` (incl. `f5164d2` `backdrop_blur_optimized=false` fix). No upstream equivalent — easy to omit; do NOT. |
 | 28 | @4552 export macro | RE-APPLY | `LUA_OBJECT_EXPORT_PROPERTY(client, client_t, floating, lua_pushboolean)` — pairs with hunk 25 |
 | 29 | @4638 `luaA_client_get_content` | DROP-TRIAGE | take upstream's `5f3c4ef` scene-walk getter; fork's is the pre-`5f3c4ef` direct-readback (Firefox-blank #539 = Jimmy's issue, `5f3c4ef` his fix). Paired with hunk 3. |
