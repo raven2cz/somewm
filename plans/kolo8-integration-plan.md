@@ -54,9 +54,11 @@ No edits to upstream-shared C source. Get SceneFX building on the upstream base.
     NOTHING upstream was removed.
 1.2 Add fork-only header `scenefx_compat.h`.
 1.3 `animation.c`/`animation.h`, `shadow.c`/`shadow.h` — these ARE upstream files (M, not
-    A) but the fork is a strict superset (audit Group 5, verified). Apply the fork version.
-    Confirm with `git diff upstream/main..main -- animation.c shadow.c` that it is purely
-    additive.
+    A). `shadow.c/h` are a strict superset; `animation.c` is fork-AHEAD (the fork rewrote
+    the tick timing — not a literal superset, but the newer/intended version). Upstream did
+    NOT touch any of the four in the sync window (verified `git log <merge-base>..upstream/
+    main -- animation.* shadow.*` is empty), so applying the fork version wholesale is
+    safe. DONE in Phase 1 (commit 55282dc).
 1.4 Add fork-only Lua: `lua/awful/anim_client.lua`, `lua/somewm/tag_slide.lua`.
 1.5 Add fork-only infra: remaining `plans/**` (this doc + the two companion docs already
     live here), `AGENTS.md`, `CLAUDE.md`, `INSTALL.md`, `ARCH-DEP-INSTALL.md`, `.codex`,
@@ -72,13 +74,16 @@ No edits to upstream-shared C source. Get SceneFX building on the upstream base.
 1.8 **somewmrc.lua — DROP fork delta, take upstream `ba586fd` verbatim** on the sync
     branch. The desired behavior is ported into the standalone `somewm-one` repo in
     Phase 7, not carried in the framework repo.
-1.9 **Icon/theme files — D2 RESOLVED (smart merge).**
+1.9 **Icon/theme files — D2 RESOLVED (smart merge). DONE in the Phase 1 follow-up commit.**
     - `themes/{catppuccin,gruvbox,nord}/theme.lua`, `themes/CREDITS` — KEEP the fork's
-      deletion (we maintain our own themes; upstream's are not needed).
-    - `icons/somewm-logo.svg` — TAKE upstream's new logo (DROP the fork's deletion). It is
-      somewm branding, not awesome; the new upstream logo is wanted.
-    - `icons/lucide/*` (32 files) — TAKE upstream's (DROP the fork's deletion). Generic
-      icon set, may be referenced by upstream code; no reason to remove.
+      deletion (`git rm`; we maintain our own themes; upstream's are not needed).
+    - Consequence: upstream's `somewmrc.lua` referenced `gruvbox`/`catppuccin`/`nord` (default
+      `theme_name` + theme-switcher menu). Minimal patch applied to point the default at
+      `default` and the switcher at `default`/`zenburn`/`sky` (themes that still exist).
+      `somewmrc.lua` is the framework's example config; the user's real config lives in
+      the separate `somewm-one` repo, so this is hygiene only.
+    - `icons/somewm-logo.svg` — TAKE upstream's new logo (already present; somewm branding).
+    - `icons/lucide/*` (33 files) — TAKE upstream's (already present; generic icon set).
 
 **Gate:** `ninja -C build-test` clean with `-Dscenefx=auto` AND with scenefx disabled.
 Fork-only Lua specs pass. `meson.build` diff vs upstream confirmed additive-only. Codex

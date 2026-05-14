@@ -54,9 +54,9 @@ if awesome.x11_fallback_info then
     end)
 end
 
--- Theme: persisted in ~/.config/somewm/theme, defaults to gruvbox
+-- Theme: persisted in ~/.config/somewm/theme, defaults to default
 local theme_file = (os.getenv("XDG_CONFIG_HOME") or os.getenv("HOME") .. "/.config") .. "/somewm/theme"
-local theme_name = "gruvbox"
+local theme_name = "default"
 do
     local f = io.open(theme_file, "r")
     if f then
@@ -173,9 +173,9 @@ local modkey = "Mod4"
 
 -- Menu
 local theme_menu = {
-    { "gruvbox",    function() switch_theme("gruvbox") end },
-    { "catppuccin", function() switch_theme("catppuccin") end },
-    { "nord",       function() switch_theme("nord") end },
+    { "default",    function() switch_theme("default") end },
+    { "zenburn",    function() switch_theme("zenburn") end },
+    { "sky",        function() switch_theme("sky") end },
 }
 
 local menu_items = {
