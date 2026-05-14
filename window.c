@@ -763,6 +763,43 @@ killclient(const Arg *arg)
 		client_send_close(sel);
 }
 
+/* Re-entrance guard for wl_display_flush_clients() from inside a Wayland
+ * signal emit such as surface->events.map. flush_clients can notice that a
+ * peer client has hung up and synchronously call wl_client_destroy(), which
+ * tears down every wl_resource the client owns — including the surface
+ * whose map signal is currently being emitted. wlroots then aborts on
+ *   assert(wl_list_empty(&surface->events.map.listener_list))
+ * in surface_handle_resource_destroy. Defer the flush via
+ * wl_event_loop_add_idle() so it runs after the signal emit unwinds.
+ * See trip-zip/somewm#530.
+ *
+ * Coalesce repeated requests from the same dispatch cycle into a single
+ * idle callback (matches the wlroots `surface->configure_idle` /
+ * `output->idle_frame` pattern). A burst of mapnotify() calls — e.g. a
+ * session restore opening many clients at once — would otherwise queue
+ * one redundant flush per call. */
+static struct wl_event_source *pending_flush_source;
+
+static void
+flush_clients_idle(void *data)
+{
+	struct wl_display *display = data;
+	pending_flush_source = NULL;
+	wl_display_flush_clients(display);
+}
+
+void
+schedule_flush_clients(struct wl_display *display)
+{
+	struct wl_event_loop *loop;
+
+	if (pending_flush_source != NULL)
+		return;
+
+	loop = wl_display_get_event_loop(display);
+	pending_flush_source = wl_event_loop_add_idle(loop, flush_clients_idle, display);
+}
+
 void
 mapnotify(struct wl_listener *listener, void *data)
 {

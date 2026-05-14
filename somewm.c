@@ -50,7 +50,7 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
@@ -83,6 +83,7 @@
 #include "stack.h"
 #include "banning.h"
 #include "animation.h"
+#include "bench.h"
 #include "ipc.h"
 #include "dbus.h"
 #include "objects/spawn.h"
@@ -125,6 +126,9 @@ struct wl_event_loop *event_loop;
 struct wlr_backend *backend;
 struct wlr_scene *scene;
 struct wlr_scene_tree *layers[NUM_LAYERS];
+#ifdef HAVE_SCENEFX
+struct wlr_scene_optimized_blur *optimized_blur_layer;
+#endif
 struct wlr_scene_tree *drag_icon;
 Client *drag_source_client;
 /* Map from ZWLR_LAYER_SHELL_* constants to Lyr* enum */
@@ -371,6 +375,20 @@ cleanuplisteners(void)
 	 * wlr_xwayland_destroy(), matching the backend listener pattern. */
 }
 
+void
+cold_restart(void)
+{
+	globalconf.exit_code = 1;
+	some_compositor_quit();
+}
+
+void
+rebuild_restart(void)
+{
+	globalconf.exit_code = 2;
+	some_compositor_quit();
+}
+
 /* ==========================================================================
  * Lua Lock API Implementation
  * ========================================================================== */
@@ -585,7 +603,9 @@ static float main_loop_iteration_limit = 0.1f;
 /* Recursion guard for some_refresh() */
 static bool in_refresh = false;
 
-#include "bench.h"
+/* Bench frame/render/stage/input/signal/manage instrumentation lives in
+ * bench.c (gated by SOMEWM_BENCH).  Refresh-path hooks in some_refresh()
+ * below call bench_record_frame_time()/bench_stage_record() directly. */
 
 /* Forward declaration */
 void some_refresh(void);
@@ -732,8 +752,9 @@ some_refresh(void)
 	in_refresh = true;
 
 #ifdef SOMEWM_BENCH
-	struct timespec bench_ts[BENCH_STAGE_COUNT + 1];
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[0]);
+	struct timespec bench_start, bench_end, stage_start, stage_end;
+	clock_gettime(CLOCK_MONOTONIC, &bench_start);
+	stage_start = bench_start;
 #endif
 
 	/* Step 0: Drain queued events - dispatch batched signals to Lua.
@@ -746,7 +767,10 @@ some_refresh(void)
 	luaA_emit_signal_global("refresh");
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[1]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_LUA_REFRESH,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 1.5: Tick frame-synced animations - tick callbacks that modify
@@ -755,7 +779,10 @@ some_refresh(void)
 	animation_tick_all();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[2]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_ANIMATION,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 2: Refresh drawins (wibox/panels) FIRST - matches AwesomeWM order
@@ -764,7 +791,10 @@ some_refresh(void)
 	drawin_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[3]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_DRAWIN,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 3: Apply client changes (geometry, borders, focus)
@@ -772,7 +802,10 @@ some_refresh(void)
 	client_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[4]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_CLIENT,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 4: Update client visibility (banning) */
@@ -789,7 +822,10 @@ some_refresh(void)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[5]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_BANNING,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 5: Update window stacking (Z-order)
@@ -797,7 +833,10 @@ some_refresh(void)
 	stack_refresh();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[6]);
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_STACK,
+		timespec_diff_ns(&stage_start, &stage_end));
+	stage_start = stage_end;
 #endif
 
 	/* Step 6: Destroy windows queued for deferred destruction (XWayland only)
@@ -805,10 +844,11 @@ some_refresh(void)
 	client_destroy_later();
 
 #ifdef SOMEWM_BENCH
-	clock_gettime(CLOCK_MONOTONIC, &bench_ts[7]);
-	for (int i = 0; i < BENCH_STAGE_COUNT; i++)
-		bench_stage_record(i, timespec_diff_ns(&bench_ts[i], &bench_ts[i + 1]));
-	bench_record_frame_time(timespec_diff_ns(&bench_ts[0], &bench_ts[7]));
+	clock_gettime(CLOCK_MONOTONIC, &stage_end);
+	bench_stage_record(BENCH_STAGE_DESTROY,
+		timespec_diff_ns(&stage_start, &stage_end));
+	bench_end = stage_end;
+	bench_record_frame_time(timespec_diff_ns(&bench_start, &bench_end));
 #endif
 
 	in_refresh = false;
@@ -879,6 +919,14 @@ run(char *startup_cmd)
 		 * In AwesomeWM, xcb_flush() sends everything immediately after config
 		 * loads; in Wayland we need to explicitly refresh all drawables. */
 		some_refresh();
+
+		/* Compositor reached steady state: rc.lua loaded, screens scanned,
+		 * clients managed, drawables pushed to scene. Subscribers can now
+		 * safely spawn long-lived helpers, register tray hosts, etc.
+		 * The flag lets luaA_hot_reload() re-emit for late subscribers
+		 * after rc.lua reload (this branch only runs on cold boot). */
+		globalconf.somewm_ready_seen = true;
+		luaA_emit_signal_global("somewm::ready");
 	}
 
 	/* Now that the socket exists and the backend is started, run the startup command */
@@ -1037,14 +1085,52 @@ setup(void)
 	drag_icon = wlr_scene_tree_create(&scene->tree);
 	wlr_scene_node_place_below(&drag_icon->node, &layers[LyrBlock]->node);
 
-	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
-	 * can also specify a renderer using the WLR_RENDERER env var.
+#ifdef HAVE_SCENEFX
+	/* Set global blur parameters for scenefx backdrop blur.
+	 * Values match scenefx defaults (frosted-glass aesthetic).
+	 * Can be tuned later via Lua API or beautiful theme. */
+	wlr_scene_set_blur_data(scene,
+		/* num_passes */ 3,
+		/* radius */     5,
+		/* noise */      0.02f,
+		/* brightness */ 0.9f,
+		/* contrast */   0.9f,
+		/* saturation */ 1.1f);
+
+	/* Create the optimized blur layer. Everything below it in z-order gets
+	 * pre-rendered into a blur cache; buffers above with
+	 * backdrop_blur_optimized=true sample from the cache instead of
+	 * re-running the blur shader per frame. Without this node the cache is
+	 * NULL and every frame SceneFX logs "Failed to use optimized blur" and
+	 * falls back to per-frame blur (hot render loop on NVIDIA).
+	 *
+	 * Placement: above LyrBottom — so root_bg + LyrBg (wallpaper) + LyrBottom
+	 * (bottom panels) are captured as the backdrop; LyrTile/LyrFloat/etc.
+	 * (windows) sit above and can sample the cache.
+	 *
+	 * Size is set in updatemons() once the output layout box is known. */
+	optimized_blur_layer = wlr_scene_optimized_blur_create(&scene->tree, 0, 0);
+	wlr_scene_node_place_above(&optimized_blur_layer->node,
+			&layers[LyrBottom]->node);
+#endif
+
+	/* Create the renderer. When scenefx is compiled in, use the FX renderer
+	 * (GLES2-based, adds corner radius / blur / shadow shaders).
+	 * Otherwise autocreate picks Pixman, GLES2 or Vulkan. The user can also
+	 * specify a renderer using the WLR_RENDERER env var (non-scenefx only).
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+		die("couldn't create scenefx renderer\n"
+			"SceneFX forces its own GLES2-based renderer.\n"
+			"If your GPU doesn't support EGL/GLES2, rebuild with -Dscenefx=disabled");
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer\n"
 			"Try setting WLR_RENDERER=gles2 or WLR_RENDERER=pixman\n"
 			"Run with WLR_DEBUG=1 for more details");
+#endif
 	wl_signal_add(&drw->events.lost, &gpu_reset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
@@ -1807,8 +1893,9 @@ main(int argc, char *argv[])
 
 	setup();
 	run(startup_cmd);
+	int exit_code = globalconf.exit_code;
 	cleanup();
-	return EXIT_SUCCESS;
+	return exit_code;
 
 usage:
 	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
