@@ -105,7 +105,11 @@ Build verified clean **scenefx ON + OFF** + `somewm --check` 30/30 after every p
   hot-reload complete (lgi guard rewired closures, marked ready), `somewm::ready`
   introspection = true, all 4 fork Lua modules `require()` ok, **0 crashes/asserts/
   double-emit** in logs.
-- Visible nested-wayland run: window opened, alacritty spawned, tag-switch IPC sent.
+- **Visible launch via `plans/scripts/somewm-sandbox.sh` — CONFIRMED STARTS**: nested
+  somewm came up as a visible window, IPC `ping` → `PONG`. The kolo8 build (Phase 1–5)
+  boots and runs healthy.
+- Build clean **scenefx ON + OFF** + `somewm --check` 30/30 after every phase; Codex
+  reviewed every phase (objects/client.c + full Phase 4 = GREEN).
 
 ## ⚠️ Process lesson — sandbox
 
@@ -118,9 +122,22 @@ the cleanup trap, and the isolated runtime dir. See also memory
 
 ## Next-session entry point
 
+**How to start the fresh session:** open Claude Code in `~/git/github/somewm`,
+on branch `sync/upstream-2026-05-13` (already checked out). First prompt should be
+roughly: *"Pokračuj v kolo8 upstream syncu — přečti `plans/kolo8-STATUS.md` a navaž
+od sekce REMAINING."* Claude will auto-load memory; `feedback_sandbox_runtime_testing`
+and `feedback_upstream_sync_methodology` are the relevant ones.
+
+Then, in order:
 1. Read this file + `kolo8-integration-plan.md` + `kolo8-event-queue-migration.md`.
-2. Verify findings #1/#2 (memory-trend + SIGTERM) — decide regression vs by-design.
-3. Run Phase 6 integration tests via `tests/run-integration.sh` (or fix busted env first).
-4. Run the visible/headless sandbox via `somewm-sandbox.sh` — NOT a hand-rolled launch.
-5. Hand off to the user for the live DRM test before any merge to `main`.
-6. Phase 7 (somewm-one) after merge.
+2. Verify findings #1/#2 (hot-reload memory-trend + SIGTERM-ignore) — decide
+   regression vs by-design (compare against pre-sync fork `main`).
+3. Run Phase 6 integration tests via `tests/run-integration.sh` (or have the user
+   fix the busted env first — needs a consistent busted+penlight+lfs+lgi stack).
+4. Run the visible/headless sandbox ONLY via `plans/scripts/somewm-sandbox.sh` —
+   never a hand-rolled launch (this session's mistake; cost a RAM spike).
+5. Hand off to the user for the live DRM test. NO merge to `main` until it passes.
+6. Phase 7 (somewm-one rc.lua ports) — only AFTER the merge.
+
+**Current branch state:** 16 commits on `sync/upstream-2026-05-13`, working tree
+clean, everything committed. Nothing is lost — resume purely from git + these docs.
