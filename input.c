@@ -26,7 +26,7 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
@@ -398,13 +398,16 @@ axisnotify(struct wl_listener *listener, void *data)
 void
 buttonpress(struct wl_listener *listener, void *data)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	struct wlr_pointer_button_event *event = data;
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
 	Client *c;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
@@ -746,9 +749,6 @@ void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	double sx = 0, sy = 0, sx_confined, sy_confined;
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL;
@@ -757,7 +757,7 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	/* Find the client under the pointer and send the event along. */
 	xytonode(cursor->x, cursor->y, &surface, &c, NULL, NULL, NULL, &sx, &sy);
 
-	if (cursor_mode == CurPressed && !seat->drag
+	if (seat->pointer_state.button_count > 0 && !seat->drag
 			&& surface != seat->pointer_state.focused_surface
 			&& toplevel_from_wlr_surface(seat->pointer_state.focused_surface, &w, &l) >= 0) {
 		c = w;
@@ -798,11 +798,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		/* Update selected monitor when cursor crosses monitor boundaries.
 		 * Without this, layer-shell clients (rofi, etc.) that don't specify
-		 * an output get assigned to the stale selmon in createlayersurface(). */
+		 * an output get assigned to the stale selmon in createlayersurface().
+		 * Also emit screen::focus so Lua's awful.screen.focused() and any
+		 * QS panels gated on focusedScreenName follow the cursor. The
+		 * button-press path has an analogous selmon update, but that one
+		 * only fires on clicks over empty space — here we fire on any
+		 * hover crossing, which is the focus-follows-mouse behavior.
+		 * mon != selmon fires at most once per boundary crossing, so this
+		 * is not per-motion-event spam. */
 		{
 			Monitor *mon = xytomon(cursor->x, cursor->y);
-			if (mon && mon != selmon)
+			if (mon && mon != selmon) {
 				selmon = mon;
+				luaA_emit_signal_global("screen::focus");
+			}
 		}
 	}
 
@@ -870,6 +879,15 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 			if (!continue_grab) {
 				/* Callback returned false, stop grabbing */
 				luaA_mousegrabber_stop(L);
+				/* Re-evaluate pointer/keyboard focus now that the
+				 * grab is over and (for cross-monitor moves)
+				 * tag/monitor state is consistent. Without this
+				 * rebase the pointer-focused surface stays at
+				 * whatever it was when the grab started, so the
+				 * just-dropped client doesn't get button events
+				 * until the next pointer motion. Mirrors Sway's
+				 * seatop_default re-entry. */
+				motionnotify(0, NULL, 0, 0, 0, 0);
 			}
 		} else {
 			/* Error in callback */
@@ -1002,6 +1020,17 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	pointerfocus(c, surface, sx, sy, time);
 }
 
+static int pointer_enter_deferred_pending;
+
+static void
+deferred_pointer_enter(void *data)
+{
+	(void)data;
+	pointer_enter_deferred_pending = 0;
+	/* Re-evaluate pointer focus with current cursor position */
+	motionnotify(0, NULL, 0, 0, 0, 0);
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -1040,6 +1069,15 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 				"(client had no wl_pointer resources)",
 				c ? client_get_appid(c) : "?");
 			wlr_seat_pointer_notify_clear_focus(seat);
+			/* Schedule deferred re-delivery — client may not have
+			 * bound wl_pointer yet. By the time the idle callback
+			 * fires, the client will have its pointer resources ready. */
+			if (!pointer_enter_deferred_pending) {
+				pointer_enter_deferred_pending = 1;
+				wl_event_loop_add_idle(
+					wl_display_get_event_loop(dpy),
+					deferred_pointer_enter, NULL);
+			}
 		}
 	}
 
@@ -1117,9 +1155,6 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 void
 keypress(struct wl_listener *listener, void *data)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	int i;
 	uint32_t keycode;
 	const xkb_keysym_t *syms;
@@ -1130,6 +1165,12 @@ keypress(struct wl_listener *listener, void *data)
 	/* This event is raised when a key is pressed or released. */
 	KeyboardGroup *group = wl_container_of(listener, group, key);
 	struct wlr_keyboard_key_event *event = data;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	/* Translate libinput keycode -> xkbcommon */
 	keycode = event->keycode + 8;
