@@ -518,9 +518,20 @@ handlesig(int signo)
 			int res = write(sigchld_pipe[1], " ", 1);
 			(void) res;  /* Ignore write errors in signal handler */
 		}
-	} else if (signo == SIGINT || signo == SIGTERM) {
-		wl_display_terminate(dpy);
 	}
+}
+
+/** GLib callback for SIGINT/SIGTERM (registered via g_unix_signal_add).
+ * The primary loop is g_main_loop_run(), so wl_display_terminate() would be a
+ * no-op here — quit the GLib loop instead. Runs in main-loop context, so it is
+ * safe to touch GLib state directly. */
+static gboolean
+quit_signal_cb(gpointer data)
+{
+	(void) data;
+	if (globalconf.loop)
+		g_main_loop_quit(globalconf.loop);
+	return G_SOURCE_REMOVE;
 }
 
 /** GLib callback for SIGCHLD pipe (AwesomeWM pattern).
@@ -1042,7 +1053,7 @@ run(char *startup_cmd)
 void
 setup(void)
 {
-	int i, sig[] = {SIGCHLD, SIGINT, SIGTERM, SIGPIPE};
+	int i, sig[] = {SIGCHLD, SIGPIPE};
 	struct sigaction sa = {.sa_flags = SA_RESTART, .sa_handler = handlesig};
 	sigemptyset(&sa.sa_mask);
 
@@ -1056,6 +1067,13 @@ setup(void)
 
 	/* Setup GLib watch for SIGCHLD pipe */
 	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
+
+	/* SIGINT/SIGTERM go through GLib's unix-signal source: the callback runs
+	 * in main-loop context and quits g_main_loop_run() cleanly. A bare
+	 * sigaction handler could only call wl_display_terminate(), which is a
+	 * no-op since the GLib loop — not wl_display_run() — is the primary loop. */
+	g_unix_signal_add(SIGINT, quit_signal_cb, NULL);
+	g_unix_signal_add(SIGTERM, quit_signal_cb, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
