@@ -3,7 +3,7 @@
 #ifdef SOMEWM_BENCH
 
 #include <string.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 
 /* --- Shared stats computation --- */
 
