@@ -1,7 +1,7 @@
 # Kolo 9 — Mini upstream sync (2026-05-27)
 
 Date opened: 2026-05-27
-Status: PLAN v2 — Codex YELLOW findings addressed (Sonnet GREEN). Awaiting user approval before execution.
+Status: EXECUTED on `sync/kolo9-2026-05-27` — 5 cherry-picks applied + CLAUDE.md updated, builds clean ON+OFF, `make` dance + `test-orchestrator` 15/15, 8 integration tests (4 event-queue + 4 hot-reload) pass, sandbox runtime clean. Final Codex pass GREEN modulo this status line. Awaiting user live DRM test before merge to `main`.
 
 v1 → v2: enumerated all CLAUDE.md sections touched by `aaf7fb5`; expanded
 Makefile verification (clean / asan / build-test / test-asan); acknowledged
