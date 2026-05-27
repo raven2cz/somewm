@@ -76,14 +76,15 @@ no "Generated with Claude Code" footer, no AI tool mentions.
 ## Build Commands
 
 ```bash
-make              # ASAN build (development, catches memory bugs)
-make build-test   # Fast build without sanitizers
-make install      # Install to /usr/local (needs sudo)
-make clean        # Remove build artifacts
+make              # Optimized release build into build/ (no sanitizers, default)
+make asan         # ASAN+UBSan build into build-asan/ (development, catches memory bugs)
+make build-test   # Fast build without sanitizers into build-test/
+make install      # Install build/ to /usr/local (needs sudo)
+make clean        # Remove build, build-asan, build-test
 make test         # All tests (unit + integration)
 make test-unit    # Lua unit tests only (busted)
 make test-integration  # Visual integration tests
-make test-asan    # Integration tests with ASAN
+make test-asan    # Integration tests with ASAN (uses build-asan/)
 make test-fast    # Persistent compositor mode (10x faster)
 make test-one TEST=tests/test_foo.sh  # Single test
 make test-visual  # Watch tests in window
@@ -122,7 +123,8 @@ changes, a full reboot is required.
 **IMPORTANT:** Always use `install-scenefx.sh` instead of `sudo make install`.
 The script builds with `-Dscenefx=enabled` into `build-fx/`, runs ldconfig for
 `libscenefx-0.4.so`, and installs to `/usr/local`. Plain `make install` uses the
-ASAN dev build without SceneFX.
+release `build/` tree without SceneFX (use `make asan` for the ASAN dev build
+in `build-asan/`).
 
 ### Full test cycle (reboot required for DRM changes)
 ```bash
@@ -300,7 +302,8 @@ XCURSOR_THEME=Adwaita XCURSOR_SIZE=24 # Cursor theme
 ```
 
 ### ASAN (Address Sanitizer)
-Default `make` build includes ASAN. Crashes produce stack traces.
+`make asan` builds with ASAN+UBSan into `build-asan/` (default `make` is now
+release, no sanitizers). Crashes produce stack traces.
 `ASAN_OPTIONS=detect_leaks=0` suppresses leak reports during development.
 
 ## Key Architecture
