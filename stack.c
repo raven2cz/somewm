@@ -16,7 +16,7 @@
 #include "globalconf.h"      /* For globalconf.stack and globalconf.drawins */
 #include "somewm_api.h"
 #include <stdbool.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #ifdef XWAYLAND
 #include <wlr/xwayland.h>
 #endif
@@ -83,8 +83,6 @@ stack_windows(void)
 static window_layer_t
 client_layer_translator(Client *c)
 {
-	Client *focused;
-
 	if (!c)
 		return WINDOW_LAYER_NORMAL;
 
@@ -92,12 +90,11 @@ client_layer_translator(Client *c)
 	if (c->ontop)
 		return WINDOW_LAYER_ONTOP;
 
-	/* Fullscreen windows only get their own layer when they have focus.
-	 * On Wayland, we also keep the fullscreen layer when the focused client
-	 * is on a different screen, since the scene graph uses separate layers
-	 * (unlike X11's flat stacking model where wibars are below all clients). */
-	focused = some_get_focused_client();
-	if (c->fullscreen && (focused == c || !focused || focused->screen != c->screen))
+	/* Fullscreen clients ALWAYS stay in LyrFS on Wayland.
+	 * Unlike X11's flat stacking, scene graph layers mean fullscreen
+	 * must be above wibar (LyrTop) at all times. Dialogs/transients
+	 * follow their parent via WINDOW_LAYER_IGNORE → stack_transients_above(). */
+	if (c->fullscreen)
 		return WINDOW_LAYER_FULLSCREEN;
 
 	if (c->above)
@@ -106,9 +103,23 @@ client_layer_translator(Client *c)
 	if (c->below)
 		return WINDOW_LAYER_BELOW;
 
-	/* Check for transient attribute */
+	/* Check for transient attribute BEFORE floating —
+	 * transients must follow their parent's layer, not get
+	 * pulled into LyrFloat independently. */
 	if (c->transient_for)
 		return WINDOW_LAYER_IGNORE;
+
+	/* Maximized clients stay in LyrTile regardless of floating=true
+	 * (AwesomeWM's maximize setter auto-floats the client — legacy X11
+	 * semantics where stacking was flat). On Wayland, LyrFloat is visually
+	 * always above LyrTile, so a maximized floater can never be covered
+	 * by a tiled client focus-change. Keep maximized clients in the
+	 * normal layer so other tiled windows can raise above them. */
+	if (c->maximized || c->maximized_horizontal || c->maximized_vertical)
+		return WINDOW_LAYER_NORMAL;
+
+	if (c->floating)
+		return WINDOW_LAYER_FLOATING;
 
 	/* Then deal with window type */
 	switch (c->type) {
@@ -140,6 +151,8 @@ get_scene_layer(window_layer_t layer)
 		return LyrBottom;
 	case WINDOW_LAYER_NORMAL:
 		return LyrTile;
+	case WINDOW_LAYER_FLOATING:
+		return LyrFloat;
 	case WINDOW_LAYER_ABOVE:
 		return LyrTop;
 	case WINDOW_LAYER_FULLSCREEN:
@@ -230,12 +243,13 @@ stack_refresh(void)
 		if (!(*node) || !(*node)->scene)
 			continue;
 
-		/* Unmanaged (override_redirect) X11 clients bypass the window
-		 * manager; they have no stacking attributes, so running them
-		 * through client_layer_translator() returns LyrTile and drops
-		 * Wine/Qt popups below their floating parents. mapnotify()
-		 * placed them in LyrOverlay; skip them here so the placement
-		 * survives. */
+		/* Unmanaged (override_redirect) X11 clients have no stacking
+		 * attributes (ontop, floating, fullscreen, ...) and must not be
+		 * reparented out of the layer mapnotify() placed them into
+		 * (LyrOverlay). Running them through client_layer_translator()
+		 * returns WINDOW_LAYER_NORMAL (LyrTile) by default, which
+		 * drops Wine/Steam/Qt popups below their floating parents.
+		 * Inlined check (client.h has cross-file dependencies). */
 #ifdef XWAYLAND
 		if ((*node)->client_type == X11 &&
 		    (*node)->surface.xwayland->override_redirect)

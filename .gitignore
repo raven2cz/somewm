@@ -18,6 +18,7 @@ build/
 build-bench/
 builddir/
 subprojects/wlroots/
+subprojects/scenefx/
 subprojects/packagecache/
 
 # Development tooling & reports (local only)

@@ -31,7 +31,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/pass.h>
@@ -43,6 +43,9 @@
 #include <drm_fourcc.h>
 #include <string.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 /* External references to somewm.c globals */
 extern struct wlr_output_layout *output_layout;
@@ -568,6 +571,32 @@ luaA_root_size(lua_State *L)
 	return 2;
 }
 
+/** Get root window geometry including origin
+ * On X11 the root window is always at (0, 0) so AwesomeWM gets away with
+ * root.size() alone; on Wayland wlr_output_layout can place outputs at
+ * negative coordinates (e.g. a portrait monitor left of the primary), so
+ * callers that draw into a single root-sized surface must also know the
+ * layout origin. Returns a table {x, y, width, height}.
+ * Lua: root.geometry() -> { x = ..., y = ..., width = ..., height = ... }
+ */
+static int
+luaA_root_geometry(lua_State *L)
+{
+	struct wlr_box box;
+
+	wlr_output_layout_get_box(output_layout, NULL, &box);
+	lua_createtable(L, 0, 4);
+	lua_pushinteger(L, box.x);
+	lua_setfield(L, -2, "x");
+	lua_pushinteger(L, box.y);
+	lua_setfield(L, -2, "y");
+	lua_pushinteger(L, box.width);
+	lua_setfield(L, -2, "width");
+	lua_pushinteger(L, box.height);
+	lua_setfield(L, -2, "height");
+	return 1;
+}
+
 /** Get root window physical size in mm (stub for AwesomeWM compatibility)
  * Returns approximate physical dimensions based on monitor DPI
  * Lua: root.size_mm() -> width_mm, height_mm
@@ -757,7 +786,7 @@ void wallpaper_cache_cleanup(void)
 	}
 }
 
-static wallpaper_cache_entry_t *
+wallpaper_cache_entry_t *
 wallpaper_cache_lookup(const char *path, int screen_index)
 {
 	if (!path || !globalconf.wallpaper_cache.next)
@@ -954,10 +983,19 @@ clear_wallpaper_info_in_lua(lua_State *L)
 
 /** Create a cache entry for one screen
  * Returns true on success, false on failure
+ *
+ * layout_x/layout_y are the origin of the output_layout bounding box, which
+ * matches the upper-left of the cairo pattern supplied by awful.wallpaper's
+ * paint(). On X11 this is always (0, 0); on Wayland it can be negative when
+ * an output (e.g. a portrait monitor) sits left-of/above the primary. The
+ * pattern's pixel (u, v) therefore corresponds to layout (u + layout_x,
+ * v + layout_y), so extracting a screen at absolute layout (x, y) needs the
+ * translate offset shifted by (layout_x, layout_y).
  */
 static bool
 create_wallpaper_cache_entry(const char *path, cairo_pattern_t *pattern,
-                             wallpaper_screen_info_t *info)
+                             wallpaper_screen_info_t *info,
+                             int layout_x, int layout_y)
 {
 	cairo_surface_t *surface = NULL;
 	cairo_t *cr = NULL;
@@ -976,7 +1014,7 @@ create_wallpaper_cache_entry(const char *path, cairo_pattern_t *pattern,
 
 	/* Paint pattern to surface, offsetting to extract the screen region */
 	cr = cairo_create(surface);
-	cairo_translate(cr, -x, -y);
+	cairo_translate(cr, layout_x - x, layout_y - y);
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cr);
@@ -1007,6 +1045,10 @@ create_wallpaper_cache_entry(const char *path, cairo_pattern_t *pattern,
 
 	entry->path = strdup(path);
 	entry->screen_index = screen_index;
+	entry->width = width;
+	entry->height = height;
+	entry->cairo_bytes = (size_t)cairo_image_surface_get_stride(surface) * (size_t)height;
+	entry->shm_bytes = (size_t)width * 4 * (size_t)height;
 	entry->scene_node = scene_node;
 	entry->surface = surface;
 	wl_list_insert(&globalconf.wallpaper_cache, &entry->link);
@@ -1046,6 +1088,12 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			screen_infos, MAX_PENDING_SCREENS);
 	}
 
+	/* Layout origin matches the cairo pattern's upper-left (see awful.wallpaper
+	 * paint() which allocates target at layout bbox size, pixel (0,0) = layout
+	 * (layout_box.x, layout_box.y)). */
+	struct wlr_box layout_box;
+	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+
 	/* Create cache entries for all pending screens */
 	if (screen_count > 0) {
 		for (int i = 0; i < screen_count; i++) {
@@ -1062,7 +1110,8 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 			}
 
 			/* Create new cache entry */
-			if (create_wallpaper_cache_entry(info->path, pattern, info))
+			if (create_wallpaper_cache_entry(info->path, pattern, info,
+			                                 layout_box.x, layout_box.y))
 				result = true;
 		}
 
@@ -1072,10 +1121,12 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 	}
 
 	/* Fallback: no caching (cache not ready, no path, or no screens) */
-	/* Use full layout geometry */
-	struct wlr_box layout_box;
-	wlr_output_layout_get_box(output_layout, NULL, &layout_box);
-	int x = 0, y = 0;
+	/* Use full layout geometry including its origin — awful.wallpaper paints
+	 * each screen at its layout (x, y), which can be negative when an output
+	 * sits left-of / above the primary (e.g. a portrait HP at x = -2160).
+	 * Using (0, 0) here clips that content off the cairo surface and places
+	 * the scene buffer node where it doesn't intersect the off-origin output. */
+	int x = layout_box.x, y = layout_box.y;
 	int width = layout_box.width;
 	int height = layout_box.height;
 
@@ -1095,7 +1146,8 @@ root_set_wallpaper_cached(lua_State *L, cairo_pattern_t *pattern)
 		goto cleanup;
 
 	cr = cairo_create(surface);
-	cairo_translate(cr, -x, -y);
+	/* Fallback surface and awful.wallpaper pattern are both bbox-sized with
+	 * matching pixel origin (layout upper-left); copy 1:1, no translate. */
 	cairo_set_source(cr, pattern);
 	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	cairo_paint(cr);
@@ -1242,6 +1294,38 @@ luaA_root_wallpaper_cache_show(lua_State *L)
 	return 1;
 }
 
+/** root.wallpaper_cache_invalidate_screen(screen_index) - Drop cache entries
+ * for one screen, e.g. after its geometry/transform changed so subsequent
+ * preloads rebuild scene buffers at the new dimensions.
+ * Lua: root.wallpaper_cache_invalidate_screen(screen_index)
+ */
+static int
+luaA_root_wallpaper_cache_invalidate_screen(lua_State *L)
+{
+	int screen_index = (int)luaL_checkinteger(L, 1) - 1; /* Lua 1-based -> 0-based */
+
+	if (screen_index < 0 || screen_index >= WALLPAPER_MAX_SCREENS)
+		return 0;
+	if (!globalconf.wallpaper_cache.next)
+		return 0;
+
+	wallpaper_cache_entry_t *entry, *tmp;
+	wl_list_for_each_safe(entry, tmp, &globalconf.wallpaper_cache, link) {
+		if (entry->screen_index != screen_index)
+			continue;
+		wl_list_remove(&entry->link);
+		if (entry->scene_node)
+			wlr_scene_node_destroy(&entry->scene_node->node);
+		if (entry->surface)
+			cairo_surface_destroy(entry->surface);
+		free(entry->path);
+		free(entry);
+	}
+
+	globalconf.current_wallpaper_per_screen[screen_index] = NULL;
+	return 0;
+}
+
 /** root.wallpaper_cache_clear() - Clear all cached wallpapers
  * Frees GPU memory used by cached wallpaper textures.
  */
@@ -1270,23 +1354,25 @@ luaA_root_wallpaper_cache_clear(lua_State *L)
 	return 0;
 }
 
-/** Preload a single wallpaper into cache for a specific screen (internal helper) */
+/** Preload a single wallpaper into cache for a specific screen (internal helper).
+ * screen_t is passed directly because globalconf.screens may not be populated
+ * yet at rc.lua load time (screens exist as Lua objects but globalconf.screens.len == 0). */
 static bool
-wallpaper_cache_preload_path(const char *path, int screen_index)
+wallpaper_cache_preload_path(const char *path, int screen_index, screen_t *screen,
+                             bool cover_mode)
 {
 	if (!path || !globalconf.wallpaper_cache.next)
 		return false;
-	if (screen_index < 0 || screen_index >= (int)globalconf.screens.len)
+	if (screen_index < 0 || screen_index >= WALLPAPER_MAX_SCREENS)
+		return false;
+	if (!screen)
 		return false;
 
 	/* Already cached for this screen? */
 	if (wallpaper_cache_lookup(path, screen_index))
 		return true;
 
-	/* Get screen geometry */
-	screen_t *screen = globalconf.screens.tab[screen_index];
-	if (!screen)
-		return false;
+	/* Get screen geometry directly from the passed screen_t */
 	int scr_x = screen->geometry.x;
 	int scr_y = screen->geometry.y;
 	int scr_width = screen->geometry.width;
@@ -1301,7 +1387,6 @@ wallpaper_cache_preload_path(const char *path, int screen_index)
 		if (error) g_error_free(error);
 		return false;
 	}
-
 	int img_width = gdk_pixbuf_get_width(pixbuf);
 	int img_height = gdk_pixbuf_get_height(pixbuf);
 	int rowstride = gdk_pixbuf_get_rowstride(pixbuf);
@@ -1340,11 +1425,14 @@ wallpaper_cache_preload_path(const char *path, int screen_index)
 	cairo_surface_mark_dirty(img_surface);
 	g_object_unref(pixbuf);
 
-	/* Scale image to fit screen (maximized style) */
+	/* Scale image to fit screen. cover_mode=true fills the screen (may crop),
+	 * cover_mode=false preserves aspect ratio (may letterbox). */
 	cairo_t *cr = cairo_create(surface);
 	double scale_x = (double)scr_width / img_width;
 	double scale_y = (double)scr_height / img_height;
-	double scale = (scale_x > scale_y) ? scale_x : scale_y;  /* Cover (max scale) */
+	double scale = cover_mode
+		? ((scale_x > scale_y) ? scale_x : scale_y)   /* Cover (max) */
+		: ((scale_x < scale_y) ? scale_x : scale_y);  /* Contain (min) */
 	double offset_x = (scr_width - img_width * scale) / 2.0;
 	double offset_y = (scr_height - img_height * scale) / 2.0;
 	cairo_translate(cr, offset_x, offset_y);
@@ -1390,6 +1478,10 @@ wallpaper_cache_preload_path(const char *path, int screen_index)
 	}
 	entry->path = strdup(path);
 	entry->screen_index = screen_index;
+	entry->width = scr_width;
+	entry->height = scr_height;
+	entry->cairo_bytes = (size_t)cairo_image_surface_get_stride(surface) * (size_t)scr_height;
+	entry->shm_bytes = (size_t)scr_width * 4 * (size_t)scr_height;
 	entry->scene_node = scene_node;
 	entry->surface = surface;
 	wl_list_insert(&globalconf.wallpaper_cache, &entry->link);
@@ -1407,16 +1499,42 @@ luaA_root_wallpaper_cache_preload(lua_State *L)
 {
 	luaA_checktable(L, 1);
 
-	/* Get screen index (default to primary/screen 0) */
+	/* Resolve screen_t directly — globalconf.screens may be empty at rc.lua
+	 * load time, but Lua screen objects are already valid with geometry. */
+	screen_t *screen = NULL;
 	int screen_index = 0;
 	if (lua_gettop(L) >= 2) {
 		if (lua_isnumber(L, 2)) {
 			screen_index = (int)lua_tointeger(L, 2) - 1;  /* Lua is 1-based */
+			/* Try to get screen_t from globalconf.screens if available */
+			if (screen_index >= 0 && screen_index < (int)globalconf.screens.len)
+				screen = globalconf.screens.tab[screen_index];
 		} else {
-			screen_t *screen = luaA_toscreen(L, 2);
+			screen = luaA_toscreen(L, 2);
 			if (screen)
 				screen_index = screen->index - 1;
 		}
+	} else {
+		/* Default: primary screen */
+		if (globalconf.screens.len > 0)
+			screen = globalconf.screens.tab[0];
+	}
+
+	if (!screen) {
+		lua_pushinteger(L, 0);
+		return 1;
+	}
+
+	/* Read optional 3rd argument: options table {fit = "contain"|"cover"} */
+	bool cover_mode = false;
+	if (lua_gettop(L) >= 3 && lua_istable(L, 3)) {
+		lua_getfield(L, 3, "fit");
+		if (lua_isstring(L, -1)) {
+			const char *fit = lua_tostring(L, -1);
+			if (strcmp(fit, "cover") == 0)
+				cover_mode = true;
+		}
+		lua_pop(L, 1);
 	}
 
 	int count = 0;
@@ -1424,7 +1542,7 @@ luaA_root_wallpaper_cache_preload(lua_State *L)
 	while (lua_next(L, 1) != 0) {
 		if (lua_isstring(L, -1)) {
 			const char *path = lua_tostring(L, -1);
-			if (wallpaper_cache_preload_path(path, screen_index))
+			if (wallpaper_cache_preload_path(path, screen_index, screen, cover_mode))
 				count++;
 		}
 		lua_pop(L, 1);
@@ -1837,6 +1955,369 @@ luaA_root_newindex(lua_State *L)
 	return luaA_default_newindex(L);
 }
 
+/* ==========================================================================
+ * Wallpaper overlay helpers for tag slide animation.
+ * Temporary scene buffers in LyrBottom that slide old/new wallpaper
+ * during tag transitions.
+ * ========================================================================== */
+
+#define MAX_WP_OVERLAYS 8
+static struct {
+	struct wlr_scene_buffer *node;
+	bool active;
+} wp_overlays[MAX_WP_OVERLAYS];
+
+/** Internal: create an overlay scene buffer from a cairo surface region.
+ * Returns overlay slot index (0-based) or -1 on failure. */
+static int
+wp_overlay_create(cairo_surface_t *src, int sx, int sy, int sw, int sh,
+                  int pos_x, int pos_y)
+{
+	int slot = -1;
+	for (int i = 0; i < MAX_WP_OVERLAYS; i++) {
+		if (!wp_overlays[i].active) { slot = i; break; }
+	}
+	if (slot < 0) return -1;
+
+	cairo_surface_flush(src);
+	int fw = cairo_image_surface_get_width(src);
+	int fh = cairo_image_surface_get_height(src);
+	if (sx + sw > fw) sw = fw - sx;
+	if (sy + sh > fh) sh = fh - sy;
+	if (sw <= 0 || sh <= 0) return -1;
+
+	cairo_surface_t *region = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sw, sh);
+	if (cairo_surface_status(region) != CAIRO_STATUS_SUCCESS) return -1;
+
+	cairo_t *cr = cairo_create(region);
+	cairo_set_source_surface(cr, src, -sx, -sy);
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+	cairo_paint(cr);
+	cairo_destroy(cr);
+	cairo_surface_flush(region);
+
+	struct wlr_buffer *buffer = drawable_create_buffer_from_data(
+		sw, sh, cairo_image_surface_get_data(region),
+		cairo_image_surface_get_stride(region));
+	cairo_surface_destroy(region);
+	if (!buffer) return -1;
+
+	/* Place overlays in LyrBottom — above LyrBg (real wallpaper) but below
+	 * client layers (LyrTile/LyrFloat). This prevents set_wallpaper's deferred
+	 * paint from creating a wallpaper_buffer_node on top of our overlays. */
+	struct wlr_scene_buffer *node = wlr_scene_buffer_create(layers[LyrBottom], buffer);
+	wlr_buffer_drop(buffer);
+	if (!node) return -1;
+
+	wlr_scene_node_set_position(&node->node, pos_x, pos_y);
+	wlr_scene_node_raise_to_top(&node->node);
+
+	wp_overlays[slot].node = node;
+	wp_overlays[slot].active = true;
+	return slot;
+}
+
+/** root.wp_snapshot(screen_or_index)
+ * Snapshot the CURRENT wallpaper for the given screen into an overlay.
+ * Accepts screen object or 1-based index. Tries per-screen cache entry
+ * first, falls back to globalconf.wallpaper.
+ * Returns overlay_id (1-based int), or nil on failure.
+ */
+static int
+luaA_root_wp_snapshot(lua_State *L)
+{
+	screen_t *scr = NULL;
+	int idx = -1;
+	if (lua_isnumber(L, 1)) {
+		idx = luaL_checkinteger(L, 1) - 1;
+		if (idx >= 0 && idx < (int)globalconf.screens.len)
+			scr = globalconf.screens.tab[idx];
+	} else {
+		scr = luaA_toscreen(L, 1);
+		if (scr) idx = scr->index - 1; else { lua_pushnil(L); return 1; }
+	}
+	if (!scr) { lua_pushnil(L); return 1; }
+	int scr_x = scr->geometry.x, scr_y = scr->geometry.y;
+	int scr_w = scr->geometry.width, scr_h = scr->geometry.height;
+
+	/* Try per-screen cache entry */
+	wallpaper_cache_entry_t *entry = (idx >= 0 && idx < WALLPAPER_MAX_SCREENS)
+		? globalconf.current_wallpaper_per_screen[idx] : NULL;
+	if (entry && entry->surface) {
+		int w = cairo_image_surface_get_width(entry->surface);
+		int h = cairo_image_surface_get_height(entry->surface);
+		int slot = wp_overlay_create(entry->surface, 0, 0, w, h, scr_x, scr_y);
+		if (slot >= 0) { lua_pushinteger(L, slot + 1); return 1; }
+	}
+
+	/* Fallback: extract screen region from global wallpaper.
+	 * globalconf.wallpaper is bbox-sized (covers the whole layout) with
+	 * its pixel (0, 0) at layout_box.x, layout_box.y — so when the
+	 * layout origin is negative (e.g. a portrait monitor to the left of
+	 * the primary at x = -2160) the source offsets must be relative to
+	 * layout_box, not the raw screen coordinates. Without this fixup
+	 * wp_overlay_create would sample from the wrong column of the
+	 * surface and the fallback cover would render a foreign screen's
+	 * wallpaper — visibly leaking the primary's image onto secondary
+	 * outputs during a tag-slide animation. */
+	if (globalconf.wallpaper) {
+		struct wlr_box layout_box;
+		wlr_output_layout_get_box(output_layout, NULL, &layout_box);
+		int sx = scr_x - layout_box.x;
+		int sy = scr_y - layout_box.y;
+		int slot = wp_overlay_create(globalconf.wallpaper,
+			sx, sy, scr_w, scr_h, scr_x, scr_y);
+		if (slot >= 0) { lua_pushinteger(L, slot + 1); return 1; }
+	}
+
+	lua_pushnil(L);
+	return 1;
+}
+
+/** root.wp_snapshot_path(path, screen_or_index)
+ * Snapshot a SPECIFIC cached wallpaper by file path.
+ * Looks up the preload cache (populated by root.wallpaper_cache_preload).
+ * Returns overlay_id (1-based int), or nil if not cached.
+ */
+static int
+luaA_root_wp_snapshot_path(lua_State *L)
+{
+	const char *path = luaL_checkstring(L, 1);
+	screen_t *scr = NULL;
+	int idx = -1;
+	if (lua_isnumber(L, 2)) {
+		idx = luaL_checkinteger(L, 2) - 1;
+		if (idx >= 0 && idx < (int)globalconf.screens.len)
+			scr = globalconf.screens.tab[idx];
+	} else {
+		scr = luaA_toscreen(L, 2);
+		if (scr) idx = scr->index - 1; else { lua_pushnil(L); return 1; }
+	}
+	if (!scr) { lua_pushnil(L); return 1; }
+	wallpaper_cache_entry_t *entry = wallpaper_cache_lookup(path, idx);
+	if (!entry || !entry->surface) {
+		lua_pushnil(L); return 1;
+	}
+
+	int w = cairo_image_surface_get_width(entry->surface);
+	int h = cairo_image_surface_get_height(entry->surface);
+	int slot = wp_overlay_create(entry->surface, 0, 0, w, h,
+		scr->geometry.x, scr->geometry.y);
+	if (slot < 0) { lua_pushnil(L); return 1; }
+
+	lua_pushinteger(L, slot + 1);
+	return 1;
+}
+
+/** root.wp_overlay_move(overlay_id, x, y) */
+static int
+luaA_root_wp_overlay_move(lua_State *L)
+{
+	int id = luaL_checkinteger(L, 1) - 1;
+	int x = luaL_checkinteger(L, 2);
+	int y = luaL_checkinteger(L, 3);
+	if (id >= 0 && id < MAX_WP_OVERLAYS && wp_overlays[id].active)
+		wlr_scene_node_set_position(&wp_overlays[id].node->node, x, y);
+	return 0;
+}
+
+/** root.wp_overlay_destroy(overlay_id) */
+static int
+luaA_root_wp_overlay_destroy(lua_State *L)
+{
+	int id = luaL_checkinteger(L, 1) - 1;
+	if (id >= 0 && id < MAX_WP_OVERLAYS && wp_overlays[id].active) {
+		wlr_scene_node_destroy(&wp_overlays[id].node->node);
+		wp_overlays[id].node = NULL;
+		wp_overlays[id].active = false;
+	}
+	return 0;
+}
+
+static size_t
+cairo_image_surface_bytes(cairo_surface_t *surface)
+{
+	if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS ||
+			cairo_surface_get_type(surface) != CAIRO_SURFACE_TYPE_IMAGE)
+		return 0;
+	return (size_t)cairo_image_surface_get_stride(surface) *
+		(size_t)cairo_image_surface_get_height(surface);
+}
+
+static void
+lua_set_size_field(lua_State *L, const char *key, size_t value)
+{
+	lua_pushinteger(L, (lua_Integer)value);
+	lua_setfield(L, -2, key);
+}
+
+static void
+lua_set_int_field(lua_State *L, const char *key, int value)
+{
+	lua_pushinteger(L, value);
+	lua_setfield(L, -2, key);
+}
+
+static void
+push_wallpaper_cache_stats(lua_State *L, bool details)
+{
+	wallpaper_cache_entry_t *entry;
+	int count = 0, current = 0;
+	size_t cairo_bytes = 0, shm_bytes = 0;
+
+	lua_newtable(L);
+
+	if (globalconf.wallpaper_cache.next) {
+		wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
+			count++;
+			if (wallpaper_cache_entry_is_current(entry))
+				current++;
+			cairo_bytes += entry->cairo_bytes ? entry->cairo_bytes :
+				cairo_image_surface_bytes(entry->surface);
+			shm_bytes += entry->shm_bytes;
+		}
+	}
+
+	lua_set_int_field(L, "entries", count);
+	lua_set_int_field(L, "current_entries", current);
+	lua_set_int_field(L, "max_entries", WALLPAPER_CACHE_MAX);
+	lua_set_size_field(L, "cairo_bytes", cairo_bytes);
+	lua_set_size_field(L, "shm_bytes", shm_bytes);
+	lua_set_size_field(L, "estimated_bytes", cairo_bytes + shm_bytes);
+	lua_set_size_field(L, "current_wallpaper_bytes",
+		cairo_image_surface_bytes(globalconf.wallpaper));
+
+	if (details) {
+		int idx = 1;
+		lua_createtable(L, count, 0);
+		if (globalconf.wallpaper_cache.next) {
+			wl_list_for_each(entry, &globalconf.wallpaper_cache, link) {
+				lua_createtable(L, 0, 8);
+				lua_pushstring(L, entry->path ? entry->path : "");
+				lua_setfield(L, -2, "path");
+				lua_set_int_field(L, "screen_index", entry->screen_index + 1);
+				lua_set_int_field(L, "width", entry->width);
+				lua_set_int_field(L, "height", entry->height);
+				lua_set_size_field(L, "cairo_bytes", entry->cairo_bytes);
+				lua_set_size_field(L, "shm_bytes", entry->shm_bytes);
+				lua_pushboolean(L, wallpaper_cache_entry_is_current(entry));
+				lua_setfield(L, -2, "current");
+				lua_rawseti(L, -2, idx++);
+			}
+		}
+		lua_setfield(L, -2, "items");
+	}
+}
+
+static void
+accumulate_drawable_surface(drawable_t *drawable, int *count, size_t *surface_bytes)
+{
+	if (!drawable)
+		return;
+	(*count)++;
+	*surface_bytes += cairo_image_surface_bytes(drawable->surface);
+}
+
+static void
+push_drawable_stats(lua_State *L)
+{
+	int drawin_drawables = 0, titlebar_drawables = 0;
+	size_t drawin_surface_bytes = 0, titlebar_surface_bytes = 0;
+	size_t shape_bytes = 0;
+
+	for (int i = 0; i < globalconf.drawins.len; i++) {
+		drawin_t *drawin = globalconf.drawins.tab[i];
+		if (!drawin)
+			continue;
+		accumulate_drawable_surface(drawin->drawable,
+			&drawin_drawables, &drawin_surface_bytes);
+		shape_bytes += cairo_image_surface_bytes(drawin->shape_bounding);
+		shape_bytes += cairo_image_surface_bytes(drawin->shape_clip);
+		shape_bytes += cairo_image_surface_bytes(drawin->shape_input);
+		shape_bytes += cairo_image_surface_bytes(drawin->shape_border);
+	}
+
+	for (int i = 0; i < globalconf.clients.len; i++) {
+		client_t *client = globalconf.clients.tab[i];
+		if (!client)
+			continue;
+		for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP;
+				bar < CLIENT_TITLEBAR_COUNT; bar++) {
+			accumulate_drawable_surface(client->titlebar[bar].drawable,
+				&titlebar_drawables, &titlebar_surface_bytes);
+		}
+	}
+
+	lua_newtable(L);
+	lua_set_int_field(L, "drawin_drawables", drawin_drawables);
+	lua_set_size_field(L, "drawin_surface_bytes", drawin_surface_bytes);
+	lua_set_int_field(L, "titlebar_drawables", titlebar_drawables);
+	lua_set_size_field(L, "titlebar_surface_bytes", titlebar_surface_bytes);
+	lua_set_size_field(L, "shape_surface_bytes", shape_bytes);
+	lua_set_size_field(L, "surface_bytes",
+		drawin_surface_bytes + titlebar_surface_bytes + shape_bytes);
+	lua_set_size_field(L, "drawable_shm_count",
+		globalconf.memory_stats.drawable_shm_count);
+	lua_set_size_field(L, "drawable_shm_bytes",
+		globalconf.memory_stats.drawable_shm_bytes);
+}
+
+static int
+luaA_root_wallpaper_cache_stats(lua_State *L)
+{
+	bool details = lua_toboolean(L, 1);
+	push_wallpaper_cache_stats(L, details);
+	return 1;
+}
+
+static int
+luaA_root_drawable_stats(lua_State *L)
+{
+	push_drawable_stats(L);
+	return 1;
+}
+
+static int
+luaA_root_memory_stats(lua_State *L)
+{
+	if (lua_toboolean(L, 1)) {
+		lua_gc(L, LUA_GCCOLLECT, 0);
+		lua_gc(L, LUA_GCCOLLECT, 0);
+	}
+
+	int lua_kb = lua_gc(L, LUA_GCCOUNT, 0);
+	int lua_b = lua_gc(L, LUA_GCCOUNTB, 0);
+
+	lua_newtable(L);
+	lua_set_size_field(L, "lua_bytes", (size_t)lua_kb * 1024 + (size_t)lua_b);
+	lua_set_int_field(L, "clients", globalconf.clients.len);
+	lua_set_int_field(L, "screens", globalconf.screens.len);
+	lua_set_int_field(L, "tags", globalconf.tags.len);
+	lua_set_int_field(L, "drawins", globalconf.drawins.len);
+	lua_set_size_field(L, "drawable_shm_count",
+		globalconf.memory_stats.drawable_shm_count);
+	lua_set_size_field(L, "drawable_shm_bytes",
+		globalconf.memory_stats.drawable_shm_bytes);
+	lua_set_size_field(L, "wibox_count", globalconf.memory_stats.wibox_count);
+	lua_set_size_field(L, "wibox_surface_bytes",
+		globalconf.memory_stats.wibox_surface_bytes);
+
+#ifdef __GLIBC__
+	struct mallinfo2 mi = mallinfo2();
+	lua_set_size_field(L, "malloc_arena_bytes", (size_t)mi.arena);
+	lua_set_size_field(L, "malloc_used_bytes", (size_t)mi.uordblks);
+	lua_set_size_field(L, "malloc_free_bytes", (size_t)mi.fordblks);
+	lua_set_size_field(L, "malloc_releasable_bytes", (size_t)mi.keepcost);
+#endif
+
+	push_wallpaper_cache_stats(L, false);
+	lua_setfield(L, -2, "wallpaper");
+	push_drawable_stats(L);
+	lua_setfield(L, -2, "drawables");
+
+	return 1;
+}
+
 const luaL_Reg root_methods[] = {
 	/* AwesomeWM-compatible exports (following Prime Directive) */
 	{ "_buttons", luaA_root_buttons },
@@ -1848,7 +2329,16 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_has", luaA_root_wallpaper_cache_has },
 	{ "wallpaper_cache_show", luaA_root_wallpaper_cache_show },
 	{ "wallpaper_cache_clear", luaA_root_wallpaper_cache_clear },
+	{ "wallpaper_cache_invalidate_screen", luaA_root_wallpaper_cache_invalidate_screen },
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
+	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
+	{ "drawable_stats", luaA_root_drawable_stats },
+	{ "memory_stats", luaA_root_memory_stats },
+	/* Wallpaper overlay helpers for tag slide animation */
+	{ "wp_snapshot", luaA_root_wp_snapshot },
+	{ "wp_snapshot_path", luaA_root_wp_snapshot_path },
+	{ "wp_overlay_move", luaA_root_wp_overlay_move },
+	{ "wp_overlay_destroy", luaA_root_wp_overlay_destroy },
 	{ "cursor", luaA_root_cursor },
 	{ "cursor_theme", luaA_root_cursor_theme },
 	{ "cursor_size", luaA_root_cursor_size },
@@ -1858,6 +2348,7 @@ const luaL_Reg root_methods[] = {
 	{ "drawins", luaA_root_drawins },
 	{ "size", luaA_root_size },
 	{ "size_mm", luaA_root_size_mm },
+	{ "geometry", luaA_root_geometry },
 	{ "tags", luaA_root_tags },
 	{ "content", luaA_root_get_content },
 	/* __index and __newindex MUST be in methods, not meta!

@@ -1,0 +1,95 @@
+#!/bin/bash
+# somewm session launcher with restart and rebuild support
+# Exit codes: 0=quit, 1=restart, 2=rebuild+restart
+#
+# Two modes:
+#   1) Dev mode:  SOMEWM_DIR=/path/to/somewm somewm-session
+#                 Uses build/somewm binary and ./lua modules
+#   2) Installed: somewm-session
+#                 Uses system-installed somewm from PATH
+
+# Load environment.d configs (same files systemd reads for DM sessions)
+for _conf in "$HOME/.config/environment.d/"*.conf; do
+    [ -f "$_conf" ] || continue
+    set -a
+    . "$_conf"
+    set +a
+done
+unset _conf
+
+# Use the systemd user bus (where gnome-keyring and other services live).
+# dbus-broker provides this automatically via /run/user/$UID/bus.
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
+# Start gnome-keyring (secrets/pkcs11 only - SSH agent is handled by gcr-ssh-agent).
+# PAM auto-unlocks it at TTY login (pam_gnome_keyring.so).
+if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+    eval $(gnome-keyring-daemon --start --components=pkcs11,secrets 2>/dev/null)
+fi
+
+# SSH agent via gcr-ssh-agent (gnome-keyring dropped SSH in v46+)
+export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-/run/user/$(id -u)/gcr/ssh}"
+
+# Import environment into systemd and dbus so child processes and portals see it
+systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP SSH_AUTH_SOCK 2>/dev/null
+
+SOMEWM_LOG="${HOME}/.local/log/somewm-debug.log"
+mkdir -p "$(dirname "$SOMEWM_LOG")"
+
+if [ -n "$SOMEWM_DIR" ]; then
+    # Dev mode: run from build directory
+    SOMEWM_BIN="${SOMEWM_DIR}/build/somewm"
+    SOMEWM_ARGS=(-d -L "${SOMEWM_DIR}/lua")
+
+    if [ ! -x "$SOMEWM_BIN" ]; then
+        echo "Binary not found: $SOMEWM_BIN"
+        echo "Run 'ninja -C ${SOMEWM_DIR}/build' first."
+        exit 1
+    fi
+else
+    # Installed mode: use system binary
+    SOMEWM_BIN="$(command -v somewm)"
+    SOMEWM_ARGS=(-d)
+
+    if [ -z "$SOMEWM_BIN" ]; then
+        echo "somewm not found in PATH."
+        echo "Install with 'sudo ninja -C build install' or set SOMEWM_DIR."
+        exit 1
+    fi
+fi
+
+# Lgi closure guard for safe hot-reload (prevents SEGV from stale FFI closures)
+LGI_GUARD=/usr/local/lib/liblgi_closure_guard.so
+if [ -f "$LGI_GUARD" ]; then
+    export LD_PRELOAD="${LGI_GUARD}${LD_PRELOAD:+:$LD_PRELOAD}"
+    export ASAN_OPTIONS="${ASAN_OPTIONS:+$ASAN_OPTIONS:}verify_asan_link_order=0"
+fi
+
+while true; do
+    "$SOMEWM_BIN" "${SOMEWM_ARGS[@]}" 2>&1 \
+        | tee "$SOMEWM_LOG"
+    exit_code=${PIPESTATUS[0]}
+
+    case $exit_code in
+        0)
+            echo "somewm exited normally."
+            break
+            ;;
+        2)
+            if [ -n "$SOMEWM_DIR" ]; then
+                echo "Rebuilding somewm..."
+                if ! ninja -C "${SOMEWM_DIR}/build"; then
+                    echo "Build failed! Restarting with old binary..."
+                fi
+            else
+                echo "Rebuild requested but SOMEWM_DIR not set, skipping build."
+            fi
+            echo "Restarting in 1s..."
+            sleep 1
+            ;;
+        *)
+            echo "somewm exited ($exit_code), restarting in 1s..."
+            sleep 1
+            ;;
+    esac
+done

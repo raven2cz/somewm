@@ -1,0 +1,41 @@
+Loaded cached credentials.
+### HIGH / CRITICAL findings (block implementation)
+
+**§8.2 Per-core sampling overlap and lifecycle**
+Running a 1s `sleep` inside a `bash -c` script triggered by a 1.5s QML `Timer` is dangerous. If the system is under heavy load, the script execution could exceed 1.5s, causing the next Timer tick to spawn a second overlapping script. This creates a cascade of bash and sleep processes that consume the very CPU they are trying to measure. 
+**Fix:** Do not use a QML `Timer` to trigger a script that contains its own `sleep`. Instead, let QML read `/proc/stat` directly at 1.5s intervals (or use a fast one-shot script like `cat /proc/stat`), store the previous values in a QML property, and calculate the delta purely in JavaScript. This removes the `sleep` process, prevents overlap, and eliminates the risk of orphaned processes when the panel closes.
+
+**§7 Lifecycle force-cancel (Process zombies)**
+Setting `running = false` on a Quickshell `Process` wrapper will send a signal (typically `SIGTERM`) to the immediate child process (e.g., `bash`). However, if your bash script is executing a pipeline or a blocking command like `du -xb $HOME`, terminating the bash parent will often leave the `du` child running as an orphaned process (reparented to init/systemd), permanently consuming disk I/O and CPU in the background.
+**Fix:** For long-running commands like `du`, either execute the binary directly without a bash shell wrapper so it receives the `SIGTERM` directly, or use `exec du ...` within the bash script to replace the bash process with the target binary.
+
+### MEDIUM findings
+
+**§2 Bar chart clipping on fractional DPI**
+Using `clip: true` on a `Rectangle` with a `radius` in QtQuick does not always produce anti-aliased subpixel clipping, especially under fractional DPI scales (like 1.5x on 4K). You may end up with jagged corners or a hairline bleed of the underlying track color.
+**Fix:** For perfectly smooth pill clipping, use QtGraphicalEffects / MultiEffect. Alternatively, keep it simple but ensure all `width` and `x` coordinates are strictly `Math.round()`ed to integer pixels, and check for visual artifacts on the specific fractional scale.
+
+**§3 Option C delegate `_ready` gate**
+While `Behavior.enabled: _ready` (where `_ready` is flipped to true in `Component.onCompleted`) usually works to prevent from-zero animations, QtQuick's binding evaluation order can sometimes be unpredictable. If the target width is evaluated slightly after the component completes, it will still animate from 0. 
+**Fix:** Option C is a good starting point, but initialize the `width` binding directly to the target value rather than 0, or consider standardising on Option B (`ListModel` diff) for robust long-term UI stability, as recreating heavy delegates every 5s is wasteful for a persistent dashboard.
+
+**§5 Percent column computation**
+Defining `homeTotal` as the sum of only the top 10 directories is highly misleading. If the top 10 directories sum to 20 GiB, but the user's actual `$HOME` usage is 200 GiB, the progress bar and percent will report the largest directory as "100%" or a very high share, giving a false sense of scale.
+**Fix:** You must execute a fast total size check (e.g., `df` on the partition, or a fast `du -s $HOME` cached periodically) to provide a true absolute denominator, or explicitly label the UI "Share of Top 10" rather than "% of $HOME".
+
+### LOW / style
+
+**§4 Trend rework**
+Replacing the sparklines for Lua/Wallpaper with a textual delta and min/max is an excellent UX decision. Sparklines are meaningless for near-flat metrics and waste vertical space. Ensure the delta is anchored to a specific time context (e.g., "since open" or "last 5m") so the user understands the bounds.
+
+**§8 Central registry refactor**
+Bundling the registry refactor (`Panels.overlayPanels` and `Panels.exclusivePanels`) with the CPU panel feature is acceptable, but it should be isolated into its own discrete commit *before* the CPU panel is added. This ensures that if the refactor breaks panel toggling, it is easily bisected and reverted without pulling the entire CPU panel feature down with it.
+
+**§1 Hard cap at 1400px**
+A hard cap of 1400px on ultra-tall portrait displays is a sensible safety measure. It prevents UI elements from becoming absurdly stretched or requiring too much eye travel. 
+
+### Architectural assessment
+
+The plan is comprehensive and addresses the core UX complaints effectively. The evolution from hardcoded limits to flexible constraints (§1) and the push towards high-contrast, data-dense components (§2, §4, §6) demonstrates a mature approach to dashboard design. 
+
+However, the architecture relies heavily on shell-out scripts for data gathering (§8.2, §8.3). While QML allows this, leaning on `bash` and `awk` via `Process` for high-frequency (1-2s) telemetry is computationally inefficient and prone to lifecycle bugs (zombies, overlap). The architectural shift should be towards reading raw `/proc` files directly into QML using a fast file-reader utility (or custom C++/Rust backend if Quickshell supports it) and performing diffs in JavaScript. This fundamentally eliminates process lifecycle risks and significantly lowers the baseline CPU overhead of the monitoring panel itself.

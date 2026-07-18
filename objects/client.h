@@ -26,7 +26,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/util/box.h>
 #include "common/luaclass.h"
 #include "common/luaobject.h"
@@ -158,8 +158,14 @@ struct client_t
     struct wlr_scene_tree *scene;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
-    /** Border rectangles */
+    /** Border rectangles (flat mode, used when corner_radius == 0) */
     struct wlr_scene_rect *border[4];
+    /** Single frame border rect (rounded mode, used when corner_radius > 0) */
+    struct wlr_scene_rect *border_frame;
+    /** Corner radius in pixels (0 = sharp, requires scenefx at compile time) */
+    int corner_radius;
+    /** Backdrop blur enabled (requires scenefx at compile time) */
+    bool backdrop_blur;
     /** Shadow configuration (NULL = use defaults) */
     shadow_config_t *shadow_config;
     /** Shadow scene nodes */
@@ -169,6 +175,7 @@ struct client_t
     struct wl_listener commit;         /* For subsequent commits after scene surface exists */
     struct wl_listener map;
     struct wl_listener maximize;
+    struct wl_listener minimize;
     struct wl_listener unmap;
     struct wl_listener destroy;
     struct wl_listener set_title;
@@ -216,9 +223,11 @@ struct client_t
     /* c->tags bitmask removed - tags now managed by arrays (tag->clients) */
     /** Border width (somewm compat - duplicates border_width from WINDOW_OBJECT_HEADER) */
     unsigned int bw;
-    /** Floating state removed - now managed entirely by Lua property system (AwesomeWM-compatible).
-     * C code queries floating state via some_client_get_floating() which calls Lua's c.floating property.
-     * This matches AwesomeWM where C doesn't store floating state. */
+    /** Floating state is owned by Lua (AwesomeWM-compatible: c.floating property).
+     * The `bool floating` field below is a C-side cache synced from Lua via
+     * awful.client `_c_floating` so that stack.c can classify z-order without
+     * a Lua crossing on every stack refresh.  Query Lua for authoritative
+     * state via some_client_get_floating(); writes flow Lua → C only. */
     /** Client name */
     char *name, *alt_name, *icon_name, *alt_icon_name;
     /** WM_CLASS stuff */
@@ -258,10 +267,19 @@ struct client_t
     bool modal;
     /** True if the client is on top */
     bool ontop;
+    /** True if the client is floating (synced from Lua for z-order stacking) */
+    bool floating;
     /** True if a client is banned to a position outside the viewport.
      * Note that the geometry remains unchanged and that the window is still mapped.
      */
     bool isbanned;
+    /** True if the client must not render outside its owning monitor.
+     * Used during tag slide animation so swinging clients don't bleed onto
+     * neighbouring outputs. Surface content is already source-clipped to the
+     * monitor in apply_geometry_to_wlroots(); when strict_clip is set we also
+     * hide borders/shadow/titlebars whenever the client is not fully inside
+     * its monitor. Default off preserves drag-to-edge decoration visibility. */
+    bool strict_clip;
     /** true if the client must be skipped from task bar client list */
     bool skip_taskbar;
     /** True if the client cannot have focus */
@@ -417,6 +435,9 @@ drawable_t *client_get_drawable(client_t *, int, int);
 drawable_t *client_get_drawable_offset(client_t *, int *, int *);
 area_t client_get_undecorated_geometry(client_t *);
 void client_apply_opacity_to_scene(client_t *, float);
+void client_apply_corner_radius(client_t *);
+void client_apply_backdrop_blur(client_t *);
+void client_update_border_for_corners(client_t *);
 void client_update_titlebar_positions(client_t *);
 
 /* Forward declarations for inline functions

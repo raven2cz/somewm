@@ -17,7 +17,7 @@
 #include <wlr/types/wlr_idle_notify_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_activation_v1.h>
@@ -183,6 +183,10 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	struct wlr_layer_surface_v1_state old_state;
 	int was_mapped;
 
+	wlr_log(WLR_DEBUG, "[LS-COMMIT] ns=%s mapped=%d scene=%p lua_obj=%p",
+		layer_surface->namespace ? layer_surface->namespace : "?",
+		l->mapped, (void *)l->scene, (void *)l->lua_object);
+
 	if (l->layer_surface->initial_commit) {
 		client_set_scale(layer_surface->surface, l->mon->wlr_output->scale);
 
@@ -229,6 +233,17 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	if (!was_mapped && l->mapped && !exclusive_focus)
 		motionnotify(0, NULL, 0, 0, 0, 0);
 
+	/* Re-apply opacity after wlroots resets buffer opacity on commit.
+	 * Skip when opacity >= 1.0 — applying 1.0 is a no-op scene-tree walk
+	 * and fires on every layer commit (~42/s for QS panels on this host),
+	 * producing LS-OPACITY log spam. Lua callers that want "default" opacity
+	 * commonly set ls.opacity = 1 explicitly, which passes the >= 0 gate. */
+	if (l->lua_object) {
+		layer_surface_t *ls = l->lua_object;
+		if (ls->opacity >= 0 && ls->opacity < 1.0f)
+			layer_surface_apply_opacity_to_scene(ls, (float)ls->opacity);
+	}
+
 	/* Emit property change signals for Lua (matches AwesomeWM pattern) */
 	if (l->lua_object && globalconf_L && layer_surface->current.committed) {
 		lua_State *L = globalconf_get_lua_State();
@@ -267,21 +282,28 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
 	l->type = LayerShell;
+
+	/* Register destroy/unmap listeners BEFORE wlr_scene_layer_surface_v1_create()
+	 * so ours fire BEFORE wlroots' internal destroy handler. Our destroy
+	 * handler calls wlr_scene_node_destroy(&l->scene->node); if wlroots'
+	 * own destroy handler fires first it will tear down the scene tree,
+	 * leaving us with a dangling pointer that segfaults on double-destroy. */
 	LISTEN(&surface->events.unmap, &l->unmap, unmaplayersurfacenotify);
 	LISTEN(&layer_surface->events.destroy, &l->destroy, destroylayersurfacenotify);
 
 	l->layer_surface = layer_surface;
 	l->mon = layer_surface->output->data;
 	l->scene_layer = wlr_scene_layer_surface_v1_create(scene_layer, layer_surface);
-	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create() so our
-	 * listener fires AFTER wlroots' internal scene commit handler. This lets
-	 * the scene graph reflect the new buffer before the commit handler calls
-	 * motionnotify(0, ...) to re-evaluate pointer focus on map. */
-	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 	l->scene = l->scene_layer->tree;
 	l->popups = surface->data = wlr_scene_tree_create(layer_surface->current.layer
 			< ZWLR_LAYER_SHELL_V1_LAYER_TOP ? layers[LyrTop] : scene_layer);
 	l->scene->node.data = l->popups->node.data = l;
+
+	/* Register commit listener AFTER wlr_scene_layer_surface_v1_create()
+	 * so our handler fires after wlroots' internal scene handler.
+	 * This ensures our opacity re-apply runs after wlroots resets
+	 * buffer opacity to 1.0 during surface_reconfigure(). */
+	LISTEN(&surface->events.commit, &l->surface_commit, commitlayersurfacenotify);
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
@@ -310,10 +332,11 @@ void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
 	LayerSurface *l = wl_container_of(listener, l, unmap);
+	bool had_exclusive_focus = (l == exclusive_focus);
 
 	l->mapped = 0;
 	wlr_scene_node_set_enabled(&l->scene->node, 0);
-	if (l == exclusive_focus)
+	if (had_exclusive_focus)
 		exclusive_focus = NULL;
 
 	if (l->layer_surface && l->layer_surface->output) {
@@ -331,8 +354,18 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 		layer_surface_emit_unmanage(l->lua_object);
 	}
 
-	/* Restore focus via Lua history on the layer surface's monitor */
-	focus_restore(l->mon ? l->mon : selmon);
+	/* Restore focus only if this layer surface actually held keyboard focus
+	 * (exclusive_focus). Layer surfaces without keyboard interactivity
+	 * (notifications, tooltips, transient popups) never owned focus, so
+	 * triggering Lua focus history on their unmap would steal focus from
+	 * the currently focused client.
+	 *
+	 * Also skip while a mousegrabber is active: the user is dragging a
+	 * client and focus_restore() would pick a candidate from focus
+	 * history, stealing focus from the dragged window. The drag operation
+	 * owns focus until it completes. */
+	if (had_exclusive_focus && !mousegrabber_isrunning())
+		focus_restore(l->mon ? l->mon : selmon);
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }
