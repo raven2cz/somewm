@@ -17,7 +17,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -44,6 +44,7 @@
 
 #include "focus.h"
 #include "window.h"
+#include "input.h"
 #include "somewm_internal.h"
 #include "bench.h"
 
@@ -377,7 +378,11 @@ gpureset(struct wl_listener *listener, void *data)
 	struct wlr_renderer *old_drw = drw;
 	struct wlr_allocator *old_alloc = alloc;
 	struct Monitor *m;
+#ifdef HAVE_SCENEFX
+	if (!(drw = fx_renderer_create(backend)))
+#else
 	if (!(drw = wlr_renderer_autocreate(backend)))
+#endif
 		die("couldn't recreate renderer");
 
 	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
@@ -686,6 +691,18 @@ updatemons(struct wl_listener *listener, void *data)
 	wlr_scene_node_set_position(&locked_bg->node, sgeom.x, sgeom.y);
 	wlr_scene_rect_set_size(locked_bg, sgeom.width, sgeom.height);
 
+#ifdef HAVE_SCENEFX
+	/* Resize the optimized blur cache to the full output layout so buffers
+	 * above the blur layer can sample blurred backdrop across all monitors.
+	 * TinyWL sets this per-output; for multi-monitor we use the layout box. */
+	if (optimized_blur_layer) {
+		wlr_scene_node_set_position(&optimized_blur_layer->node,
+				sgeom.x, sgeom.y);
+		wlr_scene_optimized_blur_set_size(optimized_blur_layer,
+				sgeom.width, sgeom.height);
+	}
+#endif
+
 	wl_list_for_each(m, &mons, link) {
 		if (!m->wlr_output->enabled)
 			continue;
@@ -792,7 +809,15 @@ updatemons(struct wl_listener *listener, void *data)
 				lua_pop(globalconf_L, 1);
 			}
 
+			/* Snapshot banning flag before banning_refresh() clears it,
+			 * so the follow-up motionnotify() in some_refresh() sees
+			 * the correct state and re-delivers pointer focus after
+			 * tag visibility changes (Chromium-freeze fix ea7e1aa).
+			 * Without this, monitor hotplug silently drops pointer focus. */
+			bool banning_pending = globalconf.need_lazy_banning;
 			banning_refresh();
+			if (banning_pending)
+				motionnotify(0, NULL, 0, 0, 0, 0);
 			some_refresh();
 		}
 	}

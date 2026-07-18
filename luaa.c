@@ -72,7 +72,7 @@ static lua_State *luaA_create_fresh_state(void);
 #include "color.h"
 #include <xkbcommon/xkbcommon.h>
 #include <wayland-server-core.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/interfaces/wlr_buffer.h>
@@ -532,6 +532,29 @@ luaA_restart(lua_State *L)
     (void)L;
     /* Defer to next event loop iteration */
     g_idle_add(hot_reload_idle_callback, NULL);
+    return 0;
+}
+
+/** awesome.cold_restart() - Cold restart the compositor (kills all clients).
+ * Explicit name for the same operation as awesome.restart().
+ * \return Never returns on success.
+ */
+static int
+luaA_cold_restart(lua_State *L)
+{
+    (void)L;
+    awesome_restart();
+    return 0;  /* Never reached on success */
+}
+
+/** awesome.rebuild_restart() - Rebuild and restart the compositor.
+ * Sets exit_code=2 so the session script rebuilds before restarting.
+ */
+static int
+luaA_rebuild_restart(lua_State *L)
+{
+    (void)L;
+    rebuild_restart();
     return 0;
 }
 
@@ -1863,6 +1886,67 @@ bool some_is_lock_drawin(drawin_t *d) {
 	return false;
 }
 
+/* ==========================================================================
+ * Tag Slide Animation Helpers
+ * ========================================================================== */
+
+/** awesome._client_scene_set_enabled(c, bool)
+ * Toggle a client's scene node visibility without touching isbanned flag.
+ * Used by tag slide animation to temporarily show banned (old tag) clients.
+ */
+static int
+luaA_awesome_client_scene_set_enabled(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	bool enabled = lua_toboolean(L, 2);
+
+	if (c->scene)
+		wlr_scene_node_set_enabled(&c->scene->node, enabled);
+
+	return 0;
+}
+
+/** awesome._client_scene_set_strict_clip(c, bool)
+ * Toggle strict per-monitor clipping for a client. When enabled, decoration
+ * nodes (borders, shadow, titlebars) are hidden whenever the client is not
+ * fully inside its owning monitor, preventing bleed onto neighbouring
+ * outputs during tag slide animation. Surface content is already clipped by
+ * apply_geometry_to_wlroots() regardless of this flag. Default off preserves
+ * drag-to-edge decoration visibility.
+ *
+ * When disabling, restore decorations directly (bypassing the full
+ * apply_geometry_to_wlroots() path) to avoid spurious XDG
+ * reconfigure/commit round-trips that briefly expose a transparent frame
+ * on backdrop-blur surfaces (e.g. Ghostty). Enable just sets the flag —
+ * the next animation-driven geometry change picks it up naturally.
+ */
+static int
+luaA_awesome_client_scene_set_strict_clip(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	luaL_checktype(L, 2, LUA_TBOOLEAN);
+	bool on = lua_toboolean(L, 2);
+	if (c->strict_clip == on)
+		return 0;
+	c->strict_clip = on;
+
+	if (!on && c->scene) {
+		/* Restore decorations in place: if the client is still partially
+		 * off-screen when the animation ends, apply_geometry_to_wlroots()
+		 * would hide them again via the existing per-mon clip logic; but
+		 * in the tag_slide finish() path the client is already landed at
+		 * its target, so the fully_inside branch would re-enable these
+		 * anyway. Re-enabling here keeps the decoration state consistent
+		 * even if geometry didn't change across the toggle. */
+		client_update_border_for_corners(c);
+		if (c->shadow.tree)
+			wlr_scene_node_set_enabled(&c->shadow.tree->node, true);
+		client_update_titlebar_positions(c);
+	}
+	return 0;
+}
+
 /* awesome module methods */
 #ifdef SOMEWM_BENCH
 #include "bench.h"
@@ -2043,6 +2127,8 @@ const luaL_Reg awesome_methods[] = {
 	{ "kill", luaA_kill },
 	{ "load_image", luaA_load_image },
 	{ "restart", luaA_restart },
+	{ "cold_restart", luaA_cold_restart },
+	{ "rebuild_restart", luaA_rebuild_restart },
 	{ "shadow_reload", luaA_awesome_shadow_reload },
 	{ "_test_add_output", luaA_awesome_test_add_output },
 	/* Lock API methods */
@@ -2060,6 +2146,10 @@ const luaL_Reg awesome_methods[] = {
 	{ "clear_all_idle_timeouts", luaA_awesome_clear_all_idle_timeouts },
 	/* Animation API */
 	{ "start_animation", luaA_start_animation },
+	/* Client scene visibility toggle (used by tag slide animation) */
+	{ "_client_scene_set_enabled", luaA_awesome_client_scene_set_enabled },
+	/* Client strict per-monitor clip toggle (used by tag slide animation) */
+	{ "_client_scene_set_strict_clip", luaA_awesome_client_scene_set_strict_clip },
 	/* DPMS (display power management) API methods */
 	{ "dpms_off", luaA_awesome_dpms_off },
 	{ "dpms_on", luaA_awesome_dpms_on },
@@ -4314,55 +4404,43 @@ luaA_enhance_lua_compat_error(const char *err, char *buf, size_t bufsize)
 	return false;
 }
 
-/** Remove all GLib sources registered by Lua code and bump the Lgi closure
- * guard generation. This prevents stale FFI closures from dispatching against
- * a dead Lua state (either closed after config timeout or leaked after
- * hot-reload).
+/** Remove all GLib sources registered by Lua code (Lgi, awful.spawn, dbus
+ * watchers, timers, etc.) that were attached above the baseline. These
+ * sources hold FFI closures with lua_State* pointers to the old Lua VM;
+ * if GLib dispatches them after Lua state teardown, lua_rawgeti() on a
+ * freed state -> SEGV.
+ *
+ * Probe first to get the exact upper bound - all Lua-registered sources
+ * have IDs in [baseline+1, probe_id-1]. No guesswork needed.
+ *
+ * NOTE: This function does NOT bump the Lgi closure generation. In our
+ * fork the guard is already gated via lgi_guard_begin_reload() at the
+ * start of teardown (hot-reload) or explicitly called by the caller
+ * (config-timeout path).
  *
  * \param label Caller label for the log message (e.g. "config-timeout" or "hot-reload").
  */
 static void
 luaA_cleanup_stale_glib_sources(const char *label)
 {
-	/* Remove all GLib sources registered by Lua code (Lgi, awful.spawn,
-	 * dbus watchers, timers, etc.). These sources hold FFI closures with
-	 * lua_State* pointers to the old Lua VM. If GLib dispatches them after
-	 * state teardown, lua_rawgeti(freed_L, ...) -> SEGV.
-	 *
-	 * Probe first to get the exact upper bound - all Lua-registered sources
-	 * have IDs in [baseline+1, probe_id-1]. No guesswork needed. */
-	{
-		GMainContext *ctx = g_main_context_default();
-		guint baseline = globalconf.glib_source_baseline;
-		GSource *probe = g_idle_source_new();
-		guint upper = g_source_attach(probe, ctx);
-		g_source_destroy(probe);
-		g_source_unref(probe);
+	GMainContext *ctx = g_main_context_default();
+	guint baseline = globalconf.glib_source_baseline;
+	GSource *probe = g_idle_source_new();
+	guint upper = g_source_attach(probe, ctx);
+	g_source_destroy(probe);
+	g_source_unref(probe);
 
-		guint removed = 0;
-		for (guint id = baseline + 1; id < upper; id++) {
-			GSource *src = g_main_context_find_source_by_id(ctx, id);
-			if (src) {
-				g_source_destroy(src);
-				removed++;
-			}
-		}
-		globalconf.glib_source_baseline = upper;
-		fprintf(stderr, "somewm: %s: removed %u stale GLib sources "
-			"(baseline=%u, new_baseline=%u)\n", label, removed, baseline, upper);
-	}
-
-	/* Bump Lgi closure generation - all old closures become no-ops.
-	 * lgi_closure_guard.so must be LD_PRELOADed for this to work. */
-	{
-		void (*bump)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_bump_generation");
-		if (bump) {
-			bump();
-		} else {
-			fprintf(stderr, "somewm: %s: WARNING: lgi_closure_guard.so "
-				"not preloaded, stale closures may crash\n", label);
+	guint removed = 0;
+	for (guint id = baseline + 1; id < upper; id++) {
+		GSource *src = g_main_context_find_source_by_id(ctx, id);
+		if (src) {
+			g_source_destroy(src);
+			removed++;
 		}
 	}
+	globalconf.glib_source_baseline = upper;
+	fprintf(stderr, "somewm: %s: removed %u stale GLib sources "
+		"(baseline=%u, new_baseline=%u)\n", label, removed, baseline, upper);
 }
 
 void
@@ -4604,11 +4682,27 @@ luaA_loadrc(void)
 			/* CRITICAL: Lua state is corrupted after siglongjmp.
 			 * We must recreate it before trying the next config.
 			 *
-			 * Clean up GLib sources FIRST - they hold FFI closures
-			 * with lua_State* pointers. Without this, g_main_loop_run()
-			 * dispatches stale closures against freed memory -> SEGV.
-			 * Skip GDBus close here (it calls g_bus_get_sync which
-			 * could itself block if D-Bus was what caused the timeout). */
+			 * Gate the Lgi closure guard FIRST - without this, any stale
+			 * FFI closure dispatched by GLib between here and the source
+			 * sweep would hit freed Lua memory. lgi_guard_begin_reload()
+			 * rewires closures to a safe void(void) CIF and bumps the
+			 * generation so late dispatches become no-ops.
+			 *
+			 * Then sweep stale GLib sources that hold FFI closures with
+			 * lua_State* pointers to the now-dead VM.
+			 *
+			 * Skip GDBus close here (unlike hot-reload): g_bus_get_sync()
+			 * could itself block if D-Bus was what caused the timeout. */
+			{
+				void (*begin)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_begin_reload");
+				if (begin) {
+					begin();
+				} else {
+					fprintf(stderr, "somewm: config-timeout: WARNING: "
+						"lgi_closure_guard.so not preloaded, stale closures "
+						"may crash\n");
+				}
+			}
 			luaA_cleanup_stale_glib_sources("config-timeout");
 			luaA_signal_cleanup();
 			luaA_keybinding_cleanup();
@@ -4971,6 +5065,25 @@ luaA_hot_reload(void)
 	 * of that closure SEGVs on lua_status(NULL). Freezing GC before ANY
 	 * teardown ensures no Lua objects are collected during or after reload. */
 	lua_gc(L, LUA_GCSTOP, 0);
+
+	/* Gate Lgi closure dispatch before ANY Lua-observable teardown.
+	 * lgi_closure_guard.so does two things on begin_reload:
+	 *   1. Sets an atomic "not ready" flag so the wrapper callback
+	 *      returns a zeroed no-op for every dispatch.
+	 *   2. Rewires every tracked closure with a safe void(void) CIF,
+	 *      so even libffi's classify_argument walk (which runs before
+	 *      our wrapper) cannot fault on stale arg_types.
+	 * Must run before signal emission / GDBus close / source sweep so
+	 * that any late dispatches in that window are defused. */
+	{
+		void (*begin)(void) = dlsym(RTLD_DEFAULT, "lgi_guard_begin_reload");
+		if (begin) {
+			begin();
+		} else {
+			fprintf(stderr, "somewm: hot-reload: WARNING: lgi_closure_guard.so "
+				"not preloaded, reload may crash\n");
+		}
+	}
 
 	/* ================================================================
 	 * Phase A: Teardown - clean up Lua-owned state
