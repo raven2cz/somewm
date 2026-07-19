@@ -28,6 +28,7 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
@@ -82,6 +83,7 @@ void inputdevice(struct wl_listener *listener, void *data);
 void virtualkeyboard(struct wl_listener *listener, void *data);
 void virtualpointer(struct wl_listener *listener, void *data);
 void createpointerconstraint(struct wl_listener *listener, void *data);
+static void createswitch(struct wlr_switch *sw);
 void gestureswipebegin(struct wl_listener *listener, void *data);
 void gestureswipeupdate(struct wl_listener *listener, void *data);
 void gestureswipeend(struct wl_listener *listener, void *data);
@@ -92,11 +94,13 @@ void gestureholdbegin(struct wl_listener *listener, void *data);
 void gestureholdend(struct wl_listener *listener, void *data);
 void destroypointerconstraint(struct wl_listener *listener, void *data);
 static void destroytrackedpointer(struct wl_listener *listener, void *data);
+static void destroyswitchtracker(struct wl_listener *listener, void *data);
+static void switchevent(struct wl_listener *listener, void *data);
 void motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel);
 void pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time);
-int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym);
+int keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress);
 void createkeyboard(struct wlr_keyboard *keyboard);
 KeyboardGroup *createkeyboardgroup(void);
 void createpointer(struct wlr_pointer *pointer);
@@ -129,6 +133,12 @@ typedef struct {
 	struct wl_list link;
 } TrackedPointer;
 
+typedef struct {
+	struct wlr_switch *switch_dev;
+	struct wl_listener toggle;
+	struct wl_listener destroy;
+} TrackedSwitch;
+
 /* Listener structs */
 struct wl_listener cursor_axis = {.notify = axisnotify};
 struct wl_listener cursor_button = {.notify = buttonpress};
@@ -153,6 +163,35 @@ struct wl_listener request_set_sel = {.notify = setsel};
 struct wl_listener request_set_cursor_shape = {.notify = setcursorshape};
 struct wl_listener request_start_drag = {.notify = requeststartdrag};
 struct wl_listener start_drag = {.notify = startdrag};
+
+static void
+switchevent(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, toggle);
+	struct wlr_switch_toggle_event *event = data;
+
+	char* type;
+	switch (event->switch_type) {
+	case WLR_SWITCH_TYPE_LID:
+		type = "lid";
+		break;
+	case WLR_SWITCH_TYPE_TABLET_MODE:
+		type = "tablet_mode";
+		break;
+	case WLR_SWITCH_TYPE_KEYPAD_SLIDE:
+		type = "keypad_slide";
+		break;
+	default:
+		type = "unknown";
+		break;
+	}
+
+	luaA_emit_signal_global_with_table("switch::toggle", 6,
+		"device_name", ts->switch_dev && ts->switch_dev->base.name
+			? ts->switch_dev->base.name : "",
+		"type", type,
+		"state", event->switch_state == WLR_SWITCH_STATE_ON ? "on" : "off");
+}
 
 void
 gestureswipebegin(struct wl_listener *listener, void *data)
@@ -1040,14 +1079,12 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 {
 	struct timespec now;
 
-	/* If surface is NULL but client exists, use client's main surface as fallback.
-	 * This happens when cursor is over titlebar/border (compositor-drawn, not a
-	 * wlr_surface). Without this fallback, pointer focus would be cleared and the
-	 * client wouldn't receive hover/scroll events. */
-	if (!surface && c && client_surface(c) && client_surface(c)->mapped) {
-		surface = client_surface(c);
-		cursor_to_client_coordinates(c, &sx, &sy);
-	}
+	/* A NULL surface means the cursor is over compositor-drawn chrome
+	 * (titlebar/border), not the client. Clear pointer focus so the client gets
+	 * wl_pointer.leave. Do NOT fall back to the client's main surface here: the
+	 * cursor is above the content, so translating it yields an in-bounds top-row
+	 * coordinate that leaks hover/clicks onto the client (issue: titlebar event
+	 * propagation). */
 	if (!surface) {
 		wlr_seat_pointer_notify_clear_focus(seat);
 		return;
@@ -1097,7 +1134,7 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 }
 
 int
-keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym)
+keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_sym, bool is_keypress)
 {
 	client_t *focused;
 	struct wlr_surface *surface;
@@ -1120,12 +1157,12 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 	focused = surface ? some_client_from_surface(surface) : NULL;
 
 	/* Check client-specific Lua key objects first (AwesomeWM pattern)
-	 * Client keybindings pass the client as argument to the "press" signal */
-	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym))
+	 * Client keybindings pass the client as argument to the "press" or "release" signal */
+	if (focused && luaA_client_key_check_and_emit(focused, CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Check global Lua key objects (AwesomeWM pattern) */
-	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym))
+	if (luaA_key_check_and_emit(CLEANMASK(mods), keycode, sym, base_sym, is_keypress))
 		return 1;
 
 	/* Hardcoded VT switching (compositor-level, non-configurable)
@@ -1138,8 +1175,8 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 		if (sym == XKB_KEY_Terminate_Server) {
 			if (session_is_locked())
 				return 1;
-			/* Quits the GLib main loop. wl_display_terminate() alone
-			 * is a no-op here — g_main_loop_run() is the primary loop. */
+			/* Quits the GLib main loop; wl_display_terminate() alone is a
+			 * no-op here since g_main_loop_run() is the primary loop. */
 			some_compositor_quit();
 			return 1;
 		}
@@ -1226,9 +1263,13 @@ keypress(struct wl_listener *listener, void *data)
 	/* On _press_ if there is no active screen locker,
 	 * attempt to process a compositor keybinding.
 	 * Block for both ext-session-lock-v1 (locked) and Lua lock (some_is_lua_locked). */
-	if (!session_is_locked() && event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		for (i = 0; i < nsyms; i++)
-			handled = keybinding(mods, keycode, syms[i], base_sym) || handled;
+	if (!session_is_locked()) {
+		bool is_keypress = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+		for (i = 0; i < nsyms; i++) {
+			bool binding_handled = keybinding(mods, keycode, syms[i], base_sym, is_keypress);
+			if (is_keypress)
+				handled = binding_handled || handled;
+		}
 	}
 
 	if (handled && group->wlr_group->keyboard.repeat_info.delay > 0) {
@@ -1312,7 +1353,9 @@ keyrepeat(void *data)
 			1000 / group->wlr_group->keyboard.repeat_info.rate);
 
 	for (i = 0; i < group->nsyms; i++)
-		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym);
+		/* Hardcode is_keypress = true for the keybinding() call since
+		 * keyrepeat only matters for key down condition */
+		keybinding(group->mods, group->keycode, group->keysyms[i], group->base_sym, true);
 
 	return 0;
 }
@@ -1392,7 +1435,6 @@ inputdevice(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new input device becomes
 	 * available. */
 	struct wlr_input_device *device = data;
-	uint32_t caps;
 
 	switch (device->type) {
 	case WLR_INPUT_DEVICE_KEYBOARD:
@@ -1401,19 +1443,15 @@ inputdevice(struct wl_listener *listener, void *data)
 	case WLR_INPUT_DEVICE_POINTER:
 		createpointer(wlr_pointer_from_input_device(device));
 		break;
+	case WLR_INPUT_DEVICE_SWITCH:
+		createswitch(wlr_switch_from_input_device(device));
+		break;
 	default:
 		/* TODO handle other input device types */
 		break;
 	}
 
-	/* We need to let the wlr_seat know what our capabilities are, which is
-	 * communiciated to the client. In somewm we always have a cursor, even if
-	 * there are no pointer devices, so we always include that capability. */
-	/* TODO do we actually require a cursor? */
-	caps = WL_SEAT_CAPABILITY_POINTER;
-	if (!wl_list_empty(&kb_group->wlr_group->devices))
-		caps |= WL_SEAT_CAPABILITY_KEYBOARD;
-	wlr_seat_set_capabilities(seat, caps);
+	/* Seat capabilities are constant; advertised once in setup(). */
 }
 
 void
@@ -1699,12 +1737,31 @@ createpointer(struct wlr_pointer *pointer)
 }
 
 static void
+createswitch(struct wlr_switch *sw)
+{
+	TrackedSwitch *ts = ecalloc(1, sizeof(*ts));
+
+	ts->switch_dev = sw;
+	LISTEN(&sw->events.toggle, &ts->toggle, switchevent);
+	LISTEN(&sw->base.events.destroy, &ts->destroy, destroyswitchtracker);
+}
+
+static void
 destroytrackedpointer(struct wl_listener *listener, void *data)
 {
 	TrackedPointer *tp = wl_container_of(listener, tp, destroy);
 	wl_list_remove(&tp->destroy.link);
 	wl_list_remove(&tp->link);
 	free(tp);
+}
+
+static void
+destroyswitchtracker(struct wl_listener *listener, void *data)
+{
+	TrackedSwitch *ts = wl_container_of(listener, ts, destroy);
+	wl_list_remove(&ts->toggle.link);
+	wl_list_remove(&ts->destroy.link);
+	free(ts);
 }
 
 void

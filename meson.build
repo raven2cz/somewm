@@ -106,7 +106,7 @@ message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
 # We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', static: false, required: false)
+wlroots = dependency('wlroots-0.19', version : '>=0.19.3', static: false, required: false)
 
 if not wlroots.found()
   message('System wlroots 0.19 not found, building from subproject...')
@@ -483,6 +483,17 @@ test_fullscreen_client = executable(
 test_content_pattern_client = executable(
   'test-content-pattern-client',
   ['tests/test-content-pattern-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test XDG toplevel client that logs decoded wl_pointer events to a marker file.
+# Used by test-titlebar-pointer-leak.lua to assert no pointer events leak to the
+# client while the cursor is over its titlebar.
+test_pointer_logger = executable(
+  'test-pointer-logger',
+  ['tests/test-pointer-logger.c', xdg_shell_client_code],
   xdg_shell_client_header,
   dependencies: [wayland_client],
   install: false,

@@ -513,6 +513,7 @@ rendermon(struct wl_listener *listener, void *data)
 	Monitor *m = wl_container_of(listener, m, frame);
 	Client *c;
 	struct timespec now;
+	bool presented = false;
 
 	/* Safety: scene_output may not exist yet if frame fires before createmon
 	 * finishes (possible on NVIDIA), or output may be disabled */
@@ -530,25 +531,25 @@ rendermon(struct wl_listener *listener, void *data)
 	}
 
 #ifdef SOMEWM_BENCH
-	struct timespec render_start, render_end;
-	bool render_committed;
-	clock_gettime(CLOCK_MONOTONIC, &render_start);
-	render_committed = wlr_scene_output_commit(m->scene_output, NULL);
-	clock_gettime(CLOCK_MONOTONIC, &render_end);
-	bench_render_record(timespec_diff_ns(&render_start, &render_end));
-	if (render_committed) {
-		/* Flush pending input events only when a real frame was committed:
-		 * input-to-display latency covers event -> visible pixels. */
-		bench_input_commit_flush();
-	} else {
-		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
-			m->wlr_output->name);
-	}
-#else
-	if (!wlr_scene_output_commit(m->scene_output, NULL))
-		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
-			m->wlr_output->name);
+	struct timespec bench_render_start, bench_render_end;
+	clock_gettime(CLOCK_MONOTONIC, &bench_render_start);
 #endif
+	/* needs_frame is true only when there is something to present;
+	 * wlr_scene_output_commit() returns true without presenting otherwise, so
+	 * sample it first to count only real presents. */
+	presented = wlr_scene_output_needs_frame(m->scene_output);
+	if (!wlr_scene_output_commit(m->scene_output, NULL)) {
+		wlr_log(WLR_DEBUG, "[HOTPLUG] rendermon commit failed: %s",
+			m->wlr_output->name);
+	} else {
+		if (presented)
+			globalconf.frame_commit_count++;
+#ifdef SOMEWM_BENCH
+		clock_gettime(CLOCK_MONOTONIC, &bench_render_end);
+		bench_render_record(timespec_diff_ns(&bench_render_start, &bench_render_end));
+		bench_input_commit_flush();
+#endif
+	}
 
 skip:
 	clock_gettime(CLOCK_MONOTONIC, &now);

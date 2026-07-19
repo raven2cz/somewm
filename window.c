@@ -813,7 +813,7 @@ killclient(const Arg *arg)
 /* Re-entrance guard for wl_display_flush_clients() from inside a Wayland
  * signal emit such as surface->events.map. flush_clients can notice that a
  * peer client has hung up and synchronously call wl_client_destroy(), which
- * tears down every wl_resource the client owns — including the surface
+ * tears down every wl_resource the client owns, including the surface
  * whose map signal is currently being emitted. wlroots then aborts on
  *   assert(wl_list_empty(&surface->events.map.listener_list))
  * in surface_handle_resource_destroy. Defer the flush via
@@ -822,8 +822,8 @@ killclient(const Arg *arg)
  *
  * Coalesce repeated requests from the same dispatch cycle into a single
  * idle callback (matches the wlroots `surface->configure_idle` /
- * `output->idle_frame` pattern). A burst of mapnotify() calls — e.g. a
- * session restore opening many clients at once — would otherwise queue
+ * `output->idle_frame` pattern). A burst of mapnotify() calls (e.g. a
+ * session restore opening many clients at once) would otherwise queue
  * one redundant flush per call. */
 static struct wl_event_source *pending_flush_source;
 
@@ -1051,7 +1051,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		 * Fixes Firefox tiling issue (#10).
 		 * Reset c->resize to force re-send configure even if setmon()->resize()
 		 * already sent one (unflushed). The configure goes out at the next
-		 * idle, before the next poll cycle blocks — see schedule_flush_clients
+		 * idle, before the next poll cycle blocks. See schedule_flush_clients
 		 * above and trip-zip/somewm#530 for why this can't run synchronously
 		 * here. */
 		c->resize = 0;
@@ -1184,7 +1184,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		/* Schedule a flush so the encoded configure leaves the kernel buffer
 		 * at the next event-loop idle, before the loop blocks in poll(). The
 		 * flush cannot run synchronously here because we are still inside the
-		 * surface->events.map signal emit — see schedule_flush_clients above
+		 * surface->events.map signal emit. See schedule_flush_clients above
 		 * and trip-zip/somewm#530. The configure still hits the wire before
 		 * the client could possibly composite a frame at the old geometry. */
 		schedule_flush_clients(dpy);
@@ -1244,17 +1244,27 @@ unset_fullscreen:
 
 	luaA_emit_signal_global("client::map");
 
-	/* If cursor is within this new client's geometry, set pointer focus directly.
+	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
-	 * (buffer not committed) and would CLEAR pointer focus instead. */
-	if (client_surface(c) && client_surface(c)->mapped
-			&& cursor->x >= c->geometry.x && cursor->x < c->geometry.x + c->geometry.width
-			&& cursor->y >= c->geometry.y && cursor->y < c->geometry.y + c->geometry.height) {
-		double sx, sy;
-		cursor_to_client_coordinates(c, &sx, &sy);
-		wlr_log(WLR_DEBUG, "[POINTER-REEVAL] mapnotify: setting pointer focus on %s (cursor in geometry)",
-			client_get_appid(c));
-		pointerfocus(c, client_surface(c), sx, sy, 0);
+	 * (buffer not committed) and would CLEAR pointer focus instead.
+	 * Gate on the content rect (geometry inset by border + titlebars), not the
+	 * full geometry: granting focus while the cursor is over the titlebar would
+	 * deliver a bogus coordinate to the client (issue: titlebar event
+	 * propagation). Mirrors the surface inset in apply_geometry_to_wlroots(). */
+	if (client_surface(c) && client_surface(c)->mapped) {
+		int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+		int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+		int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+		int x0 = c->geometry.x + (int)c->bw + tl;
+		int y0 = c->geometry.y + (int)c->bw + tt;
+		int x1 = c->geometry.x + c->geometry.width  - (int)c->bw - tr;
+		int y1 = c->geometry.y + c->geometry.height - (int)c->bw - tb;
+		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
+			double sx, sy;
+			cursor_to_client_coordinates(c, &sx, &sy);
+			pointerfocus(c, client_surface(c), sx, sy, 0);
+		}
 	}
 }
 
@@ -1972,20 +1982,24 @@ unmapnotify(struct wl_listener *listener, void *data)
 		c->toplevel_handle = NULL;
 	}
 
-	/* CRITICAL: If this is the focused client, clear focus immediately
-	 * to prevent client_focus_refresh() from accessing dangling surface pointers */
-	if (globalconf.focus.client == c) {
-		globalconf.focus.client = NULL;
-		globalconf.focus.need_update = true;
-		/* Clear seat keyboard focus to prevent focusclient() from trying to
-		 * deactivate this surface during focus restoration. The XDG surface
-		 * is already uninitialized by the time unmapnotify fires, so any
-		 * wlr_xdg_toplevel_set_activated() call would assert. */
-		if (seat->keyboard_state.focused_surface == client_surface(c))
-			wlr_seat_keyboard_clear_focus(seat);
-	}
+	/* Clear seat keyboard focus to prevent focusclient() from trying to
+	 * deactivate this surface during focus restoration. The XDG surface
+	 * is already uninitialized by the time unmapnotify fires, so any
+	 * wlr_xdg_toplevel_set_activated() call would assert. */
+	if (globalconf.focus.client == c
+			&& seat->keyboard_state.focused_surface == client_surface(c))
+		wlr_seat_keyboard_clear_focus(seat);
 
 	if (client_is_unmanaged(c)) {
+		/* Unmanaged clients never reach client_unmanage(), so clear the
+		 * focus pointer here: the scene is destroyed below and a later
+		 * focusclient() would touch its freed borders. focusclient() skips
+		 * unmanaged clients, so they never got a "focus" signal and there
+		 * is no "unfocus" to emit. */
+		if (globalconf.focus.client == c) {
+			globalconf.focus.client = NULL;
+			globalconf.focus.need_update = true;
+		}
 		if (c == exclusive_focus) {
 			exclusive_focus = NULL;
 			focus_restore(c->mon ? c->mon : selmon);
@@ -1994,6 +2008,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 		/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
 		 * This emits request::unmanage while c->screen is still valid,
 		 * allowing Lua's check_focus_delayed to restore focus properly.
+		 * It also calls client_unfocus() while the client is still focused,
+		 * which is what emits "unfocus" + property::active=false.
 		 * destroynotify() will see client already removed from array and skip. */
 		client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
 	}

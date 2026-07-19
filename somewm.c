@@ -521,17 +521,16 @@ handlesig(int signo)
 	}
 }
 
-/** GLib callback for SIGINT/SIGTERM (registered via g_unix_signal_add).
- * The primary loop is g_main_loop_run(), so wl_display_terminate() would be a
- * no-op here — quit the GLib loop instead. Runs in main-loop context, so it is
- * safe to touch GLib state directly. */
+/** GLib unix-signal callback for SIGINT/SIGTERM. Runs in main-loop context, so
+ * it can stop g_main_loop_run() cleanly. Routes through some_compositor_quit()
+ * so every termination path (signals, Ctrl-Alt-Backspace, awesome.quit) shares
+ * one implementation. Mirrors AwesomeWM's exit_on_signal. */
 static gboolean
-quit_signal_cb(gpointer data)
+quit_on_signal(gpointer data)
 {
 	(void) data;
-	if (globalconf.loop)
-		g_main_loop_quit(globalconf.loop);
-	return G_SOURCE_REMOVE;
+	some_compositor_quit();
+	return G_SOURCE_CONTINUE;
 }
 
 /** GLib callback for SIGCHLD pipe (AwesomeWM pattern).
@@ -577,9 +576,16 @@ reap_children(gint fd, GIOCondition condition, gpointer data)
 void
 cursor_to_client_coordinates(Client *client, double *sx, double *sy) {
 	double bw = client->bw;
-	/* Compute coordinates (sx, sy) within the borderd geometry. */
-	*sx = cursor->x - (client->geometry.x + bw);
-	*sy = cursor->y - (client->geometry.y + bw);
+	/* The content surface is positioned inside the frame at (bw + titlebar_left,
+	 * bw + titlebar_top) (see apply_geometry_to_wlroots), so content-local
+	 * coordinates must subtract the titlebars too, not just the border. Without
+	 * this the values stay positive over a titlebar and leak onto the client's
+	 * top content rows; with it they go negative there (= pointer not in content).
+	 * Fullscreen has no titlebars. */
+	int tl = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_LEFT].size;
+	int tt = client->fullscreen ? 0 : client->titlebar[CLIENT_TITLEBAR_TOP].size;
+	*sx = cursor->x - (client->geometry.x + bw + tl);
+	*sy = cursor->y - (client->geometry.y + bw + tt);
 }
 
 
@@ -692,25 +698,23 @@ create_wayland_source(struct wl_event_loop *loop)
 	return source;
 }
 
-/* Custom poll function - THE KEY INTEGRATION POINT
+/* RefreshSource - runs the refresh cycle in GLib's prepare phase.
  *
- * This is called by GLib before every poll() syscall and is where we
- * implement AwesomeWM's refresh cycle pattern. By doing refresh here,
- * we ensure all deferred changes are applied before sleeping.
- *
- * Matches AwesomeWM's awesome.c:a_glib_poll()
- */
-static gint
-some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
+ * some_refresh() executes Lua (the "refresh" signal, gears.timer delayed
+ * calls, coroutines resumed from them), which can arm new GLib timeout
+ * sources. GLib computes the poll timeout during the prepare phase, and a
+ * same-thread g_source_attach() does not wake an already-computed poll, so
+ * a timer armed any later in the iteration is invisible to it: on an idle
+ * session the loop sleeps indefinitely while the timer is due, until an
+ * unrelated fd event happens to wake it. Running the refresh here, at a
+ * higher priority than the default-priority timeout sources, means sources
+ * it arms are inserted into buckets this same prepare pass visits
+ * afterwards, so they are included in this iteration's poll timeout. */
+static gboolean
+refresh_source_prepare(GSource *source, gint *timeout)
 {
-	guint res;
-	struct timeval now, length_time;
-	float length;
-	int saved_errno;
 	lua_State *L = globalconf_get_lua_State();
 
-	/* CRITICAL: Do all deferred work before sleeping
-	 * This applies layout calculations from Lua to Wayland scene graph */
 	some_refresh();
 
 	/* Check Lua stack integrity (matches AwesomeWM) */
@@ -721,9 +725,61 @@ some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
 		lua_settop(L, 0);
 	}
 
+	/* Never ready: this source only does work in prepare */
+	*timeout = -1;
+	return FALSE;
+}
+
+static gboolean
+refresh_source_check(GSource *source)
+{
+	return FALSE;
+}
+
+static gboolean
+refresh_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
+{
+	return G_SOURCE_CONTINUE;
+}
+
+static GSourceFuncs refresh_source_funcs = {
+	refresh_source_prepare,
+	refresh_source_check,
+	refresh_source_dispatch,
+	NULL,  /* finalize */
+	NULL,  /* closure_callback */
+	NULL   /* closure_marshal */
+};
+
+/* Custom poll function - called by GLib before every poll() syscall.
+ * The refresh cycle itself runs in refresh_source_prepare() so that timers
+ * it arms count toward this iteration's poll timeout; what remains here is
+ * the work that must happen after every prepare and right before sleeping.
+ *
+ * Matches AwesomeWM's awesome.c:a_glib_poll()
+ */
+static gint
+some_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
+{
+	guint res;
+	struct timeval now, length_time;
+	float length;
+	int saved_errno;
+
 	/* Flush pending Wayland client data before polling
 	 * Clients won't receive data until we flush */
 	wl_display_flush_clients(dpy);
+
+	/* Drain wlroots idle sources before sleeping. wlr_output_schedule_frame()
+	 * (called by drawin_refresh_drawable() when a wibox redraws) queues the frame
+	 * as a wl_event_loop idle, and idles only run inside wl_event_loop_dispatch().
+	 * That otherwise happens solely when the loop fd is readable from input or
+	 * client traffic (via wayland_source_dispatch), so a timer-driven redraw (e.g.
+	 * textclock / awful.widget.watch) updates the scene buffer but is never
+	 * committed on an idle session and the widget freezes until the next input.
+	 * dispatch_idle runs exactly the queued idles (not fd sources, which stay with
+	 * the GSource), presenting those frames every iteration. */
+	wl_event_loop_dispatch_idle(wl_display_get_event_loop(dpy));
 
 	/* Check iteration performance (matches AwesomeWM) */
 	gettimeofday(&now, NULL);
@@ -990,13 +1046,21 @@ run(char *startup_cmd)
 	 *
 	 * This is the SAME architecture as AwesomeWM:
 	 * - GLib main loop is primary (g_main_loop_run)
-	 * - Custom poll function (some_glib_poll) calls refresh before polling
+	 * - Refresh cycle runs in the prepare phase (refresh_source_prepare)
 	 * - Backend events (Wayland) integrated via GSource
 	 * - D-Bus, timers, and other GLib sources work automatically
 	 */
 
 	/* Get Wayland event loop */
 	loop = wl_display_get_event_loop(dpy);
+
+	/* Run the refresh cycle in the prepare phase (see refresh_source_prepare).
+	 * G_PRIORITY_HIGH so it is prepared before the default-priority timeout
+	 * sources the refresh Lua may arm. Attached before wayland_source so its
+	 * id stays below glib_source_baseline and survives hot-reload cleanup. */
+	GSource *refresh_source = g_source_new(&refresh_source_funcs, sizeof(GSource));
+	g_source_set_priority(refresh_source, G_PRIORITY_HIGH);
+	g_source_attach(refresh_source, NULL);
 
 	/* Create and attach Wayland GSource to GLib main context */
 	wayland_source = create_wayland_source(loop);
@@ -1031,6 +1095,7 @@ run(char *startup_cmd)
 	g_main_loop_run(globalconf.loop);
 
 	/* Cleanup */
+	g_source_destroy(refresh_source);
 	g_source_destroy(wayland_source);
 	g_main_loop_unref(globalconf.loop);
 	globalconf.loop = NULL;
@@ -1068,12 +1133,12 @@ setup(void)
 	/* Setup GLib watch for SIGCHLD pipe */
 	g_unix_fd_add(sigchld_pipe[0], G_IO_IN, reap_children, NULL);
 
-	/* SIGINT/SIGTERM go through GLib's unix-signal source: the callback runs
-	 * in main-loop context and quits g_main_loop_run() cleanly. A bare
-	 * sigaction handler could only call wl_display_terminate(), which is a
-	 * no-op since the GLib loop — not wl_display_run() — is the primary loop. */
-	g_unix_signal_add(SIGINT, quit_signal_cb, NULL);
-	g_unix_signal_add(SIGTERM, quit_signal_cb, NULL);
+	/* SIGINT/SIGTERM quit via GLib's unix-signal source: the callback runs in
+	 * main-loop context and stops g_main_loop_run() cleanly (AwesomeWM's
+	 * exit_on_signal pattern). A bare sigaction handler could only call
+	 * wl_display_terminate(), a no-op here since the GLib loop is primary. */
+	g_unix_signal_add(SIGINT, quit_on_signal, NULL);
+	g_unix_signal_add(SIGTERM, quit_on_signal, NULL);
 
 	for (i = 0; i < (int)LENGTH(sig); i++)
 		sigaction(sig[i], &sa, NULL);
@@ -1405,6 +1470,13 @@ setup(void)
 
 	kb_group = createkeyboardgroup();
 	wl_list_init(&kb_group->destroy.link);
+
+	/* The cursor and the group keyboard exist regardless of physical devices,
+	 * so advertise both capabilities once here. Waiting for a device event
+	 * leaves them at zero on headless backends and clients can bind neither
+	 * wl_pointer nor wl_keyboard. */
+	wlr_seat_set_capabilities(seat,
+		WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD);
 
 	output_mgr = wlr_output_manager_v1_create(dpy);
 	wl_signal_add(&output_mgr->events.apply, &output_mgr_apply);
@@ -1813,6 +1885,12 @@ ensure_lgi_guard(int argc, char *argv[])
 int
 main(int argc, char *argv[])
 {
+	/* Line-buffer stdout so rc.lua print() output appears promptly even when
+	 * stdout is redirected to a file or pipe (e.g. `somewm-client test`, tee,
+	 * journald). Without this glibc block-buffers a non-TTY stdout and the
+	 * output is never flushed while the compositor runs. stderr is unbuffered. */
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
 	ensure_lgi_guard(argc, argv);
 	unsetenv("LD_PRELOAD");  /* Guard is loaded; don't leak to children */
 
@@ -1921,6 +1999,7 @@ usage:
 	    "      --verbose      Enable info-level logging (more output)\n"
 	    "  -d, --debug        Enable debug logging (maximum output)\n"
 	    "  -c, --config FILE  Use specified config file (AwesomeWM compatible)\n"
+	    "                     Pass NONE to skip user config and load the bundled default\n"
 	    "  -L, --search DIR   Add directory to Lua module search path\n"
 	    "  -s, --startup CMD  Run command after startup\n"
 	    "  -k, --check CONFIG       Check config for Wayland compatibility issues\n"
