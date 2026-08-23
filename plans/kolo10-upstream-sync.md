@@ -152,6 +152,45 @@ inverting the assertion).
   fork's cache-aware path is not in it; `fishlive.services.wallpaper` fills the
   cache itself via `root.wallpaper_cache_preload`.
 
+## Known defect: wlroots 0.20 + SceneFX 0.5 corrupts borders on NVIDIA
+
+Confirmed by A/B on the live session, same commit both times:
+
+| graphics stack | client borders |
+|---|---|
+| wlroots 0.19 + SceneFX 0.4 | correct |
+| wlroots 0.20 + SceneFX 0.5 | first window correct, every later window corrupted; dragging flickers |
+
+Since the compositor code is identical, the fault is in the new graphics stack
+or in how this fork drives it -- not in the sync reconcile.
+
+Ruled out along the way:
+- **Blur.** `SOMEWM_BLUR_BOTTOM_ONLY=1` (cached bottom layer instead of the
+  live framebuffer, i.e. SceneFX's own example configuration) does not help,
+  which also rules out the partial-damage save/restore path a gpt-5.6-sol
+  audit had proposed as the likely cause.
+- **Scene reordering.** `root.layer_order()` shows the paint order inside
+  LyrFloat stable across refreshes and matching the intended stack.
+- **Border visibility churn.** Fixed in 5dcb798 (the refresh path no longer
+  enables border nodes that the visibility block then disables), which did not
+  cure it either.
+- **Install/deploy.** Binary, libscenefx-0.5.so link and the somewm-one deploy
+  all verified correct.
+- **The nested sandbox does not reproduce it at all** -- three windows, blur on
+  and off, static and dragging, frame-diffed: nothing above noise. Sandbox runs
+  the nested Wayland backend on GLES2; the live session is NVIDIA DRM. A Fable
+  agent trying to instrument it hit Mesa GBM clashing with the NVIDIA device,
+  which points the same way.
+
+Still open, most likely: the SceneFX 0.5 rounded-border construction
+(`wlr_scene_rect` + `clipped_region` punch-hole forming a 1 px ring at
+`corner_radius = 14`) under NVIDIA. Next narrowing step is to set
+`corner_radius = 0` on the live session: if the flat 4-rect path is clean, the
+clipped_region/SDF path is isolated and the report belongs upstream in SceneFX.
+
+`plans/scripts/install-scenefx.sh` therefore defaults to `SOMEWM_WLROOTS=0.19`
+until this is resolved. `SOMEWM_WLROOTS=0.20` opts back in.
+
 ## Remaining
 
 1. **Live DRM test** — install and restart, then exercise: tag-slide animation,

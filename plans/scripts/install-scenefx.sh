@@ -22,7 +22,13 @@ SRCDIR="$(cd "$(dirname "$0")/../.." && pwd)"
 # wlroots version picks SceneFX too: 0.20 -> SceneFX 0.5, 0.19 -> SceneFX 0.4.
 # Each version gets its own build dir so switching back and forth is cheap.
 #   SOMEWM_WLROOTS=0.19 ./install-scenefx.sh   # previous graphics stack
-WLROOTS_VERSION="${SOMEWM_WLROOTS:-auto}"
+# Default pinned to 0.19 (SceneFX 0.4) since 2026-08-23: the kolo10 sync moved
+# to wlroots 0.20 + SceneFX 0.5, and on this NVIDIA box that combination
+# corrupts client borders -- the first window renders correctly, every window
+# after it does not, and dragging one flickers. The identical compositor code
+# is correct on 0.19, so the fault is in the new graphics stack, not the sync.
+# Use SOMEWM_WLROOTS=0.20 to test it again once SceneFX 0.5 is fixed.
+WLROOTS_VERSION="${SOMEWM_WLROOTS:-0.19}"
 if [[ "$WLROOTS_VERSION" == "auto" ]]; then
     BUILDDIR="$SRCDIR/build-fx"
 else
