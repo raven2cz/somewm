@@ -21,7 +21,7 @@
 # The full protocol is three runs:
 #   A  baseline   blur on, default settings           <- this script
 #   B  noblur     blur switched off on every client   <- this script
-#   C  smallblur  blur on, S shrunk from 80px to 12px <- needs a restart, see below
+#   C  blur off entirely (radius 0), which B does not achieve <- needs a restart
 #
 set -euo pipefail
 
@@ -133,6 +133,10 @@ echo
 # --- B: blur off -----------------------------------------------------------
 
 bold ">>> B  blur off on every client"
+yellow "    note: this only destroys the per-client blur nodes. somewm also"
+yellow "    creates a scene-level wlr_scene_optimized_blur layer at startup"
+yellow "    (somewm.c), and SceneFX still runs its padding save/restore for"
+yellow "    that one, so B does NOT switch the blur machinery off. Run C does."
 # Remember which clients actually had blur -- it is applied per class, so
 # blanket-restoring it afterwards would turn it on for windows that never had
 # it. The list lives in the compositor's Lua state between eval calls.
@@ -157,19 +161,27 @@ sleep 1
 # --- C: instructions -------------------------------------------------------
 
 echo
-bold ">>> C  needs a restart, because the blur radius is set once at startup"
+bold ">>> C  needs a restart, because blur_data is set once at startup"
 cat <<EOF
 
-  Exit somewm, then relaunch from the TTY with the blur sampling radius
-  shrunk from 80px to 12px:
+  is_scene_blur_enabled() is radius > 0 && num_passes > 0
+  (scenefx-0.5/types/fx/blur_data.c:14), so zeroing either one switches off
+  every blur path SceneFX has, including the padding save/restore that run B
+  left running. That is the decisive test:
+
+      SOMEWM_BLUR_PASSES=0 SOMEWM_BLUR_RADIUS=0 $SRCDIR/plans/scripts/start.sh
+
+  Open two windows, focus the one that looks broken, then:
+
+      $SRCDIR/plans/scripts/border-probe.py C-blur-off
+
+  If that comes out clean, restart once more with the band shrunk from 80px to
+  12px rather than removed, to see the damage scale with it:
 
       SOMEWM_BLUR_PASSES=1 SOMEWM_BLUR_RADIUS=3 $SRCDIR/plans/scripts/start.sh
+      $SRCDIR/plans/scripts/border-probe.py D-smallblur
 
-  Open two terminals again, focus the one that looks broken, and run:
-
-      $SRCDIR/plans/scripts/border-probe.py C-smallblur
-
-  Then send me the output of:
+  Then send me:
 
       $SRCDIR/plans/scripts/border-experiment.sh --report
 
