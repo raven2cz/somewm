@@ -321,7 +321,44 @@ need to call `wlr_xwayland_surface_restack()` itself. It deliberately skips
 override-redirect surfaces, which is correct: their stacking is the
 application's business. **No fix needed; C9 dropped from the plan.**
 
-### Open: one window that did not appear (live session, 2026-08-23)
+### Solved: windows that never appeared (live session, 2026-08-23)
+
+**Root cause: a buffer committed before `xwayland_surface_associate()` is lost.**
+
+wlroots maps an Xwayland surface from exactly one place -- its own commit
+handler (`xwayland/xwm.c`, `xwayland_surface_handle_commit` ->
+`wlr_surface_map()` once the surface has a buffer). That handler is subscribed
+*inside* `xwayland_surface_associate()`. The live trace shows an 8 ms window
+between the `wl_surface` being created and associate running:
+
+```
+00:19:12.586 New wlr_surface 0x55c7827c1280
+00:19:12.594 [X11-ASSOC] window 0x1600031 surface=0x55c7827c1280 mapped=0
+             (no [X11-MAP] ever follows)
+```
+
+A buffer committed in that window is never seen. The surface holds a buffer,
+`mapped` stays false, no map signal is emitted, and the client sits in
+`client.get()` with no scene node, no screen, no tags and 0x0 geometry --
+invisible until something forces another commit.
+
+Confirmed by elimination on the live window: `ConfigureNotify` (move), resize
+and focus all left it stuck; only an X11 unmap/map cycle recovered it, which
+fits, since only that makes the client redraw.
+
+Fix: `associatex11()` detects `mapped == false && wlr_surface_has_buffer()`
+and calls `wlr_surface_map()`, which makes wlroots emit the map signal we just
+subscribed to. Calling `mapnotify()` directly would leave wlroots'
+`surface->mapped` inconsistent. Independently confirmed by a `gpt-5.6-sol`
+review that reached the same predicate and the same API choice.
+
+**wlroots 0.19.3 and 0.20.0 both have this gap** -- worth an upstream report.
+
+The first attempt at this fix tested `surface->mapped`, which is false in this
+scenario, so it never executed (zero occurrences in the log). Lesson recorded:
+the traces are what turned a plausible guess into the actual cause.
+
+### Superseded: initial hypothesis (kept for the record)
 
 After deploying, everything worked except Sierra Chart's
 `Global Settings -> Sierra Chart Server Settings`, which never showed. State
