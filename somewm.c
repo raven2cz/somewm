@@ -1526,6 +1526,12 @@ setup(void)
 	 * state by luaA_register_state, so only the event-loop side is set up here. */
 	animation_init(event_loop);
 
+	/* Initialize the wallpaper cache (after luaA_init, which zeroes globalconf).
+	 * Upstream dropped the cache in d8568ae; the fork keeps it because tag-slide
+	 * animates the wallpaper through it and the root.wp_* overlays. Without this
+	 * call the list head stays NULL and every cache insert silently no-ops. */
+	wallpaper_cache_init();
+
 	/* Initialize D-Bus for notifications (AwesomeWM compatibility) */
 	a_dbus_init();
 

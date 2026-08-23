@@ -59,6 +59,9 @@ typedef struct wallpaper_cache_entry {
 /* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
 #define WALLPAPER_CACHE_MAX 32
 
+/** Initialise the wallpaper cache list (call once, after globalconf is zeroed) */
+void wallpaper_cache_init(void);
+
 /** Look up a cached wallpaper entry by path and screen index */
 wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
 
