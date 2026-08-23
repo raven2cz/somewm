@@ -2304,9 +2304,14 @@ push_unmanaged_entry(UnmanagedSurface *u, void *data)
 	lua_setfield(L, -2, "title");
 	lua_pushstring(L, xs->class ? xs->class : "");
 	lua_setfield(L, -2, "class");
+	/* Parent window id (WM_TRANSIENT_FOR): menu -> submenu chains hand focus
+	 * back along this link when a popup closes. */
+	lua_set_int_field(L, "parent",
+		xs->parent ? (int)xs->parent->window_id : 0);
 
-	/* Scene layer name, so tests can assert the popup really landed in
-	 * LyrUnmanaged instead of trusting that mapping happened at all. */
+	/* Scene node position and layer. x/y above are what X11 thinks; these
+	 * are what is actually painted, which is the difference a set_geometry
+	 * regression would show up in. */
 	if (u->scene_surface) {
 		struct wlr_scene_node *node = &u->scene_surface->buffer->node;
 		const char *layer = "unknown";
@@ -2318,10 +2323,13 @@ push_unmanaged_entry(UnmanagedSurface *u, void *data)
 			}
 		}
 		lua_pushstring(L, layer);
+		lua_setfield(L, -2, "layer");
+		lua_set_int_field(L, "scene_x", node->x);
+		lua_set_int_field(L, "scene_y", node->y);
 	} else {
 		lua_pushnil(L);
+		lua_setfield(L, -2, "layer");
 	}
-	lua_setfield(L, -2, "layer");
 
 	lua_rawseti(L, -2, dump->index++);
 }
