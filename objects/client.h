@@ -188,6 +188,9 @@ struct client_t
     struct wl_listener dissociate;
     struct wl_listener configure;
     struct wl_listener set_hints;
+    /* An X11 window can turn into an override-redirect one while it lives;
+     * when that happens the surface has to move to the unmanaged path. */
+    struct wl_listener override_redirect;
 #endif
     /** Decoration */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;

@@ -967,7 +967,7 @@ rebuild_keyboard_keymap(void)
  * Lua callers can invoke awesome.sync() from inside a signal emit (e.g. a
  * `request::manage` rule that wants the configure flushed before it does
  * something else), and a synchronous flush in that context can call
- * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots — see
+ * wl_client_destroy() on a hung-up peer mid-emit and abort wlroots. See
  * trip-zip/somewm#530. The flush now runs at the next event-loop idle, so
  * it is best-effort: bytes are guaranteed to leave the compositor before
  * the next poll blocks, but not before the call returns to Lua. Lua code
@@ -2226,6 +2226,13 @@ luaA_awesome_index(lua_State *L)
 		return 1;
 	}
 
+	/* Monotonic count of presented output frames. Test hook for observing that a
+	 * redraw actually reached the screen (see tests/test-widget-idle-repaint.lua). */
+	if (A_STREQ(key, "_test_frame_count")) {
+		lua_pushinteger(L, (lua_Integer)globalconf.frame_commit_count);
+		return 1;
+	}
+
 	if (A_STREQ(key, "bypass_surface_visibility")) {
 		lua_pushboolean(L, globalconf.appearance.bypass_surface_visibility);
 		return 1;
@@ -2797,10 +2804,19 @@ static int num_extra_search_paths = 0;
 
 /* Custom config file path - set via -c/--config flag */
 static const char *custom_confpath = NULL;
+/* Set when user passed -c NONE / --config NONE: skip user config search and
+ * load only the bundled default somewmrc.lua (akin to `nvim -u NONE`). */
+static bool force_default_config = false;
 
 void
 luaA_set_confpath(const char *path)
 {
+	if (path && strcmp(path, "NONE") == 0) {
+		force_default_config = true;
+		custom_confpath = NULL;
+		return;
+	}
+	force_default_config = false;
 	custom_confpath = path;
 }
 
@@ -4516,6 +4532,12 @@ luaA_loadrc(void)
 	/* If custom config path was specified via -c flag, use only that */
 	if (custom_confpath) {
 		config_paths[path_count++] = custom_confpath;
+		config_paths[path_count] = NULL;
+	} else if (force_default_config) {
+		/* -c NONE: skip user config entirely, load only the bundled default.
+		 * Mirrors `nvim -u NONE` for quick "is it my config?" debugging. */
+		config_paths[path_count++] = DATADIR "/somewm/somewmrc.lua";
+		config_paths[path_count++] = "./somewmrc.lua";  /* dev fallback */
 		config_paths[path_count] = NULL;
 	} else {
 		/* Build config search path following AwesomeWM pattern:

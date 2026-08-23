@@ -12,6 +12,7 @@
 #include <glib.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
+#include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/interfaces/wlr_keyboard.h>
@@ -20,6 +21,7 @@
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
+#include "xwayland.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -373,6 +375,13 @@ some_set_seat_keyboard_focus(Client *c)
 	struct wlr_keyboard *kb;
 	int surface_ready;
 
+	/* An open override-redirect menu owns the keyboard: taking it away makes
+	 * Xwayland send FocusOut and the application closes the menu. Sloppy
+	 * focus reaches this path on every pointer motion, so without the guard
+	 * moving the mouse would dismiss Wine menus. Mirrors focusclient(). */
+	if (unmanaged_holds_focus())
+		return;
+
 	if (!c) {
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
@@ -404,6 +413,18 @@ some_set_seat_keyboard_focus(Client *c)
 	if (seat->keyboard_state.focused_surface == surface) {
 #ifdef XWAYLAND
 		if (c->client_type == X11) {
+			struct wlr_pointer_constraint_v1 *constraint =
+				wlr_pointer_constraints_v1_constraint_for_surface(
+					pointer_constraints, surface, seat);
+			if (constraint) {
+				/* A constraint-backed X11 pointer grab is in progress
+				 * (games): the clear/re-enter cycle below becomes
+				 * FocusOut in X11 and Xwayland tears the grab down,
+				 * destroying the constraint. Focus is demonstrably
+				 * working; just make sure the constraint is active. */
+				cursorconstrain(constraint);
+				return;
+			}
 			/* KWin pattern: force focus re-delivery for X11 clients.
 			 * wlroots skips re-entry to the same surface, so we must
 			 * deactivate→clear→re-enter to deliver a new FocusIn event.
@@ -420,8 +441,8 @@ some_set_seat_keyboard_focus(Client *c)
 
 	/* Resolve the previously-focused surface and apply the same old-surface
 	 * handling as focusclient() in focus.c. Without this, Path B diverges
-	 * from Path A on popup grabs, top-layer layer-shell focus (rofi-like
-	 * launchers) and exclusive_focus. The core xdg-shell fix for Chromium
+	 * from Path A on popup grabs and top-layer layer-shell focus (rofi-like
+	 * launchers). The core xdg-shell fix for Chromium
 	 * paint-stall is the activation call further down — this block only
 	 * exists to keep Path B behaviorally equivalent to Path A when the old
 	 * focus holder requires special treatment. */
@@ -455,19 +476,8 @@ some_set_seat_keyboard_focus(Client *c)
 			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
 				return;
 
-			/* The old client holds exclusive focus (e.g. drag grab).
-			 * Matches focus.c:104-105. */
-			if (old_c && old_c == exclusive_focus
-			    && client_wants_focus(old_c))
-				return;
-
-			/* Deactivate old managed client. Skip the deactivation if the
-			 * incoming client is a winecfg-like wants-focus unmanaged
-			 * XWayland window — in that case the parent toplevel stays
-			 * activated so the legacy input model keeps working. Matches
-			 * focus.c:106-114. */
-			if (old_c && !client_is_unmanaged(old_c)
-			    && !client_wants_focus(c))
+			/* Deactivate the old managed client. */
+			if (old_c)
 				client_activate_surface(old, 0);
 		}
 	}
@@ -510,10 +520,12 @@ some_set_seat_keyboard_focus(Client *c)
 	if (c->client_type == X11)
 		client_activate_surface(surface, 1);
 #endif
-	/* Update pointer constraint - games need this for mouse lock.
-	 * Without this, pointer stays unconstrained and focus-follows-mouse
-	 * can steal focus away from games. */
-	some_update_pointer_constraint(surface);
+
+	/* Update pointer constraint for the newly focused surface, mirroring
+	 * focusclient(). Without this a constraint created around a Lua-path
+	 * focus change is never activated. */
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
 }
 
 /** Find the Client* that owns a given wlr_surface.
@@ -695,10 +707,13 @@ some_get_allocator(void)
 void
 some_compositor_quit(void)
 {
+	/* The primary loop is g_main_loop_run(), not wl_display_run(), so quitting
+	 * the GLib loop is what actually stops somewm. wl_display_terminate() would
+	 * be a no-op here (nothing calls wl_display_run); Wayland teardown happens
+	 * in cleanup() after the loop returns. */
 	if (globalconf.loop) {
 		g_main_loop_quit(globalconf.loop);
 	}
-	wl_display_terminate(dpy);
 }
 
 /*

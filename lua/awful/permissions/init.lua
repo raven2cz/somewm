@@ -320,7 +320,7 @@ function permissions.tag(c, t, hints) --luacheck: no unused
             -- managed (notably during hot-reload re-management). Capture the
             -- fallback BEFORE c.screen is reassigned (the assignment would
             -- otherwise clobber the client's own screen), then guard every
-            -- index — indexing transient_for.screen unconditionally crashes
+            -- index. Indexing transient_for.screen unconditionally crashes
             -- the request::tag handler.
             local fallback_screen = c.transient_for.screen or c.screen
             c.screen = c.transient_for.screen

@@ -79,5 +79,6 @@ client_surface_clear_scene_data(struct wlr_surface *surface, struct wlr_scene_tr
 }
 
 void client_scene_node_destroy(Client* c);
+void client_clear_scene_child_pointers(Client *c);
 
 #endif /* WINDOW_H */

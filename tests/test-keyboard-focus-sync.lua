@@ -69,57 +69,81 @@ local steps = {
         end
     end,
 
-    -- Step 3: Focus A, then B, then A again — basic switching
-    function()
-        print("TEST: Step 3 - Basic focus switching")
-        focus_signals_received = 0
-        unfocus_signals_received = 0
+    -- Step 3: Focus A, then B, then A again — basic switching.
+    -- NOTE: focus/unfocus are dispatched through the event queue
+    -- (SIG_CLIENT_FOCUS/SIG_FOCUS), so they drain at the next event-loop
+    -- iteration, NOT synchronously. Set focus on the first call, then poll
+    -- across runner iterations until the queued signals have drained.
+    function(count)
+        if count == 1 then
+            print("TEST: Step 3 - Basic focus switching")
+            focus_signals_received = 0
+            unfocus_signals_received = 0
 
-        client.focus = clients.a
-        assert(client.focus == clients.a,
-            "client.focus should be A after setting")
+            client.focus = clients.a
+            assert(client.focus == clients.a,
+                "client.focus should be A after setting")
 
-        client.focus = clients.b
-        assert(client.focus == clients.b,
-            "client.focus should be B after setting")
+            client.focus = clients.b
+            assert(client.focus == clients.b,
+                "client.focus should be B after setting")
 
-        client.focus = clients.a
-        assert(client.focus == clients.a,
-            "client.focus should be A after switching back")
+            client.focus = clients.a
+            assert(client.focus == clients.a,
+                "client.focus should be A after switching back")
+        end
 
-        -- A was already focused from Step 2, so first set is a no-op for signals.
-        -- Only A→B and B→A emit focus signals = 2 minimum.
-        assert(focus_signals_received >= 2,
-            "Expected >= 2 focus signals, got " .. focus_signals_received)
-
-        print("TEST: Step 3 - PASS (focus signals: " .. focus_signals_received .. ")")
-        return true
+        -- A was already focused from Step 2, so first set is a no-op for
+        -- signals. Only A→B and B→A emit focus signals = 2 minimum. Wait for
+        -- the queue to drain before asserting.
+        if focus_signals_received >= 2 then
+            print("TEST: Step 3 - PASS (focus signals: " ..
+                focus_signals_received .. ")")
+            return true
+        end
+        assert(count < 20,
+            "Expected >= 2 focus signals after drain, got " ..
+            focus_signals_received)
     end,
 
-    -- Step 4: Set focus to already-focused client (the desync case)
+    -- Step 4: Set focus to already-focused client (the desync case).
     -- This is the core of the fix: client_focus() must call
     -- some_set_seat_keyboard_focus() even when client_focus_update()
-    -- returns false
-    function()
-        print("TEST: Step 4 - Re-focus already-focused client")
+    -- returns false. Re-focusing an already-focused client is a no-op at
+    -- the Lua level, so NO SIG_FOCUS is queued — the count must stay 0 even
+    -- after the queue has had iterations to drain.
+    function(count)
+        if count == 1 then
+            print("TEST: Step 4 - Re-focus already-focused client")
+            client.focus = clients.a
+            assert(client.focus == clients.a, "Precondition: A is focused")
+        end
 
-        client.focus = clients.a
-        assert(client.focus == clients.a, "Precondition: A is focused")
+        -- Settle: let any queued focus signals from Step 3 (and the
+        -- precondition set above) drain first, so we measure ONLY the
+        -- re-focus that happens after the reset below.
+        if count < 4 then
+            return
+        end
 
-        -- Set focus to A again — should NOT crash, should be a no-op at Lua
-        -- level but should still sync seat keyboard focus
-        focus_signals_received = 0
-        client.focus = clients.a
-        assert(client.focus == clients.a,
-            "client.focus should still be A")
+        if count == 4 then
+            -- Now the queue is quiescent. Re-focus A (a no-op at the Lua
+            -- level) and reset the counter to measure just this operation.
+            focus_signals_received = 0
+            client.focus = clients.a
+            assert(client.focus == clients.a,
+                "client.focus should still be A")
+        end
 
-        -- No new focus signal expected (focus didn't change at Lua level)
-        assert(focus_signals_received == 0,
-            "Re-focusing same client should not emit focus signal, got " ..
-            focus_signals_received)
-
-        print("TEST: Step 4 - PASS (no crash, no spurious signals)")
-        return true
+        -- Give the event queue more iterations to drain, then confirm no
+        -- spurious focus signal was emitted for the no-op re-focus.
+        if count >= 8 then
+            assert(focus_signals_received == 0,
+                "Re-focusing same client should not emit focus signal, got " ..
+                focus_signals_received)
+            print("TEST: Step 4 - PASS (no crash, no spurious signals)")
+            return true
+        end
     end,
 
     -- Step 5: Game timer pattern: nil -> c

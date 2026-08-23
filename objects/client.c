@@ -1909,9 +1909,13 @@ client_getbyframewin(xcb_window_t w)
 
 /** Unfocus a client (internal).
  * \param c The client.
+ * \param sync Emit the signals now instead of queueing them. Required when the
+ *             client is about to be invalidated (client_unmanage): the queue is
+ *             drained at the frame boundary, and luaA_object_emit_signal() drops
+ *             signals whose object no longer passes client_checker().
  */
 static void
-client_unfocus_internal(client_t *c)
+client_unfocus_internal(client_t *c, bool sync)
 {
     lua_State *L = globalconf_get_lua_State();
     globalconf.focus.client = NULL;
@@ -1919,18 +1923,27 @@ client_unfocus_internal(client_t *c)
     luaA_object_push(L, c);
 
     lua_pushboolean(L, false);
-    some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
-    some_event_queue_signal0(L, -1, SIG_UNFOCUS);
+    if (sync)
+    {
+        luaA_object_emit_signal(L, -2, "property::active", 1);
+        luaA_object_emit_signal(L, -1, "unfocus", 0);
+    }
+    else
+    {
+        some_event_queue_signal(L, -2, SIG_PROPERTY_ACTIVE, 1);
+        some_event_queue_signal0(L, -1, SIG_UNFOCUS);
+    }
     lua_pop(L, 1);
 }
 
 /** Unfocus a client.
  * \param c The client.
+ * \param sync Emit the signals now instead of queueing them.
  */
 static void
-client_unfocus(client_t *c)
+client_unfocus(client_t *c, bool sync)
 {
-    client_unfocus_internal(c);
+    client_unfocus_internal(c, sync);
     globalconf.focus.need_update = true;
 }
 
@@ -1965,7 +1978,9 @@ void client_ban_unfocus(client_t *c)
          * pointer/keyboard focus once tag/monitor state is consistent. */
         if (mousegrabber_isrunning())
             return;
-        client_unfocus(c);
+        /* Queued form (upstream client_unfocus(c, sync)); this is the normal
+         * banning path, not client invalidation. */
+        client_unfocus(c, false);
     }
 }
 
@@ -2043,7 +2058,7 @@ client_focus_update(client_t *c)
          * because the client which has focus now could be using globally
          * active input model (or 'no input').
          */
-        client_unfocus_internal(globalconf.focus.client);
+        client_unfocus_internal(globalconf.focus.client, false);
     }
 
     focused_new = globalconf.focus.client != c;
@@ -3209,8 +3224,11 @@ client_unmanage(client_t *c, client_unmanage_t reason)
             tc->transient_for = NULL;
     }
 
+    /* Emit synchronously: this client is invalidated before the event queue is
+     * next drained, and drain drops signals on invalid objects. AwesomeWM emits
+     * unfocus here too, before request::unmanage, with the client still valid. */
     if(globalconf.focus.client == c)
-        client_unfocus(c);
+        client_unfocus(c, true);
 
     /* Clear pre-lock focused client if it references this client.
      * Prevents use-after-free when unlocking after the saved client is destroyed. */
@@ -3735,6 +3753,7 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
         [LyrTop]     = "top",
         [LyrFS]      = "fullscreen",
         [LyrOverlay] = "overlay",
+        [LyrUnmanaged] = "unmanaged",
         [LyrBlock]   = "block",
     };
 
@@ -5527,7 +5546,7 @@ luaA_client_module_newindex(lua_State *L)
         if (c)
             client_focus(c);
         else if (globalconf.focus.client)
-            client_unfocus(globalconf.focus.client);
+            client_unfocus(globalconf.focus.client, false);
     }
 
     return 0;

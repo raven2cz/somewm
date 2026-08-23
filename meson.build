@@ -106,7 +106,7 @@ message('Found LGI version: ' + lgi_version)
 
 # wlroots 0.19 only - use system if available, otherwise build from subproject
 # We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', static: false, required: false)
+wlroots = dependency('wlroots-0.19', version : '>=0.19.3', static: false, required: false)
 
 if not wlroots.found()
   message('System wlroots 0.19 not found, building from subproject...')
@@ -259,6 +259,22 @@ keyboard_shortcuts_inhibit_client_code = custom_target(
   'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
   input: wayland_protocols_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
   output: 'keyboard-shortcuts-inhibit-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
+# wlr-virtual-pointer client protocol (header + code) for the input-injection
+# test client
+virtual_pointer_client_header = custom_target(
+  'wlr-virtual-pointer-unstable-v1-client-protocol.h',
+  input: 'protocols/wlr-virtual-pointer-unstable-v1.xml',
+  output: 'wlr-virtual-pointer-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+virtual_pointer_client_code = custom_target(
+  'wlr-virtual-pointer-unstable-v1-client-protocol.c',
+  input: 'protocols/wlr-virtual-pointer-unstable-v1.xml',
+  output: 'wlr-virtual-pointer-unstable-v1-client-protocol.c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
@@ -488,6 +504,17 @@ test_content_pattern_client = executable(
   install: false,
 )
 
+# Test XDG toplevel client that logs decoded wl_pointer events to a marker file.
+# Used by test-titlebar-pointer-leak.lua to assert no pointer events leak to the
+# client while the cursor is over its titlebar.
+test_pointer_logger = executable(
+  'test-pointer-logger',
+  ['tests/test-pointer-logger.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
 # DMA-BUF test client (gbm + zwp_linux_dmabuf_v1) for the GPU readback path
 # in c.content. Used by test-client-content-dmabuf.lua. Only built when gbm
 # is available; the Lua test skips itself otherwise.
@@ -516,6 +543,28 @@ test_disconnect_mid_map_client = executable(
   install: false,
 )
 
+# Test client that injects pointer motion and clicks through
+# zwlr_virtual_pointer_v1, driving the compositor's real buttonpress() path
+# (root.fake_input bypasses it). Used by test-xwayland-pointer-grab-click.lua.
+test_virtual_pointer_client = executable(
+  'test-virtual-pointer-client',
+  ['tests/test-virtual-pointer-client.c', virtual_pointer_client_code],
+  virtual_pointer_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# X11 client that grabs the pointer like a game (confined grab, blank cursor)
+# and logs focus/button events to a marker file. Used by
+# test-xwayland-pointer-grab-click.lua.
+if have_xwayland
+  test_x11_grab_client = executable(
+    'test-x11-grab-client',
+    'tests/test-x11-grab-client.c',
+    dependencies: [xcb],
+    install: false,
+  )
+endif
 # ==============================================================================
 # Install Data
 # ==============================================================================
