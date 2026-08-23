@@ -3,7 +3,9 @@
 Date: 2026-08-23
 Branch: `sync/upstream-2026-08-23-kolo10` (from `upstream/main` @ `c7b3208`)
 Methodology: **branch FROM upstream, re-apply fork features** (kolo8/kolo9 rule)
-Status: **Phases 0-4 DONE, sandbox-verified. NOT merged — awaiting live DRM test.**
+Status: **Phases 0-4 DONE, sandbox-verified. NOT merged.** Live DRM testing found
+a border rendering defect on wlroots 0.20 + SceneFX 0.5 that is not fixed; the
+fork runs on 0.19, which is an upstream-supported build option.
 
 ## Starting point
 
@@ -305,6 +307,14 @@ with valid content on this machine -- i.e. partial damage plus buffer age on
 NVIDIA DRM, where the nested backend's full repaints hide it. That also finally
 explains why the sandbox has never reproduced anything.
 
+### Status: unresolved
+
+The mechanism is well characterised and the fork's own inputs are proven
+correct, but nothing here is fixed. Borders on wlroots 0.20 + SceneFX 0.5
+flicker while a window is dragged at any border width, and the fork stays on
+0.19. What follows is the evidence, kept so this does not have to be
+re-derived.
+
 ### Confirmed: partial damage
 
 `WLR_SCENE_DEBUG_DAMAGE=rerender` forces a full repaint every frame
@@ -360,8 +370,11 @@ And it explains the first window always being fine -- it is the one that never
 gets re-laid-out, so its ring is rasterised once under conditions that happen to
 work and nothing disturbs it.
 
-**Fix: `theme.border_width = dpi(2)` in somewm-one.** Rounded corners are kept
-and the borders are correct. Verified live at 100.0% on all four edges.
+**Not fixed.** `border_width = 2` removes the statically missing edge and
+measures 100.0%, but that measurement is two captures 0.4s apart on a
+stationary window -- it never tested dragging. On the live session a 2px border
+still flickers while a window is moved. The theme change was made and then
+reverted; on 0.19 a 1px border measures 100% anyway.
 
 Everything ruled out along the way -- blur, occlusion, the scene node, the
 uniforms, the shaders, mediump precision, the opaque-region change, partial
@@ -400,8 +413,9 @@ SceneFX forms the ring as the difference of two SDF shapes one pixel apart, and
 `quad_round.frag`'s half-pixel conventions (`size - 1.0`, `position + 0.5`)
 cannot resolve that reliably.
 
-Nothing here blocks wlroots 0.20. The installer default can move back once the
-theme carries a 2px border.
+**wlroots 0.20 stays blocked.** There is no workaround that survives dragging:
+`corner_radius = 0` is exact but gives up rounded corners, and a thicker border
+only hides the static symptom. The installer default stays on 0.19.
 
 ### Reproducer for upstream
 
