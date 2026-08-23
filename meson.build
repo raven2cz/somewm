@@ -180,9 +180,15 @@ endif
 if not wlroots.found()
   message('System wlroots ' + wlroots_version + ' not found, building from subproject...')
 
+  # SceneFX links against wlroots and carries its own copies of a few wlroots
+  # internals (types/output/output.c). Against a static wlroots those symbols
+  # collide at link time ("multiple definition of output_pending_resolution"),
+  # so a source-built wlroots has to be shared whenever SceneFX may be used.
+  # Installing the distro's wlroots package avoids this path entirely.
   wlroots_options = [
     'examples=false',
-    'default_library=static',
+    get_option('scenefx').allowed() ? 'default_library=shared'
+                                    : 'default_library=static',
   ]
   if have_xwayland
     wlroots_options += 'xwayland=enabled'
@@ -198,6 +204,26 @@ endif
 
 # The Debian CI job greps this line to prove `auto` picks 0.19 there; keep the wording.
 message('Using wlroots version: ' + wlroots_version)
+
+# SceneFX supplies the optional visual effects (rounded corners, shadows, blur).
+# Its releases track wlroots one-to-one -- 0.4 builds against wlroots 0.19, 0.5
+# against 0.20, and each refuses the other's version range -- so the choice
+# follows wlroots_version rather than being pinned here. One wrap per version,
+# mirroring how wlroots itself is handled above.
+scenefx_option = get_option('scenefx')
+scenefx_version = wlroots_version == '0.20' ? '0.5' : '0.4'
+scenefx = dependency('scenefx-' + scenefx_version, required: false,
+                     allow_fallback: false)
+if not scenefx.found()
+  scenefx_sub = subproject('scenefx-' + scenefx_version, required: scenefx_option)
+  if scenefx_sub.found()
+    scenefx = scenefx_sub.get_variable('scenefx')
+  endif
+endif
+have_scenefx = scenefx.found()
+if have_scenefx
+  message('SceneFX ' + scenefx_version + ' enabled (wlroots ' + wlroots_version + ')')
+endif
 
 # PAM authentication (optional, for lock screen)
 pam_option = get_option('pam')
