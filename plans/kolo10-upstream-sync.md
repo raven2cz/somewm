@@ -151,6 +151,23 @@ inverting the assertion).
 - `awful/ipc.lua` now uses `awful.wallpaper` for its wallpaper commands. The
   fork's cache-aware path is not in it; `fishlive.services.wallpaper` fills the
   cache itself via `root.wallpaper_cache_preload`.
+- `make test` aborted at its first target because upstream added
+  `tests/check-lua-compat.sh` and the fork-only `lua/awful/anim_client.lua` used
+  `goto continue`, which Lua 5.1 cannot parse. Fixed in `43d0bd9`; nothing else
+  in the suite had been running until then.
+
+## Verified on both graphics stacks
+
+Full suite, `build-test` reconfigured per stack:
+
+| stack | result |
+|---|---|
+| wlroots 0.20 + SceneFX 0.5 | 151 tests, only `test-floating-layout` failing |
+| wlroots 0.19 + SceneFX 0.4 | 151 tests, only `test-floating-layout` failing |
+
+`test-floating-layout` is flaky under load and fails the same way on `main`.
+The sync is therefore green on either stack, and pinning to 0.19 costs nothing
+in coverage.
 
 ## Known defect: wlroots 0.20 + SceneFX 0.5 corrupts borders on NVIDIA
 
@@ -182,11 +199,72 @@ Ruled out along the way:
   agent trying to instrument it hit Mesa GBM clashing with the NVIDIA device,
   which points the same way.
 
-Still open, most likely: the SceneFX 0.5 rounded-border construction
-(`wlr_scene_rect` + `clipped_region` punch-hole forming a 1 px ring at
-`corner_radius = 14`) under NVIDIA. Next narrowing step is to set
-`corner_radius = 0` on the live session: if the flat 4-rect path is clean, the
-clipped_region/SDF path is isolated and the report belongs upstream in SceneFX.
+### Hypotheses tested and refuted
+
+- **Opaque-region regression** (gpt-5.6-sol, round 1). SceneFX 0.4 bailed out of
+  `scene_node_opaque_region()` for any rect with a corner radius, with the
+  comment `TODO: this is incorrect`; 0.5 removed that guard. The change is real
+  but does not explain this. Reading `quad_round.frag` / `corner_alpha.frag`:
+  along the straight edges `corner_alpha()` returns exactly 1.0, feathering only
+  happens inside the corner squares, and 0.5 conservatively subtracts the full
+  radius x radius corner squares plus the whole clip rect. The 1 px straight
+  bands really are opaque, so declaring them so is correct.
+- **Shader divergence.** Derived that 0.4's and 0.5's SDF maths are functionally
+  equivalent; 0.5 only adds fast paths (`discard` instead of writing alpha 0)
+  and an `is_cutout` flag, all of which reduce to the same values.
+- **mediump precision** (gpt-5.6-sol, round 2). 0.5 did drop 0.4's separate
+  GLES3 shader tree, and `corner_alpha.frag` -- which holds all the SDF maths --
+  declares no precision qualifier of its own. At 3840x2160 a mediump float
+  cannot resolve a 1 px ring past x = 2048, which would have fit every symptom
+  including the clean first window and the clean small-output sandbox. Refuted
+  by reading `render/fx_renderer/shaders.c:119`: `link_quad_program()`
+  concatenates `quad_frag_src` and `corner_alpha_frag_src` into a single source
+  string, so the `precision highp float` at the top of the quad shader covers
+  the SDF. (Mesa rejecting `corner_alpha.frag` on its own -- "No precision
+  specified in this scope" -- confirms the concatenation is mandatory.)
+
+### Surviving hypothesis: the blur padding band roughly doubled in 0.5
+
+SceneFX saves the framebuffer pixels around a blur node before rendering and
+pastes them back afterwards, so that newly drawn content above a blurred window
+does not bleed into its blur. Both versions do this; 0.5 changed how wide the
+band is and when it triggers.
+
+| | 0.4 (`wlr_scene.c:2957`) | 0.5 (`wlr_scene.c:2896`, `apply_blur_region`) |
+|---|---|---|
+| region | `expand(damage INTERSECT blur_region, S)` | `expand(expand(damage, S) INTERSECT node_visible, S)` |
+| reach beyond damage | `S` | `2 * S` |
+| triggers when | damage **overlaps** a blurred node | damage comes **within S** of a blurred node |
+
+The fork sets `num_passes = 3, radius = 5` (`somewm.c:1203`), and
+`blur_data_calc_size()` is `2^(passes+1) * radius`, so **S = 80 px**. The band
+therefore grew from 80 px to 160 px, and now fires for any damage within 80 px
+of a blur node. With `useless_gap = 3` two tiled windows sit ~6 px apart, so a
+blinking cursor in one terminal drags a 160 px stale-pixel restore band across
+its neighbour's border.
+
+That is the only hypothesis left that explains the first window being clean:
+with a single window the band lands on the static wallpaper, where pasting back
+pre-render pixels is invisible. With a second window it lands on live content
+and on the 1 px border.
+
+Two secondary defects found in the same code, worth reporting regardless:
+
+- `apply_blur_region()` tests the return value of `pixman_region32_intersect()`,
+  which reports allocation success, not whether the result is non-empty. The
+  compensation path is therefore entered for every blur node in the scene.
+- `full_damage` is computed from `original_damage.extents`, so a damage region
+  whose bounding box spans the output but which is mostly empty is mistaken for
+  a full repaint and skips compensation entirely.
+
+Next step, in order:
+
+1. `sfx.blur_enabled = false` in somewm-one on the 0.20 stack. Clean borders
+   confirm it.
+2. Keep blur but drop `num_passes` to 1 and `radius` to 3 (S = 12 px). If the
+   corrupted band shrinks with S, that is proof rather than inference.
+3. If confirmed, report to wlrfx/scenefx and carry a `diff_files` patch on
+   `subprojects/scenefx-0.5.wrap` until it lands.
 
 `plans/scripts/install-scenefx.sh` therefore defaults to `SOMEWM_WLROOTS=0.19`
 until this is resolved. `SOMEWM_WLROOTS=0.20` opts back in.
