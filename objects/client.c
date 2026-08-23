@@ -3753,6 +3753,7 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
         [LyrTop]     = "top",
         [LyrFS]      = "fullscreen",
         [LyrOverlay] = "overlay",
+        [LyrUnmanaged] = "unmanaged",
         [LyrBlock]   = "block",
     };
 

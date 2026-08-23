@@ -36,6 +36,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "xwayland.h"
 #include "input.h"
 #include "event_queue.h"
 #include "monitor.h"
@@ -404,7 +405,7 @@ axisnotify(struct wl_listener *listener, void *data)
 				/* Emit press then release (scroll is instantaneous) */
 				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
 				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			} else if (c) {
 				/* Scroll on client */
 				rel_x = (int)cursor->x - c->geometry.x;
 				rel_y = (int)cursor->y - c->geometry.y;
@@ -523,13 +524,31 @@ buttonpress(struct wl_listener *listener, void *data)
 		drawin_t *drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
 		int rel_x, rel_y;
+		struct wlr_surface *pressed_surface = NULL;
+#ifdef XWAYLAND
+		UnmanagedSurface *unmanaged;
+#endif
 
 		cursor_mode = CurPressed;
 		if (locked)
 			break;
 
 		/* Change focus if the button was _pressed_ over a client or layer surface */
-		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+		xytonode(cursor->x, cursor->y, &pressed_surface, &c, &l, &drawin,
+				&titlebar_drawable, NULL, NULL);
+
+#ifdef XWAYLAND
+		/* A click on an override-redirect surface (menu, popup) belongs to
+		 * the application, not to us: it is not a client, so without this
+		 * it would fall through to the "empty space" branch below and fire
+		 * root button bindings. Focus it if it takes focus, then get out of
+		 * the way -- the click itself is already on its way to the surface
+		 * through the seat. */
+		if ((unmanaged = unmanaged_from_surface(pressed_surface))) {
+			unmanaged_click(unmanaged);
+			break;
+		}
+#endif
 
 		/* For Lua lock, only allow interaction with the lock surface */
 		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
@@ -551,7 +570,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				return;
 			}
 
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			} else if (c) {
 			/* Calculate client-relative coordinates */
 			rel_x = (int)cursor->x - c->geometry.x;
 			rel_y = (int)cursor->y - c->geometry.y;
@@ -2070,7 +2089,7 @@ destroydrag(struct wl_listener *listener, void *data)
 	 * already focused (early return at surface == old check), so explicitly
 	 * apply the focus color here for the common case where the focused
 	 * client didn't change during the drag. */
-	if (c && !client_is_unmanaged(c))
+	if (c)
 		client_set_border_color(c, get_focuscolor());
 	focusclient(c, 0);
 	motionnotify(0, NULL, 0, 0, 0, 0);

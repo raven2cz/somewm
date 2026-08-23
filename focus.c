@@ -36,6 +36,7 @@
 #include "objects/screen.h"
 #include "objects/signal.h"
 #include "stack.h"
+#include "xwayland.h"
 
 #include "somewm_internal.h"
 
@@ -52,13 +53,17 @@ focusclient(Client *c, int lift)
 	if (session_is_locked())
 		return;
 
+	/* An override-redirect menu owns the keyboard while it is up. Xwayland
+	 * turns any focus change into FocusOut and the application dismisses the
+	 * menu, so leave focus alone until the menu goes away -- unmanaged_unmap()
+	 * hands it back. This is what the old `exclusive_focus == old_c` early
+	 * return did, minus the untyped comparison. */
+	if (unmanaged_holds_focus())
+		return;
+
 	/* Raise client in stacking order if requested */
-	if (c && lift) {
-		if (!client_is_unmanaged(c))
-			stack_client_append(c);
-		else
-			wlr_scene_node_raise_to_top(&c->scene->node);
-	}
+	if (c && lift)
+		stack_client_append(c);
 
 	if (c && client_surface(c) == old)
 		return;
@@ -70,7 +75,7 @@ focusclient(Client *c, int lift)
 	}
 
 	/* Put the new client atop the focus stack and select its monitor */
-	if (c && !client_is_unmanaged(c)) {
+	if (c) {
 		/* Remove from current position in focus stack */
 		foreach(elem, globalconf.stack) {
 			if (*elem == c) {
@@ -102,22 +107,15 @@ focusclient(Client *c, int lift)
 					&old_l->scene->node, &unused_lx, &unused_ly)
 				&& old_l->layer_surface->current.layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
 			return;
-		} else if (old_c && old_c == exclusive_focus && client_wants_focus(old_c)) {
-			return;
-		} else if (old_c && !client_is_unmanaged(old_c)) {
-			/* Only do protocol-level deactivation if new client doesn't want focus.
-			 * Skipping this avoids issues with winecfg and similar clients. */
-			if (!c || !client_wants_focus(c)) {
-				client_activate_surface(old, 0);
-				if (old_c->toplevel_handle)
-					wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
-			}
+		} else if (old_c) {
+			client_activate_surface(old, 0);
+			if (old_c->toplevel_handle)
+				wlr_foreign_toplevel_handle_v1_set_activated(old_c->toplevel_handle, false);
 		}
 	}
 
 	/* Unfocus old client from globalconf (AwesomeWM pattern) - this emits proper signals */
-	if (c && globalconf.focus.client && globalconf.focus.client != c &&
-	    !client_is_unmanaged(globalconf.focus.client)) {
+	if (c && globalconf.focus.client && globalconf.focus.client != c) {
 		client_set_border_color(globalconf.focus.client, get_bordercolor());
 		luaA_object_push(globalconf_L, globalconf.focus.client);
 		lua_pushboolean(globalconf_L, false);
@@ -201,13 +199,11 @@ focusclient(Client *c, int lift)
 	 * CRITICAL: Must emit both property::active AND object-level "focus" signal.
 	 * The awful.client.focus.history module connects to "focus" signal to track
 	 * focus history. Without this, focus.history.list remains empty. */
-	if (!client_is_unmanaged(c)) {
-		luaA_object_push(globalconf_L, c);
-		lua_pushboolean(globalconf_L, true);
-		some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
-		some_event_queue_signal0(globalconf_L, -1, SIG_FOCUS);
-		lua_pop(globalconf_L, 1);
-	}
+	luaA_object_push(globalconf_L, c);
+	lua_pushboolean(globalconf_L, true);
+	some_event_queue_signal(globalconf_L, -2, SIG_PROPERTY_ACTIVE, 1);
+	some_event_queue_signal0(globalconf_L, -1, SIG_FOCUS);
+	lua_pop(globalconf_L, 1);
 
 	some_event_queue_global(SIG_CLIENT_FOCUS);
 

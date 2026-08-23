@@ -285,7 +285,7 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 	 * as set_size caused clients opened in floating layout to fill the
 	 * entire screen because floating.arrange() is a no-op. The bounds
 	 * hint is sufficient for Firefox's tiling geometry fix (#321). */
-	if (m && !client_is_unmanaged(c)) {
+	if (m) {
 		wlr_xdg_toplevel_set_bounds(c->surface.xdg->toplevel,
 			m->w.width, m->w.height);
 	}
@@ -569,6 +569,7 @@ client_remove_all_listeners(client_t *c)
 		wl_list_remove(&c->configure.link);
 		wl_list_remove(&c->dissociate.link);
 		wl_list_remove(&c->set_hints.link);
+		wl_list_remove(&c->override_redirect.link);
 		/* If associate was called, map/unmap listeners need cleanup */
 		if (c->map.link.prev && c->map.link.next) {
 			wl_list_remove(&c->map.link);
@@ -631,6 +632,8 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&xsurface->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
 		LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
 		LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
+		LISTEN(&xsurface->events.set_override_redirect, &c->override_redirect,
+				managed_override_redirect);
 
 		/* If mapped (has surface association), register map/unmap */
 		if (c->scene && xsurface->surface) {
@@ -865,7 +868,7 @@ mapnotify(struct wl_listener *listener, void *data)
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
 	/* Enabled later by a call to arrange() */
-	wlr_scene_node_set_enabled(&c->scene->node, client_is_unmanaged(c));
+	wlr_scene_node_set_enabled(&c->scene->node, false);
 	c->scene_surface = c->client_type == XDGShell
 			? wlr_scene_xdg_surface_create(c->scene, c->surface.xdg)
 			: wlr_scene_subsurface_tree_create(c->scene, client_surface(c));
@@ -898,30 +901,13 @@ mapnotify(struct wl_listener *listener, void *data)
 	 * Restore the client to a manageable state before proceeding. */
 	if (c->client_type == X11 && c->window == XCB_NONE) {
 		c->window = c->surface.xwayland->window_id;
-		c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
+		c->bw = get_border_width();
 		client_array_push(&globalconf.clients, c);
 		stack_client_push(c);
 		luaA_class_emit_signal(globalconf_get_lua_State(),
 			&client_class, "list", 0);
 	}
 #endif
-
-	/* Handle unmanaged clients first so we can return prior create borders */
-	if (client_is_unmanaged(c)) {
-		/* Unmanaged (override_redirect) X11 surfaces bypass the window
-		 * manager and must display above all managed windows. Place
-		 * them in LyrOverlay to match X11 semantics; LyrBlock (session
-		 * lock) still covers them. stack_refresh() skips unmanaged
-		 * clients so this placement is preserved. */
-		wlr_scene_node_reparent(&c->scene->node, layers[LyrOverlay]);
-		wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
-		client_set_size(c, c->geometry.width, c->geometry.height);
-		if (client_wants_focus(c)) {
-			focusclient(c, 1);
-			exclusive_focus = c;
-		}
-		goto unset_fullscreen;
-	}
 
 	for (i = 0; i < 4; i++) {
 		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
@@ -1233,7 +1219,7 @@ mapnotify(struct wl_listener *listener, void *data)
 		}
 	}
 
-unset_fullscreen:
+	/* Fullscreen clients on the same tags must give way to the new one. */
 	m = c->mon ? c->mon : xytomon(c->geometry.x, c->geometry.y);
 	foreach(client, globalconf.clients) {
 		w = *client;
@@ -1508,8 +1494,7 @@ apply_geometry_to_wlroots(Client *c)
 	 * monitor until the pointer crosses. */
 	bool clamp_to_mon = c->mon
 		&& (c->strict_clip
-			|| (!client_is_unmanaged(c)
-				&& !some_client_get_floating(c)
+			|| (!some_client_get_floating(c)
 				&& client_layout_clips_offscreen(c)));
 
 	/* Clip client content to its assigned monitor bounds so offscreen
@@ -1990,29 +1975,13 @@ unmapnotify(struct wl_listener *listener, void *data)
 			&& seat->keyboard_state.focused_surface == client_surface(c))
 		wlr_seat_keyboard_clear_focus(seat);
 
-	if (client_is_unmanaged(c)) {
-		/* Unmanaged clients never reach client_unmanage(), so clear the
-		 * focus pointer here: the scene is destroyed below and a later
-		 * focusclient() would touch its freed borders. focusclient() skips
-		 * unmanaged clients, so they never got a "focus" signal and there
-		 * is no "unfocus" to emit. */
-		if (globalconf.focus.client == c) {
-			globalconf.focus.client = NULL;
-			globalconf.focus.need_update = true;
-		}
-		if (c == exclusive_focus) {
-			exclusive_focus = NULL;
-			focus_restore(c->mon ? c->mon : selmon);
-		}
-	} else {
-		/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
-		 * This emits request::unmanage while c->screen is still valid,
-		 * allowing Lua's check_focus_delayed to restore focus properly.
-		 * It also calls client_unfocus() while the client is still focused,
-		 * which is what emits "unfocus" + property::active=false.
-		 * destroynotify() will see client already removed from array and skip. */
-		client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
-	}
+	/* AwesomeWM pattern: call client_unmanage() from unmapnotify.
+	 * This emits request::unmanage while c->screen is still valid,
+	 * allowing Lua's check_focus_delayed to restore focus properly.
+	 * It also calls client_unfocus() while the client is still focused,
+	 * which is what emits "unfocus" + property::active=false.
+	 * destroynotify() will see client already removed from array and skip. */
+	client_unmanage(c, CLIENT_UNMANAGE_UNMAP);
 
 	/* Remove commit listener before destroying scene - only registered for XDG clients.
 	 * Must be done before surface destruction as wlroots asserts listener lists are empty. */

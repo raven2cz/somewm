@@ -21,6 +21,8 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "focus.h"
+#include "window.h"
 #include "event_queue.h"
 #include "xwayland.h"
 #include "globalconf.h"
@@ -39,19 +41,384 @@
 /* Forward declarations */
 void dissociatex11(struct wl_listener *listener, void *data);
 void sethints(struct wl_listener *listener, void *data);
+static void unmanaged_set_geometry(struct wl_listener *listener, void *data);
 
 /* Local listeners */
 static struct wl_listener new_xwayland_surface;
 static struct wl_listener xwayland_ready_listener;
 
+/* ------------------------------------------------------------------------
+ * Override-redirect (unmanaged) surfaces
+ *
+ * X11 clients set override_redirect on windows the window manager must not
+ * touch: menus, dropdowns, tooltips, drag icons. They are not clients -- they
+ * have no tags, no layout, no rules and no Lua object -- so they live here in
+ * their own list and their own scene layer instead of going through the
+ * client path. Mirrors sway's sway_xwayland_unmanaged.
+ * ------------------------------------------------------------------------ */
+
+static struct wl_list unmanaged_surfaces;  /* UnmanagedSurface.link */
+static bool unmanaged_list_ready;
+
+/* The unmanaged surface currently holding keyboard focus, if any.
+ *
+ * X11 menus keep the keyboard while they are up and close themselves on
+ * FocusOut, so focus changes towards clients are suppressed for as long as
+ * this is set. That protection used to be spelled `exclusive_focus = c` with
+ * a Client; keeping it typed avoids the void * compared against two
+ * unrelated types. */
+static UnmanagedSurface *unmanaged_focus;
+
+static void unmanaged_create(struct wlr_xwayland_surface *xsurface);
+
+static void
+unmanaged_list_init(void)
+{
+	if (!unmanaged_list_ready) {
+		wl_list_init(&unmanaged_surfaces);
+		unmanaged_list_ready = true;
+	}
+}
+
+/** Find the unmanaged surface owning a wlr_surface, or NULL. */
+UnmanagedSurface *
+unmanaged_from_surface(struct wlr_surface *surface)
+{
+	struct wlr_xwayland_surface *xsurface;
+
+	if (!surface)
+		return NULL;
+	xsurface = wlr_xwayland_surface_try_from_wlr_surface(
+			wlr_surface_get_root_surface(surface));
+	if (!xsurface || !xsurface->override_redirect || !xsurface->data)
+		return NULL;
+	return (UnmanagedSurface *)xsurface->data;
+}
+
+/** True while an override-redirect surface owns the keyboard.
+ *
+ * Callers use this to leave focus alone: stealing it from an open menu makes
+ * Xwayland send FocusOut and the application dismisses the menu. */
+bool
+unmanaged_holds_focus(void)
+{
+	return unmanaged_focus != NULL;
+}
+
+/** Give the keyboard to an unmanaged surface. */
+static void
+unmanaged_grant_focus(UnmanagedSurface *u)
+{
+	struct wlr_keyboard *kb;
+
+	if (session_is_locked())
+		return;
+
+	/* Sway pattern: tell Xwayland which seat is active before every focus
+	 * change to an X11 surface, or keyboard delivery goes nowhere. */
+	wlr_xwayland_set_seat(xwayland, seat);
+
+	kb = wlr_seat_get_keyboard(seat);
+	if (kb)
+		wlr_seat_keyboard_notify_enter(seat, u->xsurface->surface,
+				kb->keycodes, kb->num_keycodes, &kb->modifiers);
+	else
+		wlr_seat_keyboard_notify_enter(seat, u->xsurface->surface, NULL, 0, NULL);
+
+	unmanaged_focus = u;
+}
+
+/** Hand the keyboard back after an unmanaged surface goes away.
+ *
+ * Synchronous on purpose. Menus close and re-open in bursts (menu -> submenu),
+ * and routing this through the deferred request::focus_restore signal let the
+ * restore land after the next menu had already mapped, stealing focus from it.
+ * Prefers the parent override-redirect surface, like sway does, so submenu
+ * chains keep working. */
+static void
+unmanaged_release_focus(UnmanagedSurface *u)
+{
+	struct wlr_xwayland_surface *parent;
+
+	if (unmanaged_focus != u)
+		return;
+	unmanaged_focus = NULL;
+
+	parent = u->xsurface->parent;
+	if (parent && parent->override_redirect && parent->surface
+			&& parent->surface->mapped && parent->data
+			&& COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(parent)) {
+		unmanaged_grant_focus((UnmanagedSurface *)parent->data);
+		return;
+	}
+
+	/* No parent menu left: the seat still points at the surface we are
+	 * tearing down, so clear it before handing focus back to a client. */
+	if (seat->keyboard_state.focused_surface == u->xsurface->surface)
+		wlr_seat_keyboard_clear_focus(seat);
+
+	focus_restore(selmon);
+}
+
+static void
+unmanaged_map(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, map);
+
+	u->scene_surface = wlr_scene_surface_create(layers[LyrUnmanaged],
+			u->xsurface->surface);
+	if (!u->scene_surface) {
+		warn("failed to create scene surface for unmanaged X11 window");
+		return;
+	}
+	wlr_scene_node_set_position(&u->scene_surface->buffer->node,
+			u->xsurface->x, u->xsurface->y);
+
+	/* Xwayland moves override-redirect windows without asking the window
+	 * manager and only reports it afterwards, so track it. Without this a
+	 * menu that repositions after map (submenus, menus flipped to fit the
+	 * screen) stays painted at its original spot. */
+	LISTEN(&u->xsurface->events.set_geometry, &u->set_geometry,
+			unmanaged_set_geometry);
+
+	if (unmanaged_wants_focus(u))
+		unmanaged_grant_focus(u);
+}
+
+static void
+unmanaged_unmap(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, unmap);
+
+	if (u->scene_surface) {
+		wl_list_remove(&u->set_geometry.link);
+		wlr_scene_node_destroy(&u->scene_surface->buffer->node);
+		u->scene_surface = NULL;
+	}
+
+	unmanaged_release_focus(u);
+}
+
+static void
+unmanaged_set_geometry(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, set_geometry);
+
+	if (u->scene_surface)
+		wlr_scene_node_set_position(&u->scene_surface->buffer->node,
+				u->xsurface->x, u->xsurface->y);
+}
+
+static void
+unmanaged_request_configure(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, request_configure);
+	struct wlr_xwayland_surface_configure_event *event = data;
+
+	/* Override-redirect windows place themselves; just acknowledge. */
+	wlr_xwayland_surface_configure(u->xsurface, event->x, event->y,
+			event->width, event->height);
+}
+
+static void
+unmanaged_request_activate(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, request_activate);
+
+	if (!u->xsurface->surface || !u->xsurface->surface->mapped)
+		return;
+	if (COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(u->xsurface))
+		unmanaged_grant_focus(u);
+}
+
+static void
+unmanaged_associate(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, associate);
+
+	LISTEN(&u->xsurface->surface->events.map, &u->map, unmanaged_map);
+	LISTEN(&u->xsurface->surface->events.unmap, &u->unmap, unmanaged_unmap);
+}
+
+static void
+unmanaged_dissociate(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, dissociate);
+
+	wl_list_remove(&u->map.link);
+	wl_list_remove(&u->unmap.link);
+}
+
+static void
+unmanaged_teardown(UnmanagedSurface *u, bool associated)
+{
+	/* Focus state must go even when the surface never unmapped: a client
+	 * that dies with a menu open would otherwise leave unmanaged_focus
+	 * pointing at freed memory and block every later focus change. */
+	unmanaged_release_focus(u);
+
+	if (u->scene_surface) {
+		wl_list_remove(&u->set_geometry.link);
+		wlr_scene_node_destroy(&u->scene_surface->buffer->node);
+		u->scene_surface = NULL;
+	}
+	if (associated)
+		unmanaged_dissociate(&u->dissociate, NULL);
+
+	wl_list_remove(&u->associate.link);
+	wl_list_remove(&u->dissociate.link);
+	wl_list_remove(&u->destroy.link);
+	wl_list_remove(&u->override_redirect.link);
+	wl_list_remove(&u->request_configure.link);
+	wl_list_remove(&u->request_activate.link);
+	wl_list_remove(&u->link);
+
+	u->xsurface->data = NULL;
+}
+
+static void
+unmanaged_destroy(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, destroy);
+
+	unmanaged_teardown(u, u->xsurface->surface != NULL);
+	free(u);
+}
+
+/** The client flipped override_redirect on a live window.
+ *
+ * Wine and Qt do this when a window changes role. The two paths keep
+ * completely different state, so hand the surface over instead of trying to
+ * mutate it in place (same approach as sway). */
+static void
+unmanaged_override_redirect(struct wl_listener *listener, void *data)
+{
+	UnmanagedSurface *u = wl_container_of(listener, u, override_redirect);
+	struct wlr_xwayland_surface *xsurface = u->xsurface;
+	bool associated = xsurface->surface != NULL;
+	bool mapped = associated && xsurface->surface->mapped;
+
+	if (xsurface->override_redirect)
+		return;  /* still unmanaged, nothing to do */
+
+	unmanaged_teardown(u, associated);
+	free(u);
+
+	/* Re-enter through the managed path. createnotifyx11() attaches the
+	 * client listeners; map/unmap follow from associate as usual. */
+	createnotifyx11(NULL, xsurface);
+	if (associated)
+		associatex11(&((Client *)xsurface->data)->associate, NULL);
+	if (mapped)
+		mapnotify(&((Client *)xsurface->data)->map, NULL);
+}
+
+static void
+unmanaged_create(struct wlr_xwayland_surface *xsurface)
+{
+	UnmanagedSurface *u = calloc(1, sizeof(*u));
+
+	if (!u) {
+		warn("failed to allocate unmanaged X11 surface");
+		return;
+	}
+	unmanaged_list_init();
+
+	u->type = X11Unmanaged;
+	u->xsurface = xsurface;
+	xsurface->data = u;
+	wl_list_insert(&unmanaged_surfaces, &u->link);
+
+	LISTEN(&xsurface->events.associate, &u->associate, unmanaged_associate);
+	LISTEN(&xsurface->events.dissociate, &u->dissociate, unmanaged_dissociate);
+	LISTEN(&xsurface->events.destroy, &u->destroy, unmanaged_destroy);
+	LISTEN(&xsurface->events.set_override_redirect, &u->override_redirect,
+			unmanaged_override_redirect);
+	LISTEN(&xsurface->events.request_configure, &u->request_configure,
+			unmanaged_request_configure);
+	LISTEN(&xsurface->events.request_activate, &u->request_activate,
+			unmanaged_request_activate);
+
+	/* wl_list_remove() in teardown runs unconditionally on these two. */
+	wl_list_init(&u->map.link);
+	wl_list_init(&u->unmap.link);
+}
+
+/** Handle a pointer press on an unmanaged surface.
+ *
+ * Sway does the same in seatop_default's button handler: an override-redirect
+ * surface that takes focus gets it on click, everything else is left alone.
+ * No Lua signals are emitted -- these are not clients. */
+void
+unmanaged_click(UnmanagedSurface *u)
+{
+	if (!u->xsurface->surface || !u->xsurface->surface->mapped)
+		return;
+	if (unmanaged_focus == u)
+		return;
+	if (unmanaged_wants_focus(u))
+		unmanaged_grant_focus(u);
+}
+
+/** A managed window turned into an override-redirect one.
+ *
+ * Mirror of unmanaged_override_redirect(): unmanage the client and let it come
+ * back through the unmanaged path. */
+void
+managed_override_redirect(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, override_redirect);
+	struct wlr_xwayland_surface *xsurface = c->surface.xwayland;
+	bool associated = xsurface->surface != NULL;
+	bool mapped = associated && xsurface->surface->mapped;
+
+	if (!xsurface->override_redirect)
+		return;  /* still managed */
+
+	if (mapped)
+		unmapnotify(&c->unmap, NULL);
+	client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
+	client_remove_all_listeners(c);
+	xsurface->data = NULL;
+
+	unmanaged_create(xsurface);
+	if (associated)
+		unmanaged_associate(&((UnmanagedSurface *)xsurface->data)->associate, NULL);
+	if (mapped)
+		unmanaged_map(&((UnmanagedSurface *)xsurface->data)->map, NULL);
+}
+
+/** Whether this surface accepts keyboard focus (ICCCM + EWMH type). */
+bool
+unmanaged_wants_focus(UnmanagedSurface *u)
+{
+	return COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(u->xsurface)
+		&& COMPAT_XWAYLAND_ICCCM_INPUT_MODEL(u->xsurface)
+		   != WLR_ICCCM_INPUT_MODEL_NONE;
+}
+
+/** True if this specific unmanaged surface holds keyboard focus. */
+bool
+unmanaged_surface_has_focus(UnmanagedSurface *u)
+{
+	return unmanaged_focus == u;
+}
+
+/** Iterate the unmanaged surfaces (introspection for tests). */
+void
+unmanaged_foreach(void (*cb)(UnmanagedSurface *u, void *data), void *data)
+{
+	UnmanagedSurface *u, *tmp;
+
+	unmanaged_list_init();
+	wl_list_for_each_safe(u, tmp, &unmanaged_surfaces, link)
+		cb(u, data);
+}
+
 void
 activatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, activate);
-
-	/* Only "managed" windows can be activated */
-	if (client_is_unmanaged(c))
-		return;
 
 	/* Guard against stale client: after client_unmanage() invalidates the
 	 * client (window = XCB_NONE), this listener may still fire if the
@@ -103,12 +470,6 @@ configurex11(struct wl_listener *listener, void *data)
 				event->x, event->y, event->width, event->height);
 		return;
 	}
-	if (client_is_unmanaged(c)) {
-		wlr_scene_node_set_position(&c->scene->node, event->x, event->y);
-		wlr_xwayland_surface_configure(c->surface.xwayland,
-				event->x, event->y, event->width, event->height);
-		return;
-	}
 	if (some_client_get_floating(c)) {
 		resize(c, (struct wlr_box){.x = event->x - c->bw,
 				.y = event->y - c->bw, .width = event->width + c->bw * 2,
@@ -127,6 +488,15 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	Client *c;
 	lua_State *L;
 
+	/* Override-redirect windows are not window-manager clients: no tags, no
+	 * layout, no rules, no Lua object. Applications create them in bulk and
+	 * often never map them, so managing them here polluted client.get()
+	 * with dozens of invisible entries. */
+	if (xsurface->override_redirect) {
+		unmanaged_create(xsurface);
+		return;
+	}
+
 	L = globalconf_get_lua_State();
 
 	/* Create Lua client object (matches AwesomeWM client_manage line 2138) */
@@ -142,7 +512,7 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	c->client_type = X11;
 	/* Set the window ID for EWMH/X11 property lookups */
 	c->window = xsurface->window_id;
-	c->bw = client_is_unmanaged(c) ? 0 : get_border_width();
+	c->bw = get_border_width();
 
 	/* NOTE: Do NOT call ewmh_client_check_hints() here!
 	 * At this point the XWayland surface exists but may not be fully initialized.
@@ -158,6 +528,8 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	LISTEN(&xsurface->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
 	LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
 	LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&xsurface->events.set_override_redirect, &c->override_redirect,
+			managed_override_redirect);
 
 	/* Add to global clients array (matches AwesomeWM client_manage line 2202) */
 	lua_pushvalue(L, -1);

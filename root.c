@@ -17,6 +17,7 @@
 #include "objects/key.h"
 #include "objects/button.h"
 #include "somewm_api.h"
+#include "xwayland.h"
 #include "globalconf.h"
 #include "objects/drawable.h"
 #include "objects/drawin.h"
@@ -2270,6 +2271,85 @@ luaA_root_wallpaper_cache_stats(lua_State *L)
 	return 1;
 }
 
+#ifdef XWAYLAND
+/* Collector for luaA_root_xwayland_unmanaged(). */
+typedef struct {
+	lua_State *L;
+	int index;
+} unmanaged_dump_t;
+
+static void
+push_unmanaged_entry(UnmanagedSurface *u, void *data)
+{
+	unmanaged_dump_t *dump = data;
+	lua_State *L = dump->L;
+	struct wlr_xwayland_surface *xs = u->xsurface;
+
+	lua_newtable(L);
+	lua_set_int_field(L, "window", (int)xs->window_id);
+	lua_set_int_field(L, "x", xs->x);
+	lua_set_int_field(L, "y", xs->y);
+	lua_set_int_field(L, "width", xs->width);
+	lua_set_int_field(L, "height", xs->height);
+
+	lua_pushboolean(L, u->scene_surface != NULL);
+	lua_setfield(L, -2, "mapped");
+	lua_pushboolean(L, xs->surface && xs->surface->mapped);
+	lua_setfield(L, -2, "surface_mapped");
+	lua_pushboolean(L, unmanaged_wants_focus(u));
+	lua_setfield(L, -2, "wants_focus");
+	lua_pushboolean(L, unmanaged_surface_has_focus(u));
+	lua_setfield(L, -2, "focused");
+	lua_pushstring(L, xs->title ? xs->title : "");
+	lua_setfield(L, -2, "title");
+	lua_pushstring(L, xs->class ? xs->class : "");
+	lua_setfield(L, -2, "class");
+
+	/* Scene layer name, so tests can assert the popup really landed in
+	 * LyrUnmanaged instead of trusting that mapping happened at all. */
+	if (u->scene_surface) {
+		struct wlr_scene_node *node = &u->scene_surface->buffer->node;
+		const char *layer = "unknown";
+		int i;
+		for (i = 0; i < NUM_LAYERS; i++) {
+			if ((void *)node->parent == (void *)layers[i]) {
+				layer = (i == LyrUnmanaged) ? "unmanaged" : "other";
+				break;
+			}
+		}
+		lua_pushstring(L, layer);
+	} else {
+		lua_pushnil(L);
+	}
+	lua_setfield(L, -2, "layer");
+
+	lua_rawseti(L, -2, dump->index++);
+}
+#endif
+
+/** Introspect X11 override-redirect surfaces.
+ *
+ * These are deliberately not clients, so client.get() cannot see them. Tests
+ * (and anyone debugging a misplaced menu) need some way to look at them.
+ * Read-only.
+ *
+ * @treturn table Array of tables: window, x, y, width, height, mapped,
+ *   surface_mapped, wants_focus, focused, title, class, layer.
+ * @staticfct xwayland_unmanaged
+ */
+static int
+luaA_root_xwayland_unmanaged(lua_State *L)
+{
+	lua_newtable(L);
+#ifdef XWAYLAND
+	{
+		unmanaged_dump_t dump = { .L = L, .index = 1 };
+		unmanaged_foreach(push_unmanaged_entry, &dump);
+	}
+#endif
+	return 1;
+}
+
 static int
 luaA_root_drawable_stats(lua_State *L)
 {
@@ -2333,6 +2413,7 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
 	{ "drawable_stats", luaA_root_drawable_stats },
+	{ "xwayland_unmanaged", luaA_root_xwayland_unmanaged },
 	{ "memory_stats", luaA_root_memory_stats },
 	/* Wallpaper overlay helpers for tag slide animation */
 	{ "wp_snapshot", luaA_root_wp_snapshot },
