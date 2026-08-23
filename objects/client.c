@@ -4359,8 +4359,15 @@ client_update_border_for_corners(client_t *c)
         return;
 
     int bw = c->bw;
-    int w = c->geometry.width;
-    int h = c->geometry.height;
+    /* Frame footprint: the geometry plus the border drawn outside it. Upstream
+     * made c->geometry border-exclusive (3f6cfd9, a247cd5, 6de5e1e), so the
+     * border rects and the rounded frame have to add it back -- this helper
+     * replaces the open-coded sizing that upstream keeps in
+     * apply_geometry_to_wlroots(), which computes exactly this. With the bare
+     * geometry the frame came out 2*bw too small and sat over the content
+     * instead of around it. */
+    int w = c->geometry.width + 2 * bw;
+    int h = c->geometry.height + 2 * bw;
 
     if (bw <= 0) {
         /* No border — hide everything */
