@@ -482,18 +482,33 @@ associatex11(struct wl_listener *listener, void *data)
 	LISTEN(&surface->events.map, &c->map, mapnotify);
 	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
 
-	/* wlroots reads window properties and emits associate only after the
-	 * surface is attached, and the surface can already be mapped by then
-	 * (an X11 client that maps before the compositor pairs the surface, or
-	 * a re-associate of a surface that still holds its buffer). The map
-	 * signal we just subscribed to has already fired in that case and will
-	 * not fire again, leaving the client with no scene node: present in
-	 * client.get() with no tags, no screen and 0x0 geometry, and invisible
-	 * on screen until something forces another map. */
-	if (surface->mapped && !c->scene) {
-		log_debug("[X11-ASSOC] surface already mapped, mapping 0x%x now",
-				c->window);
-		mapnotify(&c->map, NULL);
+	/* wlroots maps an Xwayland surface from exactly one place: its own
+	 * commit handler (xwayland/xwm.c, xwayland_surface_handle_commit ->
+	 * wlr_surface_map when the surface has a buffer). That handler is
+	 * subscribed inside xwayland_surface_associate(), i.e. during this very
+	 * call. A buffer the client committed before that point is never
+	 * noticed: the surface holds a buffer, stays unmapped forever, and no
+	 * map signal ever arrives. The client then sits in client.get() with no
+	 * scene node, no screen, no tags and 0x0 geometry -- invisible until
+	 * something forces another commit (an X11 unmap/map cycle does).
+	 *
+	 * Observed with Sierra Chart under Wine: a dialog would intermittently
+	 * not appear at all, with exactly that state. wlroots 0.19 and 0.20
+	 * both have the gap, so close it here: mapping the surface makes
+	 * wlroots emit the map signal we just subscribed to.
+	 *
+	 * The mapped-but-no-scene branch covers the mirror case, where the map
+	 * signal fired before we could subscribe. */
+	if (!c->scene) {
+		if (!surface->mapped && wlr_surface_has_buffer(surface)) {
+			log_debug("[X11-ASSOC] buffer committed before associate, "
+					"mapping surface for 0x%x", c->window);
+			wlr_surface_map(surface);
+		} else if (surface->mapped) {
+			log_debug("[X11-ASSOC] surface already mapped, mapping 0x%x now",
+					c->window);
+			mapnotify(&c->map, NULL);
+		}
 	}
 }
 
