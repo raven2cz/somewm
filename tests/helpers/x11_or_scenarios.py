@@ -132,6 +132,32 @@ def scenario_adopt(dpy, root, wm_class, geom):
     report("adopted", win)
 
 
+def scenario_attention(dpy, root, wm_class, geom):
+    """Managed transient dialog that asks for attention before it maps.
+
+    Mirrors Sierra Chart's "Server Settings" window: WM_TRANSIENT_FOR plus
+    _NET_WM_STATE_DEMANDS_ATTENTION and WM_HINTS urgency, all set before the
+    map request. wlroots reads those properties during associate, i.e. before
+    it emits the associate signal the compositor listens on.
+    """
+    parent = make_window(dpy, root, wm_class + "_parent", geom, override=False)
+    parent.map()
+    dpy.sync()
+    report("parent_mapped", parent)
+
+    wait_for_advance(dpy)
+    child = make_window(dpy, root, wm_class + "_dialog",
+                        (geom[0] + 40, geom[1] + 40, 300, 220),
+                        override=False, transient_for=parent.id)
+    child.change_property(dpy.get_atom("_NET_WM_STATE"), Xatom.ATOM, 32,
+                          [dpy.get_atom("_NET_WM_STATE_DEMANDS_ATTENTION")])
+    child.set_wm_hints(flags=1 << 8 | 1, input=1)  # UrgencyHint | InputHint
+    dpy.sync()
+    child.map()
+    dpy.sync()
+    report("dialog_mapped", child)
+
+
 def scenario_chain(dpy, root, wm_class, geom):
     parent = make_window(dpy, root, wm_class + "_menu", geom)
     parent.map()
@@ -179,6 +205,8 @@ def main():
         scenario_chain(dpy, root, wm_class, geom)
     elif mode == "adopt":
         scenario_adopt(dpy, root, wm_class, geom)
+    elif mode == "attention":
+        scenario_attention(dpy, root, wm_class, geom)
     else:
         sys.exit(f"unknown scenario: {mode}")
 

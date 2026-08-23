@@ -476,8 +476,25 @@ associatex11(struct wl_listener *listener, void *data)
 		return;
 	}
 
+	log_debug("[X11-ASSOC] window 0x%x surface=%p mapped=%d",
+			c->window, (void *)surface, surface->mapped);
+
 	LISTEN(&surface->events.map, &c->map, mapnotify);
 	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
+
+	/* wlroots reads window properties and emits associate only after the
+	 * surface is attached, and the surface can already be mapped by then
+	 * (an X11 client that maps before the compositor pairs the surface, or
+	 * a re-associate of a surface that still holds its buffer). The map
+	 * signal we just subscribed to has already fired in that case and will
+	 * not fire again, leaving the client with no scene node: present in
+	 * client.get() with no tags, no screen and 0x0 geometry, and invisible
+	 * on screen until something forces another map. */
+	if (surface->mapped && !c->scene) {
+		log_debug("[X11-ASSOC] surface already mapped, mapping 0x%x now",
+				c->window);
+		mapnotify(&c->map, NULL);
+	}
 }
 
 void
@@ -541,6 +558,10 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	 * Making XCB property queries here can interfere with the XWayland protocol.
 	 * EWMH hints will be read in mapnotify() when the surface is ready. */
 
+	log_debug("[X11-CREATE] window 0x%x override_redirect=%d surface=%p",
+			c->window, xsurface->override_redirect,
+			(void *)xsurface->surface);
+
 	/* Register XWayland event listeners */
 	LISTEN(&xsurface->events.associate, &c->associate, associatex11);
 	LISTEN(&xsurface->events.destroy, &c->destroy, destroynotify);
@@ -571,6 +592,7 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
+	log_debug("[X11-DISASSOC] window 0x%x scene=%p", c->window, (void *)c->scene);
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }

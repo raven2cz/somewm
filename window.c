@@ -698,6 +698,12 @@ destroynotify(struct wl_listener *listener, void *data)
 		return;  /* Skip client_unmanage() */
 	}
 
+#ifdef XWAYLAND
+	if (c->client_type == X11)
+		log_debug("[X11-DESTROY] window 0x%x scene=%p", c->window,
+				(void *)c->scene);
+#endif
+
 	/* client_unmanage() will handle invalidation at the proper time (AFTER signals are emitted).
 	 * This matches AwesomeWM's pattern where c->window = XCB_NONE happens at the END of client_unmanage(). */
 
@@ -893,6 +899,13 @@ mapnotify(struct wl_listener *listener, void *data)
 	}
 
 	client_get_geometry(c, &c->geometry);
+
+#ifdef XWAYLAND
+	if (c->client_type == X11)
+		log_debug("[X11-MAP] window 0x%x %dx%d+%d+%d", c->window,
+				c->geometry.width, c->geometry.height,
+				c->geometry.x, c->geometry.y);
+#endif
 
 #ifdef XWAYLAND
 	/* Re-manage XWayland clients that were previously unmapped (e.g., Discord
