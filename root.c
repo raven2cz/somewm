@@ -2454,6 +2454,50 @@ luaA_root_scene_tree_dump(lua_State *L)
 	return 1;
 }
 
+/** Paint order of the clients inside one scene layer.
+ *
+ * stack_refresh() reparents and reorders client scene nodes every time it
+ * runs. If that order is not stable between refreshes, windows visibly churn.
+ * client.get(nil, true) reports the compositor's intended stack; this reports
+ * what the scene graph actually holds, which is what gets painted.
+ *
+ * @tparam string layer One of the LyrX names, e.g. "tile", "float".
+ * @treturn table Array of window ids / client names, bottom-most first.
+ * @staticfct layer_order
+ */
+static int
+luaA_root_layer_order(lua_State *L)
+{
+	const char *want = luaL_checkstring(L, 1);
+	static const char *const names[NUM_LAYERS] = {
+		[LyrBg] = "background", [LyrBottom] = "bottom", [LyrTile] = "tile",
+		[LyrFloat] = "float", [LyrWibox] = "wibox", [LyrTop] = "top",
+		[LyrFS] = "fullscreen", [LyrOverlay] = "overlay",
+		[LyrUnmanaged] = "unmanaged", [LyrBlock] = "block",
+	};
+	int idx = -1, i = 1;
+	struct wlr_scene_node *node;
+
+	for (int n = 0; n < NUM_LAYERS; n++)
+		if (names[n] && strcmp(names[n], want) == 0) { idx = n; break; }
+
+	lua_newtable(L);
+	if (idx < 0 || !layers[idx])
+		return 1;
+
+	wl_list_for_each(node, &layers[idx]->children, link) {
+		client_t *c = node->data;
+		lua_newtable(L);
+		lua_set_int_field(L, "window", (c && c->window) ? (int)c->window : 0);
+		lua_pushstring(L, (c && c->name) ? c->name : "?");
+		lua_setfield(L, -2, "name");
+		lua_pushboolean(L, node->enabled);
+		lua_setfield(L, -2, "enabled");
+		lua_rawseti(L, -2, i++);
+	}
+	return 1;
+}
+
 static int
 luaA_root_drawable_stats(lua_State *L)
 {
@@ -2518,6 +2562,7 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
 	{ "drawable_stats", luaA_root_drawable_stats },
 	{ "scene_tree_dump", luaA_root_scene_tree_dump },
+	{ "layer_order", luaA_root_layer_order },
 	{ "xwayland_unmanaged", luaA_root_xwayland_unmanaged },
 	{ "memory_stats", luaA_root_memory_stats },
 	/* Wallpaper overlay helpers for tag slide animation */
