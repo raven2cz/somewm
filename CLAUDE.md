@@ -135,6 +135,26 @@ in `build-asan/`).
 ~/git/github/somewm/plans/scripts/start.sh
 ```
 
+### Wine / X11 debugging
+
+Wine talks X11, so it needs the DISPLAY of the *nested* Xwayland. `wine-sandbox.sh`
+resolves it and refuses to run against the live session:
+
+```bash
+plans/scripts/wine-sandbox.sh start          # nested compositor, backgrounded
+plans/scripts/wine-sandbox.sh wine -- notepad
+plans/scripts/wine-sandbox.sh census --probe # X11 tree vs somewm's client list
+plans/scripts/wine-sandbox.sh click 83 44    # real click through zwlr_virtual_pointer
+plans/scripts/wine-sandbox.sh stop
+```
+
+Use `click`/`move` rather than xdotool: xdotool goes through XTEST inside Xwayland
+and bypasses the compositor's input path entirely, which proves nothing about
+compositor bugs.
+
+X11 override-redirect surfaces (Wine menus, tooltips) are not clients and never
+appear in `client.get()`; inspect them with `root.xwayland_unmanaged()`.
+
 ### Nested compositor sandbox (no reboot, limited fidelity)
 
 Use this when you need to run `somewm` inside the current Wayland session. It is
@@ -435,6 +455,9 @@ commit IDs were rewritten so cross-references break (acceptable trade-off).
 - `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
 - `plans/scripts/start.sh` - Launch somewm with debug logging from TTY
 - `plans/scripts/somewm-sandbox.sh` - Launch nested/headless somewm sandbox for client and IPC debugging
+- `plans/scripts/wine-sandbox.sh` - Run Wine apps in a nested sandbox; refuses any subcommand that would resolve to the live session's DISPLAY/socket
+- `plans/scripts/x11-census.py` - Compare the X11 window tree with somewm's client list (`--probe`, `--json`)
+- `plans/scripts/x11-monitor.py` - Live log of X11 create/map/unmap/configure events
 - `plans/scripts/somewm-memory-snapshot.sh` - One-shot live memory snapshot
 - `plans/scripts/somewm-memory-trend.sh` - Live memory trend/stress runner
 - `plans/scripts/somewm-debug-wrapper.sh` - Debug session wrapper with timestamped logs
