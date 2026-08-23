@@ -1199,14 +1199,38 @@ setup(void)
 #ifdef HAVE_SCENEFX
 	/* Set global blur parameters for scenefx backdrop blur.
 	 * Values match scenefx defaults (frosted-glass aesthetic).
-	 * Can be tuned later via Lua API or beautiful theme. */
-	wlr_scene_set_blur_data(scene,
-		/* num_passes */ 3,
-		/* radius */     5,
-		/* noise */      0.02f,
-		/* brightness */ 0.9f,
-		/* contrast */   0.9f,
-		/* saturation */ 1.1f);
+	 * Can be tuned later via Lua API or beautiful theme.
+	 *
+	 * SceneFX derives its blur sampling radius from these as
+	 * 2^(passes+1) * radius, and that radius also sizes the band of pixels it
+	 * saves before rendering and pastes back afterwards. The defaults put it
+	 * at 80px, wide enough to reach a neighbouring tiled window. The env
+	 * overrides exist so that band can be shrunk on a live session without a
+	 * rebuild, to test whether it is what corrupts client borders on
+	 * SceneFX 0.5 -- see plans/kolo10-upstream-sync.md. */
+	{
+		int passes = 3, radius = 5;
+		const char *env;
+
+		if ((env = getenv("SOMEWM_BLUR_PASSES")))
+			passes = atoi(env);
+		if ((env = getenv("SOMEWM_BLUR_RADIUS")))
+			radius = atoi(env);
+		if (passes < 0) passes = 0;
+		if (radius < 0) radius = 0;
+		if (passes != 3 || radius != 5)
+			wlr_log(WLR_INFO, "[BLUR] passes=%d radius=%d "
+					"(sampling size %d px)", passes, radius,
+					(1 << (passes + 1)) * radius);
+
+		wlr_scene_set_blur_data(scene,
+			/* num_passes */ passes,
+			/* radius */     radius,
+			/* noise */      0.02f,
+			/* brightness */ 0.9f,
+			/* contrast */   0.9f,
+			/* saturation */ 1.1f);
+	}
 
 	/* Create the optimized blur layer. Everything below it in z-order gets
 	 * pre-rendered into a blur cache; buffers above with
