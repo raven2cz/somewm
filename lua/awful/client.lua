@@ -858,6 +858,16 @@ capi.client.connect_signal("property::fullscreen", update_implicitly_floating)
 capi.client.connect_signal("property::size_hints", update_implicitly_floating)
 capi.client.connect_signal("request::manage", update_implicitly_floating)
 
+-- Sync effective floating state (explicit OR implicit) to C for z-order
+-- stacking. Covers both client.object.set_floating() and the implicit
+-- update_implicitly_floating() paths. Without this, the C-side `c->floating`
+-- stays false and client_layer_translator() leaves the client in LyrTile
+-- (covered by tiled siblings) instead of moving it into LyrFloat above
+-- them. Originally added in a0fc64b; the kolo6 refactor port dropped it.
+capi.client.connect_signal("property::floating", function(c)
+    c._c_floating = client.object.get_floating(c) == true
+end)
+
 -- Remove the floating information on a client.
 -- @tparam client c The client.
 function client.floating.delete(c)

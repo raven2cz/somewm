@@ -14,7 +14,7 @@
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -28,8 +28,15 @@
 /* NOTE: CurMove and CurResize removed - move/resize now handled by Lua mousegrabber
  * (awful.mouse.client.move/resize) instead of C-level cursor_mode state machine */
 enum { CurNormal, CurPressed }; /* cursor */
-enum { XDGShell, LayerShell, X11 }; /* client types */
-enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrWibox, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
+enum { XDGShell, LayerShell, X11, X11Unmanaged }; /* client types */
+/* Scene layers, bottom to top.  LyrUnmanaged holds X11 override-redirect
+ * surfaces (Wine/Qt/Steam menus and tooltips).  They bypass the window
+ * manager entirely, so X11 semantics put them above every managed window --
+ * including ontop clients and drawins in LyrOverlay -- while the session lock
+ * in LyrBlock still covers them.  Nothing else is ever parented here, which is
+ * what keeps stack_refresh()'s drawin raise loop from covering an open menu. */
+enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrWibox, LyrTop, LyrFS, LyrOverlay,
+       LyrUnmanaged, LyrBlock, NUM_LAYERS }; /* scene layers */
 
 /* Window types (for stacking and EWMH) - AwesomeWM compatibility */
 typedef enum {
@@ -156,6 +163,38 @@ typedef struct LayerSurface {
 	/* Lua object reference (NULL if not managed by Lua) */
 	struct layer_surface_t *lua_object;
 } LayerSurface;
+
+#ifdef XWAYLAND
+/* X11 override-redirect surface.
+ *
+ * These bypass the window manager by definition: no borders, no tags, no
+ * layout, no rules, no Lua client object. Wine menus, Qt tooltips and Steam
+ * popups all arrive this way, and an application can create dozens of them
+ * that are never mapped. Modelling them as clients put ~40 invisible entries
+ * into client.get() for a single Sierra Chart session, so they get their own
+ * lightweight type instead.
+ *
+ * Owned by xwayland.c and kept in a plain list; identified from a surface via
+ * unmanaged_from_surface(). */
+typedef struct UnmanagedSurface {
+	/* Must keep this field first, mirroring LayerSurface */
+	unsigned int type; /* X11Unmanaged */
+
+	struct wlr_xwayland_surface *xsurface;
+	struct wlr_scene_surface *scene_surface; /* NULL while unmapped */
+	struct wl_list link;                     /* unmanaged_surfaces */
+
+	struct wl_listener associate;
+	struct wl_listener dissociate;
+	struct wl_listener map;
+	struct wl_listener unmap;
+	struct wl_listener destroy;
+	struct wl_listener set_geometry;
+	struct wl_listener override_redirect;
+	struct wl_listener request_configure;
+	struct wl_listener request_activate;
+} UnmanagedSurface;
+#endif
 
 /* PointerConstraint structure */
 typedef struct {

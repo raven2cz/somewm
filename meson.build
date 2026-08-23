@@ -223,6 +223,14 @@ endif
 have_scenefx = scenefx.found()
 if have_scenefx
   message('SceneFX ' + scenefx_version + ' enabled (wlroots ' + wlroots_version + ')')
+  # 0.5 replaced the enum corner_location bitmask with a per-corner radius
+  # struct; scenefx_compat.h keys off this to expose one API to the rest of
+  # the tree.
+  if scenefx_version != '0.4'
+    add_project_arguments('-DHAVE_SCENEFX_CORNER_RADII', language: 'c')
+  endif
+else
+  message('SceneFX not found or disabled, visual effects disabled')
 endif
 
 # PAM authentication (optional, for lock screen)
@@ -403,6 +411,10 @@ if have_pam
   add_project_arguments('-DHAVE_PAM', language: 'c')
 endif
 
+if have_scenefx
+  add_project_arguments('-DHAVE_SCENEFX', language: 'c')
+endif
+
 if get_option('test_pam')
   add_project_arguments('-DTEST_PAM', language: 'c')
 endif
@@ -479,6 +491,7 @@ somewm_sources = [
   'objects/signal.c',
   'objects/key.c',
   'objects/keybinding.c',
+  'objects/timer.c',
   # objects/awesome.c merged into luaa.c
   'objects/button.c',
   'objects/wibox.c',
@@ -518,6 +531,10 @@ endif
 
 if have_pam
   all_deps += [pam_dep]
+endif
+
+if have_scenefx
+  all_deps += [scenefx]
 endif
 
 somewm_exe = executable(
@@ -673,6 +690,13 @@ endif
 
 # Man page
 install_man('somewm.1')
+
+# Session launcher script (restart/rebuild loop)
+install_data(
+  'somewm-session',
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
+)
 
 # Desktop file (Exec varies depending on systemd session wrapper)
 somewm_desktop_exec = 'somewm'

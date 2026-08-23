@@ -26,7 +26,7 @@
 #include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -36,6 +36,7 @@
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "xwayland.h"
 #include "input.h"
 #include "event.h"
 #include "event_queue.h"
@@ -365,7 +366,7 @@ axisnotify(struct wl_listener *listener, void *data)
 				/* Emit press then release (scroll is instantaneous) */
 				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), true);
 				luaA_drawin_button_check(drawin, rel_x, rel_y, button, CLEANMASK(mods), false);
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			} else if (c) {
 				/* Scroll on client */
 				rel_x = (int)cursor->x - c->geometry.x;
 				rel_y = (int)cursor->y - c->geometry.y;
@@ -404,13 +405,16 @@ axisnotify(struct wl_listener *listener, void *data)
 void
 buttonpress(struct wl_listener *listener, void *data)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	struct wlr_pointer_button_event *event = data;
 	struct wlr_keyboard *keyboard;
 	uint32_t mods;
 	Client *c;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_POINTER_BUTTON_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 	some_notify_activity();
@@ -445,13 +449,31 @@ buttonpress(struct wl_listener *listener, void *data)
 		drawin_t *drawin = NULL;
 		drawable_t *titlebar_drawable = NULL;
 		int rel_x, rel_y;
+		struct wlr_surface *pressed_surface = NULL;
+#ifdef XWAYLAND
+		UnmanagedSurface *unmanaged;
+#endif
 
 		cursor_mode = CurPressed;
 		if (locked)
 			break;
 
 		/* Change focus if the button was _pressed_ over a client or layer surface */
-		xytonode(cursor->x, cursor->y, NULL, &c, &l, &drawin, &titlebar_drawable, NULL, NULL);
+		xytonode(cursor->x, cursor->y, &pressed_surface, &c, &l, &drawin,
+				&titlebar_drawable, NULL, NULL);
+
+#ifdef XWAYLAND
+		/* A click on an override-redirect surface (menu, popup) belongs to
+		 * the application, not to us: it is not a client, so without this
+		 * it would fall through to the "empty space" branch below and fire
+		 * root button bindings. Focus it if it takes focus, then get out of
+		 * the way -- the click itself is already on its way to the surface
+		 * through the seat. */
+		if ((unmanaged = unmanaged_from_surface(pressed_surface))) {
+			unmanaged_click(unmanaged);
+			break;
+		}
+#endif
 
 		/* For Lua lock, only allow interaction with the lock surface */
 		if (some_is_lua_locked() && drawin != some_get_lua_lock_surface())
@@ -473,7 +495,7 @@ buttonpress(struct wl_listener *listener, void *data)
 				return;
 			}
 
-			} else if (c && (!client_is_unmanaged(c) || client_wants_focus(c))) {
+			} else if (c) {
 			/* Calculate client-relative coordinates */
 			rel_x = (int)cursor->x - c->geometry.x;
 			rel_y = (int)cursor->y - c->geometry.y;
@@ -713,9 +735,6 @@ void
 motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double dy,
 		double dx_unaccel, double dy_unaccel)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	double sx = 0, sy = 0, sx_confined, sy_confined;
 	Client *c = NULL, *w = NULL;
 	LayerSurface *l = NULL;
@@ -765,11 +784,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		/* Update selected monitor when cursor crosses monitor boundaries.
 		 * Without this, layer-shell clients (rofi, etc.) that don't specify
-		 * an output get assigned to the stale selmon in createlayersurface(). */
+		 * an output get assigned to the stale selmon in createlayersurface().
+		 * Also emit screen::focus so Lua's awful.screen.focused() and any
+		 * QS panels gated on focusedScreenName follow the cursor. The
+		 * button-press path has an analogous selmon update, but that one
+		 * only fires on clicks over empty space — here we fire on any
+		 * hover crossing, which is the focus-follows-mouse behavior.
+		 * mon != selmon fires at most once per boundary crossing, so this
+		 * is not per-motion-event spam. */
 		{
 			Monitor *mon = xytomon(cursor->x, cursor->y);
-			if (mon && mon != selmon)
+			if (mon && mon != selmon) {
 				selmon = mon;
+				luaA_emit_signal_global("screen::focus");
+			}
 		}
 	}
 
@@ -805,8 +833,16 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 	/* If mousegrabber is active, route event to Lua callback (AwesomeWM behavior:
 	 * check mousegrabber BEFORE enter/leave signals to filter them during grabs) */
-	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
+	if (event_handle_mousegrabber(cursor->x, cursor->y, 0)) {
+		/* If that call ended the grab (the callback returned false), rebase
+		 * pointer focus right away. Otherwise the pointer-focused surface
+		 * stays whatever it was when the grab started, and a client dropped
+		 * on another monitor gets no button events until the next motion.
+		 * Mirrors sway's seatop_default re-entry (fork PR #521). */
+		if (!mousegrabber_isrunning())
+			motionnotify(0, NULL, 0, 0, 0, 0);
 		return; /* Don't process event further (skip enter/leave signals, pointerfocus) */
+	}
 
 	/* Track which object is under the cursor and emit enter/leave/move signals
 	 * (only when mousegrabber is NOT active - filtered above) */
@@ -927,6 +963,20 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 	pointerfocus(c, surface, sx, sy, time);
 }
 
+static int pointer_enter_deferred_pending;
+
+static void
+deferred_pointer_enter(void *data)
+{
+	(void)data;
+	/* Keep pending = 1 across the motionnotify() call: the pointerfocus()
+	 * it triggers must not re-arm another deferred re-delivery. One retry
+	 * resolves a genuine bind race; a client that still has no wl_pointer
+	 * resources here simply has none, and re-scheduling would spin forever. */
+	motionnotify(0, NULL, 0, 0, 0, 0);
+	pointer_enter_deferred_pending = 0;
+}
+
 void
 pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		uint32_t time)
@@ -963,6 +1013,15 @@ pointerfocus(Client *c, struct wlr_surface *surface, double sx, double sy,
 				"(client had no wl_pointer resources)",
 				c ? client_get_appid(c) : "?");
 			wlr_seat_pointer_notify_clear_focus(seat);
+			/* Schedule deferred re-delivery — client may not have
+			 * bound wl_pointer yet. By the time the idle callback
+			 * fires, the client will have its pointer resources ready. */
+			if (!pointer_enter_deferred_pending) {
+				pointer_enter_deferred_pending = 1;
+				wl_event_loop_add_idle(
+					wl_display_get_event_loop(dpy),
+					deferred_pointer_enter, NULL);
+			}
 		}
 	}
 
@@ -1042,9 +1101,6 @@ keybinding(uint32_t mods, uint32_t keycode, xkb_keysym_t sym, xkb_keysym_t base_
 void
 keypress(struct wl_listener *listener, void *data)
 {
-#ifdef SOMEWM_BENCH
-	bench_input_event_record();
-#endif
 	int i;
 	uint32_t keycode;
 	const xkb_keysym_t *syms;
@@ -1055,6 +1111,12 @@ keypress(struct wl_listener *listener, void *data)
 	/* This event is raised when a key is pressed or released. */
 	KeyboardGroup *group = wl_container_of(listener, group, key);
 	struct wlr_keyboard_key_event *event = data;
+
+#ifdef SOMEWM_BENCH
+	/* Record input-to-display latency start timestamp (flushed in rendermon) */
+	if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
+		bench_input_event_record();
+#endif
 
 	/* Translate libinput keycode -> xkbcommon */
 	keycode = event->keycode + 8;
@@ -1243,6 +1305,18 @@ cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 
 	if (active_constraint)
 		wlr_pointer_constraint_v1_send_activated(active_constraint);
+}
+
+/** Update pointer constraint for a surface.
+ * Called from somewm_api.c when Lua changes focus - games need pointer
+ * constraints to follow keyboard focus for mouse lock to work. */
+void
+some_update_pointer_constraint(struct wlr_surface *surface)
+{
+	if (!surface)
+		return;
+	cursorconstrain(wlr_pointer_constraints_v1_constraint_for_surface(
+		pointer_constraints, surface, seat));
 }
 
 void
@@ -1900,7 +1974,7 @@ destroydrag(struct wl_listener *listener, void *data)
 	 * already focused (early return at surface == old check), so explicitly
 	 * apply the focus color here for the common case where the focused
 	 * client didn't change during the drag. */
-	if (c && !client_is_unmanaged(c))
+	if (c)
 		client_set_border_color(c, get_focuscolor());
 	focusclient(c, 0);
 	motionnotify(0, NULL, 0, 0, 0, 0);

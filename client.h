@@ -64,7 +64,17 @@ toplevel_from_wlr_surface(struct wlr_surface *s, Client **pc, LayerSurface **pl)
 
 #ifdef XWAYLAND
 	if ((xsurface = wlr_xwayland_surface_try_from_wlr_surface(root_surface))) {
+		/* Override-redirect surfaces are not clients: xsurface->data holds
+		 * an UnmanagedSurface, so reading a Client out of it would be a
+		 * type confusion. Report the type and leave *pc NULL; callers that
+		 * need the surface itself use unmanaged_from_surface(). */
+		if (xsurface->override_redirect) {
+			type = X11Unmanaged;
+			goto end;  /* c/l stay NULL, but the caller's out-params get written */
+		}
 		c = xsurface->data;
+		if (!c)
+			return -1;
 		type = c->client_type;
 		goto end;
 	}
@@ -299,16 +309,6 @@ client_is_stopped(Client *c)
 	return 0;
 }
 
-static inline int
-client_is_unmanaged(Client *c)
-{
-#ifdef XWAYLAND
-	if (client_is_x11(c))
-		return c->surface.xwayland->override_redirect;
-#endif
-	return 0;
-}
-
 static inline void
 client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb)
 {
@@ -339,6 +339,10 @@ client_set_border_color(Client *c, const float color[static 4])
 	int i;
 	for (i = 0; i < 4; i++)
 		wlr_scene_rect_set_color(c->border[i], color);
+#ifdef HAVE_SCENEFX
+	if (c->border_frame)
+		wlr_scene_rect_set_color(c->border_frame, color);
+#endif
 }
 
 static inline void
@@ -431,17 +435,6 @@ client_set_suspended(Client *c, int suspended)
 #endif
 
 	wlr_xdg_toplevel_set_suspended(c->surface.xdg->toplevel, suspended);
-}
-
-static inline int
-client_wants_focus(Client *c)
-{
-#ifdef XWAYLAND
-	return client_is_unmanaged(c)
-		&& COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(c->surface.xwayland)
-		&& COMPAT_XWAYLAND_ICCCM_INPUT_MODEL(c->surface.xwayland) != WLR_ICCCM_INPUT_MODEL_NONE;
-#endif
-	return 0;
 }
 
 static inline int

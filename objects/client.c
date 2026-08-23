@@ -92,6 +92,7 @@
 #include "objects/drawable.h"
 #include "objects/button.h"
 #include "objects/key.h"
+#include "objects/mousegrabber.h"
 #include "luaa.h"
 #include "common/lualib.h"
 #include "signal.h"
@@ -120,7 +121,7 @@ void apply_geometry_to_wlroots(client_t *c);
 #include <string.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
-#include <wlr/types/wlr_scene.h>
+#include "scenefx_compat.h"
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/render/wlr_texture.h>
@@ -1956,6 +1957,18 @@ void client_ban_unfocus(client_t *c)
 {
     /* Wait until the last moment to take away the focus from the window. */
     if(globalconf.focus.client == c) {
+        /* During a Lua mousegrabber-driven move, screen_client_moveto()
+         * updates c->mon/c->screen ahead of the tag retag. The banning
+         * pass then briefly sees the actively-dragged client as
+         * "invisible" (tags still on the source screen) and would
+         * clear focus mid-drag, stealing focus to another client on
+         * the source monitor. Skip the unfocus while the grab is
+         * active; the post-grab motionnotify(0) re-evaluates
+         * pointer/keyboard focus once tag/monitor state is consistent. */
+        if (mousegrabber_isrunning())
+            return;
+        /* Queued form (upstream client_unfocus(c, sync)); this is the normal
+         * banning path, not client invalidation. */
         client_unfocus(c, false);
     }
 }
@@ -2150,16 +2163,30 @@ client_border_refresh(void)
          * border_color change while fullscreen doesn't re-grow the frame. */
         c->bw = c->fullscreen ? 0 : c->border_width;
 
-        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern) */
+        /* Update border geometry -- handles both flat and rounded corners.
+         * When corner_radius > 0, extends top/bottom borders and clips them.
+         * When corner_radius == 0, uses standard flat layout. */
+        client_update_border_for_corners(c);
+
+        /* Update border color if initialized (matches AwesomeWM window_border_refresh pattern).
+         * Preserve current opacity in color alpha — otherwise border_refresh
+         * clobbers the alpha that client_apply_opacity_to_scene() set during
+         * fade animations. */
         if(c->border_color.initialized) {
             float color_floats[4];
             int i;
 
             color_to_floats(&c->border_color, color_floats);
+            if(c->opacity >= 0)
+                color_floats[3] = (float)c->opacity;
 
-            /* Apply color to all 4 border rectangles */
+            /* Apply color to all border rectangles */
             for(i = 0; i < 4; i++)
                 wlr_scene_rect_set_color(c->border[i], color_floats);
+#ifdef HAVE_SCENEFX
+            if(c->border_frame)
+                wlr_scene_rect_set_color(c->border_frame, color_floats);
+#endif
         }
     }
 }
@@ -2514,19 +2541,26 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
         geometry = client_apply_size_hints(c, geometry);
     }
 
-    /* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
-     * Works on full geometry to match the ratio captured from Lua. */
+    /* Apply aspect ratio constraint on content area (excluding borders/titlebars).
+     * Lua sets aspect_ratio = content_width / content_height. */
     if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-        int w = geometry.width;
-        int h = geometry.height;
-        if (w > 0 && h > 0) {
-            double current = (double)w / h;
-            double epsilon = 1.5 / (double)h;
+        int bw2 = 2 * c->border_width;
+        int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
+            + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+        int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
+            + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+        int cw = geometry.width - bw2 - tb_w;
+        int ch = geometry.height - bw2 - tb_h;
+        if (cw > 0 && ch > 0) {
+            double current = (double)cw / ch;
+            double epsilon = 1.5 / (double)ch;
             if (current - c->aspect_ratio > epsilon) {
-                geometry.width = (int)(h * c->aspect_ratio + 0.5);
+                cw = (int)(ch * c->aspect_ratio + 0.5);
             } else if (c->aspect_ratio - current > epsilon) {
-                geometry.height = (int)(w / c->aspect_ratio + 0.5);
+                ch = (int)(cw / c->aspect_ratio + 0.5);
             }
+            geometry.width = cw + bw2 + tb_w;
+            geometry.height = ch + bw2 + tb_h;
         }
     }
 
@@ -3452,6 +3486,7 @@ luaA_client_get__scene_layer(lua_State *L, client_t *c)
         [LyrTop]     = "top",
         [LyrFS]      = "fullscreen",
         [LyrOverlay] = "overlay",
+        [LyrUnmanaged] = "unmanaged",
         [LyrBlock]   = "block",
     };
 
@@ -3702,6 +3737,23 @@ titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t b
             area = titlebar_get_area(c, bar);
             wlr_scene_node_set_position(&c->titlebar[bar].scene_buffer->node,
                                           area.x, area.y);
+
+#ifdef HAVE_SCENEFX
+            /* Apply corner radius immediately — can't wait for commitnotify
+             * because apps that don't send frequent commits (firefox, GTK)
+             * would show sharp titlebar corners until next surface commit. */
+            if (c->corner_radius > 0) {
+                static const somewm_corners_t bar_cr[CLIENT_TITLEBAR_COUNT] = {
+                    [CLIENT_TITLEBAR_TOP]    = SOMEWM_CORNER_TOP,
+                    [CLIENT_TITLEBAR_BOTTOM] = SOMEWM_CORNER_BOTTOM,
+                    [CLIENT_TITLEBAR_LEFT]   = SOMEWM_CORNER_NONE,
+                    [CLIENT_TITLEBAR_RIGHT]  = SOMEWM_CORNER_NONE,
+                };
+                somewm_scene_buffer_set_corners(
+                    c->titlebar[bar].scene_buffer,
+                    c->corner_radius + 1, bar_cr[bar]);
+            }
+#endif
         }
     }
 
@@ -3771,6 +3823,10 @@ titlebar_resize(lua_State *L, int cidx, client_t *c, client_titlebar_t bar, int 
                                         area.x, area.y);
         }
     }
+
+    /* Re-apply corner radius — titlebar visibility changes which corners
+     * the surface vs titlebar need rounded (can't wait for commitnotify). */
+    client_apply_corner_radius(c);
 
     luaA_object_emit_signal(L, cidx, property_name, 0);
 }
@@ -4055,6 +4111,19 @@ luaA_client_set_ontop(lua_State *L, client_t *c)
 }
 
 static int
+luaA_client_set_floating(lua_State *L, client_t *c)
+{
+    bool s = luaA_checkboolean(L, -1);
+    if(c->floating != s)
+    {
+        c->floating = s;
+        stack_windows();
+        luaA_object_emit_signal(L, -3, "property::_c_floating", 0);
+    }
+    return 0;
+}
+
+static int
 luaA_client_set_below(lua_State *L, client_t *c)
 {
     client_set_below(L, -3, luaA_checkboolean(L, -1));
@@ -4114,6 +4183,31 @@ client_apply_opacity_to_scene(client_t *c, float opacity)
     if (c->scene_surface) {
         apply_opacity_to_tree(&c->scene_surface->node, opacity);
     }
+
+    /* Apply to shadow tree (9-slice drop shadow) */
+    if (c->shadow.tree) {
+        apply_opacity_to_tree(&c->shadow.tree->node, opacity);
+    }
+
+    /* Apply to border rects (4 wlr_scene_rect nodes) */
+    for (i = 0; i < 4; i++) {
+        if (c->border[i]) {
+            float color[4];
+            memcpy(color, c->border[i]->color, sizeof(color));
+            color[3] = opacity;
+            wlr_scene_rect_set_color(c->border[i], color);
+        }
+    }
+
+#ifdef HAVE_SCENEFX
+    /* Apply to frame border rect (single rect for rounded corners) */
+    if (c->border_frame) {
+        float color[4];
+        memcpy(color, c->border_frame->color, sizeof(color));
+        color[3] = opacity;
+        wlr_scene_rect_set_color(c->border_frame, color);
+    }
+#endif
 }
 
 /** Get client opacity.
@@ -4153,6 +4247,341 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
     }
 
     luaA_object_emit_signal(L, -3, "property::opacity", 0);
+    return 0;
+}
+
+/* ========================================================================
+ * Corner radius (requires scenefx)
+ * ======================================================================== */
+
+#ifdef HAVE_SCENEFX
+static void
+apply_corner_radius_to_tree(struct wlr_scene_node *node, int radius,
+                            somewm_corners_t corners)
+{
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+        somewm_scene_buffer_set_corners(buf, radius, corners);
+    } else if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            apply_corner_radius_to_tree(child, radius, corners);
+        }
+    }
+}
+#endif
+
+void
+client_apply_corner_radius(client_t *c)
+{
+#ifdef HAVE_SCENEFX
+    int radius = c->corner_radius;
+
+    /* Determine which corners the surface content needs rounded.
+     * Titlebars cover the edges — if a titlebar is present on a side,
+     * the surface doesn't need rounding there (the titlebar handles it). */
+    int tt = c->titlebar[CLIENT_TITLEBAR_TOP].size;
+    int tb = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+    somewm_corners_t surface_corners = SOMEWM_CORNER_ALL;
+    if (tt > 0)
+        surface_corners &= ~(SOMEWM_CORNER_TOP_LEFT | SOMEWM_CORNER_TOP_RIGHT);
+    if (tb > 0)
+        surface_corners &= ~(SOMEWM_CORNER_BOTTOM_LEFT | SOMEWM_CORNER_BOTTOM_RIGHT);
+
+    /* Apply to client surface buffers */
+    if (c->scene_surface)
+        apply_corner_radius_to_tree(&c->scene_surface->node, radius,
+                                    surface_corners);
+
+    /* Apply to titlebar scene buffers — each bar rounds its own edge.
+     * Use radius+1 to slightly overlap the border_frame's inner SDF edge,
+     * compensating for sub-pixel mismatch between buffer and rect shaders. */
+    if (radius > 0) {
+        int tb_radius = radius + 1;
+        static const somewm_corners_t bar_corners[CLIENT_TITLEBAR_COUNT] = {
+            [CLIENT_TITLEBAR_TOP]    = SOMEWM_CORNER_TOP,
+            [CLIENT_TITLEBAR_BOTTOM] = SOMEWM_CORNER_BOTTOM,
+            [CLIENT_TITLEBAR_LEFT]   = SOMEWM_CORNER_NONE,
+            [CLIENT_TITLEBAR_RIGHT]  = SOMEWM_CORNER_NONE,
+        };
+        for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
+            if (c->titlebar[i].scene_buffer && c->titlebar[i].size > 0) {
+                somewm_scene_buffer_set_corners(
+                    c->titlebar[i].scene_buffer, tb_radius, bar_corners[i]);
+            }
+        }
+    } else {
+        for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
+            if (c->titlebar[i].scene_buffer)
+                somewm_scene_buffer_set_corners(
+                    c->titlebar[i].scene_buffer, 0, SOMEWM_CORNER_NONE);
+        }
+    }
+
+    /* Border corner radius + geometry + clipping is handled by
+     * client_update_border_for_corners() as a single source of truth. */
+    client_update_border_for_corners(c);
+
+    /* Update shadow corner radius to match window rounding */
+    shadow_set_corner_radius(&c->shadow, radius);
+#else
+    (void)c;
+#endif
+}
+
+/**
+ * Update border geometry to handle both rounded and flat corners.
+ *
+ * Two modes, selected by corner_radius:
+ *
+ *   corner_radius > 0 (rounded mode):
+ *     Uses a single full-geometry border_frame rect with a clipped_region
+ *     punch-hole for the content area. The outer edge is rounded at
+ *     (corner_radius + border_width), the inner hole at corner_radius.
+ *     Individual border[0..3] rects are hidden.
+ *
+ *   corner_radius == 0 (flat mode):
+ *     Standard 4-rect border layout (top, bottom, left, right).
+ *     border_frame is hidden if it exists.
+ *
+ *   border_width <= 0:
+ *     All borders hidden (maximize/fullscreen).
+ *
+ * Called from client_border_refresh() and client_apply_corner_radius().
+ * Requires HAVE_SCENEFX for rounded mode; flat mode is always available.
+ */
+void
+client_update_border_for_corners(client_t *c)
+{
+    /* Null safety: border rects may not exist yet (unmapped client) */
+    if (!c->border[0])
+        return;
+
+    int bw = c->bw;
+    int w = c->geometry.width;
+    int h = c->geometry.height;
+
+    if (bw <= 0) {
+        /* No border — hide everything */
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, false);
+#ifdef HAVE_SCENEFX
+        if (c->border_frame)
+            wlr_scene_node_set_enabled(&c->border_frame->node, false);
+#endif
+        return;
+    }
+
+#ifdef HAVE_SCENEFX
+    int cr = c->corner_radius;
+    if (cr > 0 && c->border_frame) {
+        /* Rounded mode: single frame rect with clipped_region punch-hole.
+         * The frame rect covers the full geometry. The clipped_region cuts
+         * out the content area, leaving only the border strip visible.
+         * The large hole (hundreds of px) ensures the SDF shader works
+         * correctly — unlike the 4-rect approach where thin clips caused
+         * SDF distortion artifacts. */
+
+        /* Hide individual border rects */
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, false);
+
+        /* Configure frame rect */
+        wlr_scene_node_set_enabled(&c->border_frame->node, true);
+        wlr_scene_node_set_position(&c->border_frame->node, 0, 0);
+        wlr_scene_rect_set_size(c->border_frame, w, h);
+        somewm_scene_rect_set_corners(c->border_frame,
+            cr + bw, SOMEWM_CORNER_ALL);
+
+        /* Punch out the content area — inner edge matches surface corner radius.
+         * Clamp to >= 1 to avoid negative dimensions on very small windows.
+         * Where titlebars exist, use sharp inner corners — the titlebar buffer
+         * provides its own rounding, and mixing two SDF paths causes pixel gaps. */
+        int cw = w - 2 * bw;
+        int ch = h - 2 * bw;
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+        {
+            /* corner_radius + bitmask on SceneFX 0.4, a per-corner struct on
+             * 0.5 -- the macro writes whichever the linked version wants. */
+            struct clipped_region region = { .area = { bw, bw, cw, ch } };
+            SOMEWM_CLIPPED_REGION_SET_CORNERS(region, cr, SOMEWM_CORNER_ALL);
+            wlr_scene_rect_set_clipped_region(c->border_frame, region);
+        }
+    } else
+#endif /* HAVE_SCENEFX */
+    {
+        /* Flat mode: standard 4-rect border layout.
+         * Available on both scenefx and non-scenefx builds. */
+#ifdef HAVE_SCENEFX
+        if (c->border_frame)
+            wlr_scene_node_set_enabled(&c->border_frame->node, false);
+#endif
+
+        for (int i = 0; i < 4; i++)
+            wlr_scene_node_set_enabled(&c->border[i]->node, true);
+
+        wlr_scene_rect_set_size(c->border[0], w, bw);
+        wlr_scene_rect_set_size(c->border[1], w, bw);
+        wlr_scene_rect_set_size(c->border[2], bw, h - 2 * bw);
+        wlr_scene_rect_set_size(c->border[3], bw, h - 2 * bw);
+        wlr_scene_node_set_position(&c->border[0]->node, 0, 0);
+        wlr_scene_node_set_position(&c->border[1]->node, 0, h - bw);
+        wlr_scene_node_set_position(&c->border[2]->node, 0, bw);
+        wlr_scene_node_set_position(&c->border[3]->node, w - bw, bw);
+
+#ifdef HAVE_SCENEFX
+        /* Clear any corner radius from flat border rects */
+        for (int i = 0; i < 4; i++) {
+            somewm_scene_rect_set_corners(c->border[i],
+                0, SOMEWM_CORNER_NONE);
+        }
+#endif
+    }
+}
+
+static int
+luaA_client_get_corner_radius(lua_State *L, client_t *c)
+{
+    lua_pushinteger(L, c->corner_radius);
+    return 1;
+}
+
+static int
+luaA_client_set_corner_radius(lua_State *L, client_t *c)
+{
+    int radius = luaL_checkinteger(L, -1);
+    if (radius < 0)
+        return luaL_error(L, "corner_radius must be >= 0");
+    c->corner_radius = radius;
+    client_apply_corner_radius(c);
+    luaA_object_emit_signal(L, -3, "property::corner_radius", 0);
+    return 0;
+}
+
+/* ========================================================================
+ * Backdrop blur (requires scenefx)
+ * ======================================================================== */
+
+#ifdef HAVE_SCENEFX
+#ifndef HAVE_SCENEFX_CORNER_RADII
+/* SceneFX 0.4: blur is a per-buffer flag, so it is applied by walking the
+ * client's surface tree. */
+static void
+apply_backdrop_blur_to_tree(struct wlr_scene_node *node, bool enabled)
+{
+    if (node->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
+        wlr_scene_buffer_set_backdrop_blur(buf, enabled);
+        if (enabled) {
+            /* Per-frame blur, not cached. The optimized blur path samples
+             * from a pre-rendered cache that only contains nodes below the
+             * scene-level wlr_scene_optimized_blur layer (root_bg + LyrBg
+             * + LyrBottom). Every client window sits above that layer, so
+             * optimized=true makes a blurred client show the wallpaper
+             * through overlapping floating windows instead of their live
+             * content. Per-frame blur re-samples the actual framebuffer
+             * each frame, preserving see-through-windows behavior. */
+            wlr_scene_buffer_set_backdrop_blur_optimized(buf, false);
+            wlr_scene_buffer_set_backdrop_blur_ignore_transparent(buf, true);
+        }
+    } else if (node->type == WLR_SCENE_NODE_TREE) {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link) {
+            apply_backdrop_blur_to_tree(child, enabled);
+        }
+    }
+}
+#endif /* !HAVE_SCENEFX_CORNER_RADII */
+#endif /* HAVE_SCENEFX */
+
+void
+client_apply_backdrop_blur(client_t *c)
+{
+#ifdef HAVE_SCENEFX
+    bool enabled = c->backdrop_blur;
+
+    /* Skip blur for fullscreen clients -- nothing visible behind them
+     * (matches SwayFX behavior, avoids unnecessary GPU work). */
+    if (c->fullscreen)
+        enabled = false;
+
+#ifdef HAVE_SCENEFX_CORNER_RADII
+    /* SceneFX 0.5 turned per-client blur into its own scene node instead of a
+     * flag on every buffer: the node blurs whatever is behind it, so it lives
+     * under the client's content and is sized to the content area.
+     *
+     * should_only_blur_bottom_layer stays false for the same reason the 0.4
+     * path passed optimized=false: blurring only the bottom layer samples the
+     * pre-rendered cache below the scene-level optimized blur layer, which is
+     * just the wallpaper, so overlapping windows would show through as
+     * wallpaper instead of their live content. */
+    if (!c->scene || !c->scene_surface) {
+        return;
+    }
+
+    if (!enabled) {
+        if (c->blur_node) {
+            wlr_scene_node_destroy(&c->blur_node->node);
+            c->blur_node = NULL;
+        }
+        return;
+    }
+
+    {
+        int bw = c->bw;
+        int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+        int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+        int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+        int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+        int cw = c->geometry.width - 2 * bw - tl - tr;
+        int ch = c->geometry.height - 2 * bw - tt - tb;
+
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+
+        if (!c->blur_node) {
+            c->blur_node = wlr_scene_blur_create(c->scene, cw, ch);
+            if (!c->blur_node)
+                return;
+            wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur_node, false);
+        } else {
+            wlr_scene_blur_set_size(c->blur_node, cw, ch);
+        }
+
+        wlr_scene_node_set_position(&c->blur_node->node, bw + tl, bw + tt);
+        /* Behind the client's own content, in front of whatever is below. */
+        wlr_scene_node_lower_to_bottom(&c->blur_node->node);
+        somewm_scene_blur_set_corners(c->blur_node, c->corner_radius,
+                SOMEWM_CORNER_ALL);
+    }
+#else
+    /* Walk client surface tree only -- popups and borders are excluded.
+     * Popups live in a sibling tree, not under scene_surface (same
+     * limitation as corner_radius and other compositor-imposed effects). */
+    if (c->scene_surface)
+        apply_backdrop_blur_to_tree(&c->scene_surface->node, enabled);
+#endif
+#else
+    (void)c;
+#endif
+}
+
+static int
+luaA_client_get_backdrop_blur(lua_State *L, client_t *c)
+{
+    lua_pushboolean(L, c->backdrop_blur);
+    return 1;
+}
+
+static int
+luaA_client_set_backdrop_blur(lua_State *L, client_t *c)
+{
+    c->backdrop_blur = luaA_checkboolean(L, -1);
+    client_apply_backdrop_blur(c);
+    luaA_object_emit_signal(L, -3, "property::backdrop_blur", 0);
     return 0;
 }
 
@@ -4311,6 +4740,7 @@ luaA_client_get_xdg_maximized(lua_State *L, client_t *c)
 
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, modal, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, ontop, lua_pushboolean)
+LUA_OBJECT_EXPORT_PROPERTY(client, client_t, floating, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, urgent, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, above, lua_pushboolean)
 LUA_OBJECT_EXPORT_PROPERTY(client, client_t, below, lua_pushboolean)
@@ -4984,7 +5414,8 @@ luaA_client_border_is_focus_color(lua_State *L)
     }
 
     const float *focus = globalconf.appearance.focuscolor;
-    const float *actual = c->border[0]->color;
+    const float *actual = (c->border_frame && c->border_frame->node.enabled)
+        ? c->border_frame->color : c->border[0]->color;
 
     int matches = (actual[0] == focus[0] && actual[1] == focus[1] &&
                    actual[2] == focus[2] && actual[3] == focus[3]);
@@ -5008,7 +5439,8 @@ luaA_client_border_is_normal_color(lua_State *L)
     }
 
     const float *normal = globalconf.appearance.bordercolor;
-    const float *actual = c->border[0]->color;
+    const float *actual = (c->border_frame && c->border_frame->node.enabled)
+        ? c->border_frame->color : c->border[0]->color;
 
     int matches = (actual[0] == normal[0] && actual[1] == normal[1] &&
                    actual[2] == normal[2] && actual[3] == normal[3]);
@@ -5076,6 +5508,8 @@ client_class_setup(lua_State *L)
         { "client_shape_clip", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_clip, NULL },
         { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
+        { "backdrop_blur", (lua_class_propfunc_t) luaA_client_set_backdrop_blur, (lua_class_propfunc_t) luaA_client_get_backdrop_blur, (lua_class_propfunc_t) luaA_client_set_backdrop_blur },
+        { "corner_radius", (lua_class_propfunc_t) luaA_client_set_corner_radius, (lua_class_propfunc_t) luaA_client_get_corner_radius, (lua_class_propfunc_t) luaA_client_set_corner_radius },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
         { "fullscreen", (lua_class_propfunc_t) luaA_client_set_fullscreen, (lua_class_propfunc_t) luaA_client_get_fullscreen, (lua_class_propfunc_t) luaA_client_set_fullscreen },
@@ -5096,6 +5530,7 @@ client_class_setup(lua_State *L)
         { "motif_wm_hints", NULL, (lua_class_propfunc_t) luaA_client_get_motif_wm_hints, NULL },
         { "name", (lua_class_propfunc_t) luaA_client_set_name, (lua_class_propfunc_t) luaA_client_get_name, (lua_class_propfunc_t) luaA_client_set_name },
         { "ontop", (lua_class_propfunc_t) luaA_client_set_ontop, (lua_class_propfunc_t) luaA_client_get_ontop, (lua_class_propfunc_t) luaA_client_set_ontop },
+        { "_c_floating", (lua_class_propfunc_t) luaA_client_set_floating, (lua_class_propfunc_t) luaA_client_get_floating, (lua_class_propfunc_t) luaA_client_set_floating },
         { "opacity", (lua_class_propfunc_t) luaA_client_set_opacity, (lua_class_propfunc_t) luaA_client_get_opacity, (lua_class_propfunc_t) luaA_client_set_opacity },
         { "pid", NULL, (lua_class_propfunc_t) luaA_client_get_pid, NULL },
         { "role", NULL, (lua_class_propfunc_t) luaA_client_get_role, NULL },

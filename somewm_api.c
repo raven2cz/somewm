@@ -23,6 +23,7 @@
 
 #include "somewm_api.h"
 #include "wlr_compat.h"
+#include "xwayland.h"
 #include "xkb.h"
 #include "objects/signal.h"
 #include "objects/screen.h"
@@ -377,6 +378,13 @@ some_set_seat_keyboard_focus(Client *c)
 	struct wlr_keyboard *kb;
 	int surface_ready;
 
+	/* An open override-redirect menu owns the keyboard: taking it away makes
+	 * Xwayland send FocusOut and the application closes the menu. Sloppy
+	 * focus reaches this path on every pointer motion, so without the guard
+	 * moving the mouse would dismiss Wine menus. Mirrors focusclient(). */
+	if (unmanaged_holds_focus())
+		return;
+
 	if (!c) {
 		wlr_seat_keyboard_notify_clear_focus(seat);
 		return;
@@ -468,17 +476,8 @@ some_set_seat_keyboard_focus(Client *c)
 			           >= ZWLR_LAYER_SHELL_V1_LAYER_TOP)
 				return;
 
-			/* The old client holds exclusive focus (e.g. drag grab). */
-			if (old_c && old_c == exclusive_focus
-			    && client_wants_focus(old_c))
-				return;
-
-			/* Deactivate old managed client. Skip the deactivation if the
-			 * incoming client is a winecfg-like wants-focus unmanaged
-			 * XWayland window: the parent toplevel stays activated so the
-			 * legacy input model keeps working. */
-			if (old_c && !client_is_unmanaged(old_c)
-			    && !client_wants_focus(c))
+			/* Deactivate the old managed client. */
+			if (old_c)
 				client_activate_surface(old, 0);
 		}
 	}

@@ -25,6 +25,7 @@
 
 #include <lua.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <xkbcommon/xkbcommon.h>
 #include "common/array.h"
@@ -42,6 +43,35 @@ typedef struct screen_t screen_t;
 typedef struct drawin_t drawin_t;
 typedef struct drawable_t drawable_t;
 typedef struct keyb_t keyb_t;
+
+/** Wallpaper cache entry for instant switching (per-screen) */
+typedef struct wallpaper_cache_entry {
+    struct wl_list link;
+    char *path;                          /* Filepath (part of cache key) */
+    int screen_index;                    /* Screen index (part of cache key) */
+    int width, height;                   /* Cached surface dimensions */
+    size_t cairo_bytes;                  /* CPU-side cairo image surface bytes */
+    size_t shm_bytes;                    /* drawable-shm buffer bytes */
+    struct wlr_scene_buffer *scene_node; /* Positioned at screen coords, hidden when not active */
+    cairo_surface_t *surface;            /* For getter compatibility */
+} wallpaper_cache_entry_t;
+
+/* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
+#define WALLPAPER_CACHE_MAX 32
+
+/** Look up a cached wallpaper entry by path and screen index */
+wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
+
+/** Coarse live memory accounting for somewm-owned buffers.
+ * These counters intentionally track only allocations that somewm creates
+ * directly. They complement /proc smaps/PSS data and make leak checks
+ * attributable without changing runtime behaviour. */
+typedef struct MemoryStats {
+    size_t drawable_shm_bytes;
+    size_t drawable_shm_count;
+    size_t wibox_surface_bytes;
+    size_t wibox_count;
+} MemoryStats;
 
 /* Forward declare button types */
 typedef struct button_t button_t;
@@ -284,6 +314,9 @@ typedef struct
      *  Used to suppress expected warnings (e.g. stale object decrefs). */
     bool hot_reload_in_progress;
 
+    /* Live memory accounting exposed through root.memory_stats(). */
+    MemoryStats memory_stats;
+
     /** Compositor readiness milestones, set by the C side once and re-emitted
      * to Lua on hot-reload. Allows late subscribers (rc.lua, modules loaded
      * after startup) to learn that "somewm::ready" or "xwayland::ready" has
@@ -297,7 +330,6 @@ typedef struct
      *  preserved across hot-reload (globalconf is zeroed by globalconf_wipe). */
     unsigned long frame_commit_count;
 
-
     /* ========== WALLPAPER SUPPORT ========== */
 
     /** Cached wallpaper surface (AwesomeWM compatibility)
@@ -305,6 +337,20 @@ typedef struct
      * Matches AwesomeWM's globalconf.wallpaper exactly.
      */
     cairo_surface_t *wallpaper;
+
+    /* ========== WALLPAPER CACHE ========== */
+
+    /** Wallpaper cache for instant switching (toggle visibility vs destroy/recreate)
+     * Cache entries are keyed by (filepath + screen_index). When switching to a
+     * cached wallpaper, we just toggle scene node visibility for that screen.
+     */
+    struct wl_list wallpaper_cache;
+
+    /** Currently visible wallpaper cache entry per screen (indexed by screen_index)
+     * We support up to 16 screens, which should be plenty for any real setup.
+     */
+    #define WALLPAPER_MAX_SCREENS 16
+    struct wallpaper_cache_entry *current_wallpaper_per_screen[WALLPAPER_MAX_SCREENS];
 
     /** Wallpaper scene graph node
      * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
