@@ -2382,6 +2382,78 @@ luaA_root_xwayland_unmanaged(lua_State *L)
 	return 1;
 }
 
+/* Recursive worker for root.scene_tree_dump(). */
+static void
+scene_tree_dump_node(lua_State *L, struct wlr_scene_node *node, int depth,
+                     int *index, const char *label)
+{
+	const char *type = "?";
+	int w = 0, h = 0;
+
+	switch (node->type) {
+	case WLR_SCENE_NODE_TREE:   type = "tree"; break;
+	case WLR_SCENE_NODE_RECT:   type = "rect"; break;
+	case WLR_SCENE_NODE_BUFFER: type = "buffer"; break;
+	default: break;
+	}
+	if (node->type == WLR_SCENE_NODE_RECT) {
+		struct wlr_scene_rect *r = wlr_scene_rect_from_node(node);
+		w = r->width; h = r->height;
+	}
+
+	lua_newtable(L);
+	lua_set_int_field(L, "depth", depth);
+	lua_pushstring(L, type);
+	lua_setfield(L, -2, "type");
+	lua_pushstring(L, label ? label : "");
+	lua_setfield(L, -2, "label");
+	lua_set_int_field(L, "x", node->x);
+	lua_set_int_field(L, "y", node->y);
+	lua_set_int_field(L, "width", w);
+	lua_set_int_field(L, "height", h);
+	lua_pushboolean(L, node->enabled);
+	lua_setfield(L, -2, "enabled");
+	lua_rawseti(L, -2, (*index)++);
+
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link)
+			scene_tree_dump_node(L, child, depth + 1, index, NULL);
+	}
+}
+
+/** Dump a client's scene subtree, in paint order.
+ *
+ * Borders, shadow, titlebars and the blur node are compositor-owned siblings
+ * inside c->scene, not part of the client's surface tree, so their order and
+ * geometry cannot be inspected from the client side. This exposes the actual
+ * tree for auditing.
+ *
+ * @tparam client c
+ * @treturn table Array of { depth, type, label, x, y, width, height, enabled },
+ *   in the order they are painted (first = bottom).
+ * @staticfct scene_tree_dump
+ */
+static int
+luaA_root_scene_tree_dump(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	int index = 1;
+
+	lua_newtable(L);
+	if (!c->scene)
+		return 1;
+
+	/* Label the nodes we know by pointer, so the dump is readable. */
+	{
+		struct wlr_scene_node *child;
+		scene_tree_dump_node(L, &c->scene->node, 0, &index, "c->scene");
+		(void)child;
+	}
+	return 1;
+}
+
 static int
 luaA_root_drawable_stats(lua_State *L)
 {
@@ -2445,6 +2517,7 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
 	{ "drawable_stats", luaA_root_drawable_stats },
+	{ "scene_tree_dump", luaA_root_scene_tree_dump },
 	{ "xwayland_unmanaged", luaA_root_xwayland_unmanaged },
 	{ "memory_stats", luaA_root_memory_stats },
 	/* Wallpaper overlay helpers for tag slide animation */

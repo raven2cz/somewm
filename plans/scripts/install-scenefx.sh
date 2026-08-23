@@ -18,7 +18,18 @@
 set -euo pipefail
 
 SRCDIR="$(cd "$(dirname "$0")/../.." && pwd)"
-BUILDDIR="$SRCDIR/build-fx"
+# Graphics stack selection. SceneFX tracks wlroots one-to-one, so picking the
+# wlroots version picks SceneFX too: 0.20 -> SceneFX 0.5, 0.19 -> SceneFX 0.4.
+# Each version gets its own build dir so switching back and forth is cheap.
+#   SOMEWM_WLROOTS=0.19 ./install-scenefx.sh   # previous graphics stack
+WLROOTS_VERSION="${SOMEWM_WLROOTS:-auto}"
+if [[ "$WLROOTS_VERSION" == "auto" ]]; then
+    BUILDDIR="$SRCDIR/build-fx"
+else
+    BUILDDIR="$SRCDIR/build-fx-${WLROOTS_VERSION}"
+fi
+MESON_OPTS=(-Dscenefx=enabled)
+[[ "$WLROOTS_VERSION" != "auto" ]] && MESON_OPTS+=("-Dwlroots_version=$WLROOTS_VERSION")
 LDCONF="/etc/ld.so.conf.d/local.conf"
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
@@ -64,9 +75,9 @@ fi
 # Step 1: Meson configure
 echo "==> Configuring meson (scenefx=enabled)..."
 if [[ -d "$BUILDDIR" ]]; then
-    meson setup "$BUILDDIR" --reconfigure -Dscenefx=enabled
+    meson setup "$BUILDDIR" --reconfigure "${MESON_OPTS[@]}"
 else
-    meson setup "$BUILDDIR" -Dscenefx=enabled
+    meson setup "$BUILDDIR" "${MESON_OPTS[@]}"
 fi
 
 # Verify scenefx was found

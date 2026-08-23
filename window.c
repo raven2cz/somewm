@@ -1417,10 +1417,15 @@ apply_geometry_to_wlroots(Client *c)
 	 * top by default, which would otherwise paint over open popups. */
 	wlr_scene_node_set_position(&c->popups->node, c->bw + titlebar_left, c->bw + titlebar_top);
 	wlr_scene_node_raise_to_top(&c->popups->node);
-	/* Update border geometry. When corner_radius > 0, the helper extends
-	 * top/bottom borders and clips them for rounded corners. Otherwise
-	 * it falls back to standard flat layout. */
-	client_update_border_for_corners(c);
+	/* Border geometry is deliberately NOT updated here. The visibility block
+	 * further down decides it once, on every path: it calls this same helper
+	 * for clients that are fully visible or loosely clipped, and disables the
+	 * border nodes outright for strict-clipped or fully-offscreen ones.
+	 * Enabling them here first meant a clipped client toggled enabled ->
+	 * disabled on every refresh, and each toggle damages the whole border
+	 * region. With more than one window open -- the second onwards is the one
+	 * that gets clipped -- that read as the border flickering, and it got
+	 * worse while dragging, when refreshes come per motion event. */
 
 	/* Resize the backdrop blur node with the client. On SceneFX 0.5 blur is a
 	 * scene node with its own size, so a resize leaves it stale; on 0.4 it is
