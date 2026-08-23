@@ -380,21 +380,28 @@ managed_override_redirect(struct wl_listener *listener, void *data)
 	if (!xsurface->override_redirect)
 		return;  /* still managed */
 
-	if (mapped) {
-		/* Tear the scene down directly instead of going through
-		 * unmapnotify(): that runs client_unmanage(UNMAP), which sends
-		 * XCB unmap/reparent/withdraw to the very window we are handing
-		 * over, and keeps the Lua object alive for a remap that will
-		 * never come. */
+	/* Detach the surface from the client before anything can look it up:
+	 * override_redirect already reads true, so unmanaged_from_surface()
+	 * would otherwise cast a Client to an UnmanagedSurface. */
+	xsurface->data = NULL;
+
+	/* Unmanage before tearing the scene down, the same order unmapnotify()
+	 * uses: Lua request::unmanage handlers can still read properties that
+	 * walk c->scene_surface (opacity, corner radius, content).
+	 *
+	 * DESTROYED rather than UNMAP because the window is alive and only
+	 * changing role: UNMAP would send XCB unmap/reparent/withdraw to the
+	 * very window we are handing over, and would park the Lua object for a
+	 * remap that never comes. */
+	client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
+
+	/* mapped does not imply a scene: mapnotify() has a failure path that
+	 * destroys and nulls it. */
+	if (c->scene) {
 		client_scene_node_destroy(c);
 		client_clear_scene_child_pointers(c);
 	}
-	/* DESTROYED rather than UNMAP: the window is alive and only changing
-	 * role, so the X11 teardown must not touch it. This variant also
-	 * releases the Lua object instead of parking it for a remap. */
-	client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
 	client_remove_all_listeners(c);
-	xsurface->data = NULL;
 
 	unmanaged_create(xsurface);
 	if (associated)
