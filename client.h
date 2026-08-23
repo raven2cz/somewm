@@ -67,8 +67,10 @@ toplevel_from_wlr_surface(struct wlr_surface *s, Client **pc, LayerSurface **pl)
 		 * an UnmanagedSurface, so reading a Client out of it would be a
 		 * type confusion. Report the type and leave *pc NULL; callers that
 		 * need the surface itself use unmanaged_from_surface(). */
-		if (xsurface->override_redirect)
-			return X11Unmanaged;
+		if (xsurface->override_redirect) {
+			type = X11Unmanaged;
+			goto end;  /* c/l stay NULL, but the caller's out-params get written */
+		}
 		c = xsurface->data;
 		if (!c)
 			return -1;

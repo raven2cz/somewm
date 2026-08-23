@@ -13,6 +13,9 @@ and that the compositor has to follow:
     chain <class> [x y w h]         map a parent popup, then a child popup
                                     that points at it with WM_TRANSIENT_FOR,
                                     then unmap the child (menu -> submenu)
+    adopt <class> [x y w h]         map as a normal managed window, then set
+                                    override_redirect on the live window
+                                    (the reverse of "flip")
 
 Each scenario prints one line per step to stdout ("step: <name> <window id>")
 and then waits for SIGTERM, so a test can drive it by watching the output.
@@ -106,6 +109,29 @@ def scenario_flip(dpy, root, wm_class, geom):
     report("flipped", win)
 
 
+def scenario_adopt(dpy, root, wm_class, geom):
+    """Managed window that turns into an override-redirect one.
+
+    The compositor has to drop the client without sending X11 teardown to a
+    window that is still alive, then pick the surface up on the unmanaged
+    path.
+    """
+    win = make_window(dpy, root, wm_class, geom, override=False)
+    win.map()
+    dpy.sync()
+    report("mapped", win)
+
+    wait_for_advance(dpy)
+    win.unmap()
+    dpy.sync()
+    win.change_attributes(override_redirect=True)
+    win.configure(x=geom[0] + 1, y=geom[1] + 1)
+    dpy.sync()
+    win.map()
+    dpy.sync()
+    report("adopted", win)
+
+
 def scenario_chain(dpy, root, wm_class, geom):
     parent = make_window(dpy, root, wm_class + "_menu", geom)
     parent.map()
@@ -151,6 +177,8 @@ def main():
         scenario_flip(dpy, root, wm_class, geom)
     elif mode == "chain":
         scenario_chain(dpy, root, wm_class, geom)
+    elif mode == "adopt":
+        scenario_adopt(dpy, root, wm_class, geom)
     else:
         sys.exit(f"unknown scenario: {mode}")
 

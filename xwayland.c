@@ -70,6 +70,7 @@ static bool unmanaged_list_ready;
 static UnmanagedSurface *unmanaged_focus;
 
 static void unmanaged_create(struct wlr_xwayland_surface *xsurface);
+bool unmanaged_wants_focus(UnmanagedSurface *u);
 
 static void
 unmanaged_list_init(void)
@@ -147,7 +148,7 @@ unmanaged_release_focus(UnmanagedSurface *u)
 	parent = u->xsurface->parent;
 	if (parent && parent->override_redirect && parent->surface
 			&& parent->surface->mapped && parent->data
-			&& COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(parent)) {
+			&& unmanaged_wants_focus((UnmanagedSurface *)parent->data)) {
 		unmanaged_grant_focus((UnmanagedSurface *)parent->data);
 		return;
 	}
@@ -227,7 +228,11 @@ unmanaged_request_activate(struct wl_listener *listener, void *data)
 
 	if (!u->xsurface->surface || !u->xsurface->surface->mapped)
 		return;
-	if (COMPAT_XWAYLAND_OVERRIDE_REDIRECT_WANTS_FOCUS(u->xsurface))
+	/* Same predicate as the map path: a surface with ICCCM input model NONE
+	 * (tooltips, notification windows) must not be able to take the keyboard
+	 * and park unmanaged_focus on itself, which would block every later
+	 * focus change while it stays mapped. */
+	if (unmanaged_wants_focus(u))
 		unmanaged_grant_focus(u);
 }
 
@@ -375,8 +380,18 @@ managed_override_redirect(struct wl_listener *listener, void *data)
 	if (!xsurface->override_redirect)
 		return;  /* still managed */
 
-	if (mapped)
-		unmapnotify(&c->unmap, NULL);
+	if (mapped) {
+		/* Tear the scene down directly instead of going through
+		 * unmapnotify(): that runs client_unmanage(UNMAP), which sends
+		 * XCB unmap/reparent/withdraw to the very window we are handing
+		 * over, and keeps the Lua object alive for a remap that will
+		 * never come. */
+		client_scene_node_destroy(c);
+		client_clear_scene_child_pointers(c);
+	}
+	/* DESTROYED rather than UNMAP: the window is alive and only changing
+	 * role, so the X11 teardown must not touch it. This variant also
+	 * releases the Lua object instead of parking it for a remap. */
 	client_unmanage(c, CLIENT_UNMANAGE_DESTROYED);
 	client_remove_all_listeners(c);
 	xsurface->data = NULL;

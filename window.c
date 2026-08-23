@@ -109,7 +109,7 @@ client_scene_node_destroy(Client *c)
  * client_scene_node_destroy(). They were children of c->scene and are now
  * freed — leaving dangling pointers would UAF in refresh callbacks. Called
  * from ALL unmap paths (normal + !globalconf_L early exit). */
-static void
+void
 client_clear_scene_child_pointers(Client *c)
 {
 	for (client_titlebar_t bar = CLIENT_TITLEBAR_TOP; bar < CLIENT_TITLEBAR_COUNT; bar++)

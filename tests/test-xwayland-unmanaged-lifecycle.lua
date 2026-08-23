@@ -42,8 +42,8 @@ local helper = script_dir .. "helpers/x11_or_scenarios.py"
 local START_X, START_Y = 100, 100
 local MOVE_X,  MOVE_Y  = 400, 300
 
-local move_pid, flip_pid = nil, nil
-local move_steps, flip_steps = {}, {}
+local move_pid, flip_pid, adopt_pid = nil, nil, nil
+local move_steps, flip_steps, adopt_steps = {}, {}, {}
 
 local function spawn_scenario(mode, class, args, steps, on_pid)
     local cmd = { "python3", helper, mode, class }
@@ -172,9 +172,62 @@ local steps = {
         return nil
     end,
 
-    -- Step 6: cleanup
+    -- Step 6: cleanup the flip scenario
     function()
         if flip_pid then awful.spawn({ "kill", tostring(flip_pid) }) end
+        return true
+    end,
+
+    -- Step 7: the reverse direction. A managed window that sets
+    -- override_redirect has to be dropped as a client and picked up as an
+    -- unmanaged surface -- without sending X11 unmap/reparent to a window
+    -- that is still alive.
+    function(count)
+        if count == 1 then
+            spawn_scenario("adopt", "or_adopt", { 200, 200, 240, 160 },
+                adopt_steps, function(pid) adopt_pid = pid end)
+        end
+
+        for _, c in ipairs(client.get()) do
+            if c.class == "or_adopt" then return true end
+        end
+
+        if count > 100 then error("managed window for the adopt scenario never appeared") end
+        return nil
+    end,
+
+    function(count)
+        if count == 1 then
+            assert(adopt_pid, "helper pid unknown")
+            awful.spawn({ "kill", "-USR1", tostring(adopt_pid) })
+            return nil
+        end
+
+        local as_client = nil
+        for _, c in ipairs(client.get()) do
+            if c.class == "or_adopt" then as_client = c end
+        end
+        local as_unmanaged = unmanaged_by_class("or_adopt")
+
+        if as_unmanaged and not as_client then
+            assert(as_unmanaged.layer == "unmanaged",
+                "adopted surface should be in LyrUnmanaged, got "
+                .. tostring(as_unmanaged.layer))
+            io.stderr:write("[TEST] PASS: managed window handed to the unmanaged path\n")
+            return true
+        end
+
+        if count > 100 then
+            error(string.format(
+                "managed -> override_redirect not handled: client=%s unmanaged=%s",
+                tostring(as_client ~= nil), tostring(as_unmanaged ~= nil)))
+        end
+        return nil
+    end,
+
+    -- Step 8: cleanup
+    function()
+        if adopt_pid then awful.spawn({ "kill", tostring(adopt_pid) }) end
         return true
     end,
 }
