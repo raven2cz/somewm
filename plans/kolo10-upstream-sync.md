@@ -283,12 +283,36 @@ screen disagrees. The remaining gap is what the renderer receives at run time.
 `SOMEWM_LOG_RECT=1`, reporting the box, the clip box, their deltas, the radii
 and the colour alpha. `subprojects/` is gitignored, hence the patch file.
 
-Reference from a nested sandbox, where rendering is correct:
+The live session reports `dx=1 dy=1 dw=2 dh=2 r=15.0 cr=14.0 a=1.00` -- the
+renderer receives exactly the right boxes, radii and alpha. So that is not it
+either.
 
-    [RECT] box=802x602+478+33 clip=800x600+479+34 dx=1 dy=1 dw=2 dh=2 r=15.0 cr=14.0 a=1.00
+### Where it stands: partial damage
 
-`dx=1 dy=1 dw=2 dh=2` is what correct looks like. If the live session reports
-anything else, that is the bug.
+The same log line reports the region actually rasterised. A typical frame:
+
+    render_region=484x602+318+0 in 1 rect(s)
+    rasterised 3 rect(s), box-relative: [318,0 484x5] [796,5 6x591] [318,596 484x6]
+
+`render()` rasterises `visible INTERSECT damage` minus the inner box, so when
+damage starts at x offset 318 the border's left strip is not drawn at all that
+frame. That is normal and correct: the rest of the framebuffer is supposed to
+still hold the previous frame's content, which was right. It works out in the
+sandbox.
+
+So the defect is not in what gets drawn but in the left strip never ending up
+with valid content on this machine -- i.e. partial damage plus buffer age on
+NVIDIA DRM, where the nested backend's full repaints hide it. That also finally
+explains why the sandbox has never reproduced anything.
+
+The one test left is `WLR_SCENE_DEBUG_DAMAGE=rerender`, which forces a full
+repaint every frame (`scenefx-0.5/types/scene/wlr_scene.c:3146`). A clean
+border under it confirms damage/buffer age and the report belongs to wlroots
+rather than SceneFX; a still-broken border means even a full repaint gets it
+wrong, which would be a much stranger bug.
+
+Not urgent: 0.19 is an upstream-supported configuration and the installer
+defaults to it.
 
 ## Remaining
 

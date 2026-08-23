@@ -1,8 +1,8 @@
 diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
-index 39b6226..bd8179d 100644
+index 39b6226..5b34174 100644
 --- a/render/fx_renderer/fx_pass.c
 +++ b/render/fx_renderer/fx_pass.c
-@@ -673,6 +673,41 @@ void fx_render_pass_add_rounded_rect(struct fx_gles_render_pass *pass,
+@@ -673,6 +673,61 @@ void fx_render_pass_add_rounded_rect(struct fx_gles_render_pass *pass,
  			clipped_region_corners->bottom_right);
  	push_fx_debug(renderer);
  
@@ -20,15 +20,33 @@ index 39b6226..bd8179d 100644
 +		}
 +		/* Log on change, not periodically: an idle session draws few rects and
 +		 * a moving window draws many, and only the values matter. */
++		static int somewm_n = 0;
 +		if (somewm_log && box.width > 400
-+				&& (!wlr_box_equal(&box, &last_box)
-+					|| !wlr_box_equal(clipped_region_box, &last_clip)
-+					|| color->a != last_alpha)) {
++				&& pixman_region32_not_empty(&clip_region)
++				&& (somewm_n++ % 30) == 0) {
++			(void)last_box; (void)last_clip; (void)last_alpha;
 +			last_box = box;
 +			last_clip = *clipped_region_box;
 +			last_alpha = color->a;
++			int nr = 0;
++			const pixman_box32_t *rr = pixman_region32_rectangles(&clip_region, &nr);
++			char rects[512];
++			int off = 0;
++			for (int k = 0; k < nr && k < 8 && off < (int)sizeof(rects) - 1; k++) {
++				off += snprintf(rects + off, sizeof(rects) - off,
++						" [%d,%d %dx%d]", rr[k].x1 - box.x, rr[k].y1 - box.y,
++						rr[k].x2 - rr[k].x1, rr[k].y2 - rr[k].y1);
++			}
++			rects[off] = 0;
++			int in = 0;
++			const pixman_box32_t *ie = options->clip
++					? &options->clip->extents : NULL;
++			if (options->clip)
++				pixman_region32_rectangles(options->clip, &in);
 +			wlr_log(WLR_ERROR, "[RECT] box=%dx%d+%d+%d clip=%dx%d+%d+%d "
-+					"dx=%d dy=%d dw=%d dh=%d r=%.1f cr=%.1f a=%.2f clip_rects=%d",
++					"dx=%d dy=%d dw=%d dh=%d r=%.1f cr=%.1f a=%.2f | "
++					"render_region=%dx%d+%d+%d in %d rect(s) | "
++					"rasterised %d rect(s), box-relative:%s",
 +					box.width, box.height, box.x, box.y,
 +					clipped_region_box->width, clipped_region_box->height,
 +					clipped_region_box->x, clipped_region_box->y,
@@ -36,8 +54,10 @@ index 39b6226..bd8179d 100644
 +					box.width - clipped_region_box->width,
 +					box.height - clipped_region_box->height,
 +					fx_options->corners.top_left,
-+					clipped_region_corners->top_left,
-+					color->a, pixman_region32_n_rects(&clip_region));
++					clipped_region_corners->top_left, color->a,
++					ie ? ie->x2 - ie->x1 : 0, ie ? ie->y2 - ie->y1 : 0,
++					ie ? ie->x1 - box.x : 0, ie ? ie->y1 - box.y : 0, in,
++					nr, rects);
 +		}
 +	}
 +
