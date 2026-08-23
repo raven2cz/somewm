@@ -1,6 +1,6 @@
 # Goal: rewrite XWayland unmanaged (override-redirect) handling
 
-Status: **PLAN — not started**
+Status: **DONE (sandbox-verified) — awaiting live DRM/NVIDIA verification**
 Owner: raven2cz fork (`raven2cz/somewm`), upstream candidate for `trip-zip/somewm`
 Created: 2026-08-23
 Base branch: `sync/upstream-2026-07-18b` (NOT yet merged to `main`)
@@ -253,6 +253,88 @@ non-determinism most likely lives — see the live-verification step in Phase 4.
   source question in 5.6.
 - The Wine Wayland-driver A/B was skipped: the XWayland-path defects found are
   concrete enough that the control experiment would not change what gets fixed.
+
+---
+
+## 4c. Results (2026-08-23)
+
+Branch `fix/xwayland-unmanaged-rewrite`, six commits on top of
+`sync/upstream-2026-07-18b`.
+
+### What shipped
+
+| Commit | Content |
+|---|---|
+| `71827dc` | cherry-pick of upstream `07feca2` (X11 pointer grab across same-surface refocus) + its test infra. Upstream `8fcb55b` and `c4c2d3a` turned out to be no-ops for the fork -- both originated here; only the comments differ, so they were skipped rather than merged. |
+| `6898d98` | `wine-sandbox.sh`, `x11-census.py`, `x11-monitor.py` |
+| `65b948d` | the rewrite: `UnmanagedSurface`, `LyrUnmanaged`, `set_geometry` and `set_override_redirect` listeners, typed unmanaged focus, `root.xwayland_unmanaged()`, removal of `client_is_unmanaged()`/`client_wants_focus()` and every branch that called them |
+| `eebbde9` | rewritten OR stacking test + two new tests (lifecycle, focus chain) |
+| `328f2e9` | floating transients stay in `LyrFloat` (E6) |
+| `b52d817`, `413dbb2` | fixes from two external review passes |
+
+### Measured against Sierra Chart (nested sandbox, live rc.lua)
+
+| | before | after |
+|---|---|---|
+| `client.get()` entries | **42** | **9** |
+| of those, visible windows | 2 | 2 |
+| override-redirect entries | 33 | **0** |
+| clients leaked per open/close of a dialog | +1 | **0** |
+| ontop drawin over an open menu | covers it | menu stays on top |
+| floating dialog vs unrelated floating window | permanently below, unraisable | raises on click |
+
+`wine notepad`: 11 clients before, 3 after.
+
+Menu open/close and open-a-dialog-from-the-menu cycles: 6/6 and 6/6 at a
+realistic pace. A faster loop showed 8/12, but adding a state probe between
+steps (≈0.5 s) made it 6/6 -- the failures were the measurement loop
+outrunning Sierra Chart, not the compositor.
+
+### Verification
+
+- Full integration suite: **144 tests, 0 regressions.** Two failures are
+  pre-existing and reproduce on the base commit: `test-drawin-geometry-scaling`
+  (asserts a screen height the nested output does not have) and
+  `test-floating-layout` (flaky under load; 8/8 pass when the machine is idle,
+  0/4 while Sierra Chart was running in another sandbox).
+- `make test-unit` fails on the base commit too: `awful.layout.suit.fair`
+  assigns to a for-loop control variable, which upstream fixed in `9002385`
+  (one of the 66 commits we do not have). Unrelated to this work; it comes
+  with the sync.
+- ASAN: all unmanaged tests plus `test-transient-stacking` clean, no
+  sanitizer hits.
+- External review: two `codex exec -m gpt-5.5` passes. First found the
+  managed→OR transition running `client_unmanage()` twice and sending X11
+  teardown to a live window, `request_activate` bypassing the ICCCM input
+  model check, and `toplevel_from_wlr_surface()` not writing its
+  out-parameters. Second pass found the scene being destroyed before
+  `request::unmanage` reached Lua, a stale `xsurface->data` during those
+  handlers, and a missing `c->scene` guard. All six fixed and covered.
+
+### Question from 5.6, answered
+
+`wlr_scene`'s automatic Xwayland restack (`restack_xwayland_surface()` in
+`subprojects/scenefx/types/scene/wlr_scene.c:604`, reached from
+`scene_node_update_iterator()`) walks every scene buffer node, so it applies
+to `wlr_scene_subsurface_tree_create()` clients as well -- somewm does not
+need to call `wlr_xwayland_surface_restack()` itself. It deliberately skips
+override-redirect surfaces, which is correct: their stacking is the
+application's business. **No fix needed; C9 dropped from the plan.**
+
+### Left undone, deliberately
+
+- **E5 (clients registered before they are mapped).** Six of Sierra Chart's
+  nine remaining entries are managed X11 windows that exist but were never
+  mapped. `createnotifyx11()` pushes into `globalconf.clients` at create time
+  (`xwayland.c:162-170`), where dwl inserts on map and AwesomeWM manages on
+  MapRequest. Fixing it means moving the Lua reference out of the array push,
+  since that push is what anchors the object against GC -- a different change
+  with its own risk surface, and the OR half already removed 33 of the 40
+  ghosts. Recommended as the next piece of work.
+- **The "popups sometimes do not appear at all" symptom** never reproduced
+  deterministically in the nested sandbox (see E7). The z-order defects that
+  did reproduce are fixed; whether that was the whole of it can only be
+  settled on the live DRM/NVIDIA session.
 
 ---
 
