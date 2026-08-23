@@ -103,10 +103,13 @@ client_layer_translator(Client *c)
 	if (c->below)
 		return WINDOW_LAYER_BELOW;
 
-	/* Check for transient attribute BEFORE floating —
-	 * transients must follow their parent's layer, not get
-	 * pulled into LyrFloat independently. */
-	if (c->transient_for)
+	/* Transients follow their parent's layer so they stack directly above
+	 * it -- but only when they have no layer of their own. A floating
+	 * dialog belongs in LyrFloat like any other floating window: pinning it
+	 * to a tiled parent's LyrTile left it permanently below every unrelated
+	 * floating window, with no way to raise it (clicking gave it focus and
+	 * changed nothing). Sierra Chart's dialogs are the reproducer. */
+	if (c->transient_for && !c->floating)
 		return WINDOW_LAYER_IGNORE;
 
 	/* Maximized clients stay in LyrTile regardless of floating=true
@@ -208,9 +211,13 @@ stack_transients_above(Client *c, Client *previous)
 	stack_client_relative(c, previous);
 	previous = c;
 
-	/* Then stack all transients above it */
+	/* Then stack all transients above it -- but only the ones that have no
+	 * layer of their own. Dragging a floating (or ontop, or fullscreen)
+	 * transient back into its parent's layer is what put those windows out
+	 * of reach in the first place; the main loop places them instead. */
 	foreach(node, globalconf.stack) {
-		if ((*node)->transient_for == c) {
+		if ((*node)->transient_for == c
+		    && client_layer_translator(*node) == WINDOW_LAYER_IGNORE) {
 			/* Recursively stack this transient and its transients */
 			previous = stack_transients_above(*node, previous);
 		}

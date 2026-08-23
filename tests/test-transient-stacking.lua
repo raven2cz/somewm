@@ -111,7 +111,66 @@ local steps = {
         return true
     end,
 
-    -- Step 5: Cleanup
+    -- Step 5: A floating transient belongs in LyrFloat, not in its parent's
+    -- layer.
+    --
+    -- Transients used to be forced into whatever layer the parent lived in,
+    -- on the theory that they must stack directly above it. For a floating
+    -- dialog of a tiled parent that meant LyrTile: below every unrelated
+    -- floating window, and unraisable -- clicking it gave it focus and
+    -- changed nothing on screen. Sierra Chart's dialogs are the reproducer.
+    function(count)
+        if count == 1 then
+            parent_client.above = false
+            parent_client.ontop = false
+            parent_client.floating = false
+            child_client.floating = true
+            assert(child_client.floating, "child should be floating")
+            -- stack_refresh() runs on the next refresh cycle, so give it one.
+            return nil
+        end
+
+        if parent_client._scene_layer ~= "tile" then
+            if count > 20 then
+                error(string.format("parent never returned to LyrTile, got %q",
+                    tostring(parent_client._scene_layer)))
+            end
+            return nil
+        end
+
+        assert(child_client._scene_layer == "float", string.format(
+            "floating transient should live in LyrFloat, got %q",
+            tostring(child_client._scene_layer)))
+
+        io.stderr:write("[TEST] PASS: floating transient is in LyrFloat\n")
+        return true
+    end,
+
+    -- Step 6: A non-floating transient still follows its parent, which is
+    -- what keeps dialogs of an ontop parent visible.
+    function(count)
+        if count == 1 then
+            child_client.floating = false
+            parent_client.ontop = true
+            return nil
+        end
+
+        if child_client._scene_layer ~= parent_client._scene_layer then
+            if count > 20 then
+                error(string.format(
+                    "non-floating transient should follow its parent: child=%q parent=%q",
+                    tostring(child_client._scene_layer),
+                    tostring(parent_client._scene_layer)))
+            end
+            return nil
+        end
+
+        io.stderr:write("[TEST] PASS: tiled transient still follows the parent\n")
+        parent_client.ontop = false
+        return true
+    end,
+
+    -- Step 7: Cleanup
     function(count)
         if count == 1 then
             io.stderr:write("[TEST] Cleanup: killing test-transient-client\n")
