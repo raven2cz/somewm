@@ -61,7 +61,13 @@ local steps = {
         c.backdrop_blur = true
         assert(c.backdrop_blur == true,
             "backdrop_blur should be true, got " .. tostring(c.backdrop_blur))
-        io.stderr:write("[PASS] backdrop_blur enabled\n")
+        -- The property only records the request. Assert the compositor
+        -- actually attached the effect: on SceneFX 0.5 that is a scene node
+        -- created per client, on 0.4 a flag applied to its buffers.
+        assert(c._has_blur_node == true,
+            "enabling backdrop_blur must attach the effect, got "
+            .. tostring(c._has_blur_node))
+        io.stderr:write("[PASS] backdrop_blur enabled and effect attached\n")
         return true
     end,
 

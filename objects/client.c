@@ -4569,6 +4569,31 @@ client_apply_backdrop_blur(client_t *c)
 #endif
 }
 
+/** Whether a real backdrop-blur scene node is attached right now.
+ *
+ * backdrop_blur only records what was asked for. On SceneFX 0.5 the effect is
+ * a scene node the compositor creates and destroys; on 0.4 it is a flag on the
+ * client's buffers. Tests need to see the effect, not the request.
+ *
+ * @property _has_blur_node
+ * @tparam boolean _has_blur_node
+ * @readonly
+ */
+static int
+luaA_client_get__has_blur_node(lua_State *L, client_t *c)
+{
+#if defined(HAVE_SCENEFX) && defined(HAVE_SCENEFX_CORNER_RADII)
+    lua_pushboolean(L, c->blur_node != NULL);
+#elif defined(HAVE_SCENEFX)
+    /* 0.4 has no node; report the applied flag, which is what it sets. */
+    lua_pushboolean(L, c->backdrop_blur && !c->fullscreen && c->scene_surface);
+#else
+    (void)c;
+    lua_pushboolean(L, false);
+#endif
+    return 1;
+}
+
 static int
 luaA_client_get_backdrop_blur(lua_State *L, client_t *c)
 {
@@ -5509,6 +5534,7 @@ client_class_setup(lua_State *L)
         { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
         { "backdrop_blur", (lua_class_propfunc_t) luaA_client_set_backdrop_blur, (lua_class_propfunc_t) luaA_client_get_backdrop_blur, (lua_class_propfunc_t) luaA_client_set_backdrop_blur },
+        { "_has_blur_node", NULL, (lua_class_propfunc_t) luaA_client_get__has_blur_node, NULL },
         { "corner_radius", (lua_class_propfunc_t) luaA_client_set_corner_radius, (lua_class_propfunc_t) luaA_client_get_corner_radius, (lua_class_propfunc_t) luaA_client_set_corner_radius },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
