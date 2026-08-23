@@ -1621,16 +1621,16 @@ resize(Client *c, struct wlr_box geo, int interact)
 	applybounds(c, bbox);
 
 	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
-	 * Works on full geometry (including titlebars) to match
-	 * the ratio captured from Lua (geo.width / geo.height). */
+	 * The ratio describes the content -- that is the point for mpv and other
+	 * video clients -- so titlebars come off and go back on. Borders do not:
+	 * c->geometry has been border-exclusive since upstream 3f6cfd9/a247cd5. */
 	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-		int bw2 = 2 * c->bw;
 		int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
 			+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 		int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
 			+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-		int w = c->geometry.width - bw2 - tb_w;
-		int h = c->geometry.height - bw2 - tb_h;
+		int w = c->geometry.width - tb_w;
+		int h = c->geometry.height - tb_h;
 		if (w > 0 && h > 0) {
 			double current = (double)w / h;
 			/* Tolerance: ~1 pixel to prevent rounding oscillation */
@@ -1640,8 +1640,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 			} else if (c->aspect_ratio - current > epsilon) {
 				h = (int)(w / c->aspect_ratio + 0.5);
 			}
-			c->geometry.width = w + bw2 + tb_w;
-			c->geometry.height = h + bw2 + tb_h;
+			c->geometry.width = w + tb_w;
+			c->geometry.height = h + tb_h;
 		}
 	}
 

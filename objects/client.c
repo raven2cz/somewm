@@ -2541,16 +2541,17 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
         geometry = client_apply_size_hints(c, geometry);
     }
 
-    /* Apply aspect ratio constraint on content area (excluding borders/titlebars).
-     * Lua sets aspect_ratio = content_width / content_height. */
+    /* Apply aspect ratio constraint on the content area.
+     * Lua sets aspect_ratio = content_width / content_height. Only titlebars
+     * come off: geometry has been border-exclusive since upstream
+     * 3f6cfd9/a247cd5, so borders are not part of it. */
     if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-        int bw2 = 2 * c->border_width;
         int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
             + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
         int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
             + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-        int cw = geometry.width - bw2 - tb_w;
-        int ch = geometry.height - bw2 - tb_h;
+        int cw = geometry.width - tb_w;
+        int ch = geometry.height - tb_h;
         if (cw > 0 && ch > 0) {
             double current = (double)cw / ch;
             double epsilon = 1.5 / (double)ch;
@@ -2559,8 +2560,8 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
             } else if (c->aspect_ratio - current > epsilon) {
                 ch = (int)(cw / c->aspect_ratio + 0.5);
             }
-            geometry.width = cw + bw2 + tb_w;
-            geometry.height = ch + bw2 + tb_h;
+            geometry.width = cw + tb_w;
+            geometry.height = ch + tb_h;
         }
     }
 
