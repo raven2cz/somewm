@@ -305,11 +305,35 @@ with valid content on this machine -- i.e. partial damage plus buffer age on
 NVIDIA DRM, where the nested backend's full repaints hide it. That also finally
 explains why the sandbox has never reproduced anything.
 
-The one test left is `WLR_SCENE_DEBUG_DAMAGE=rerender`, which forces a full
-repaint every frame (`scenefx-0.5/types/scene/wlr_scene.c:3146`). A clean
-border under it confirms damage/buffer age and the report belongs to wlroots
-rather than SceneFX; a still-broken border means even a full repaint gets it
-wrong, which would be a much stranger bug.
+### Confirmed: partial damage
+
+`WLR_SCENE_DEBUG_DAMAGE=rerender` forces a full repaint every frame
+(`scenefx-0.5/types/scene/wlr_scene.c:3146`). Measured on the live session,
+same window, same everything else:
+
+| edge | partial damage | full repaint |
+|---|---|---|
+| top | ok | ok |
+| bottom | ok | ok |
+| **left** | **absent** | **1598 of 1598 clean** |
+| right | 2px, one pixel inboard | pure black, oscillating |
+
+The left edge going from completely absent to perfect settles it: the primary
+defect is that the border's left strip never gets repainted into valid content
+under partial damage. Nothing about the drawing is wrong -- the scene node, its
+visible region, the renderer's boxes, the uniforms and the shaders were each
+verified correct in turn.
+
+A second artefact survives the full repaint: the right column reads pure black
+and `flicker` jumps to 1600 of 6752 ring pixels changed between two captures
+0.4s apart, which is almost exactly the 1598 positions of that edge. So the
+right column oscillates between states even when every frame is fully
+redrawn. That is a separate problem from the left one and is not yet explained.
+
+Conclusion for the sync: this is a damage-tracking defect in the wlroots 0.20 /
+SceneFX 0.5 stack as it behaves on NVIDIA DRM, not in the fork. The nested
+backend repaints in full, which is exactly why it never reproduced anything.
+The installer stays on 0.19.
 
 Not urgent: 0.19 is an upstream-supported configuration and the installer
 defaults to it.
