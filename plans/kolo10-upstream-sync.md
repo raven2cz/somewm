@@ -223,51 +223,72 @@ Ruled out along the way:
   the SDF. (Mesa rejecting `corner_alpha.frag` on its own -- "No precision
   specified in this scope" -- confirms the concatenation is mandatory.)
 
-### Surviving hypothesis: the blur padding band roughly doubled in 0.5
+### Blur: eliminated
 
-SceneFX saves the framebuffer pixels around a blur node before rendering and
-pastes them back afterwards, so that newly drawn content above a blurred window
-does not bleed into its blur. Both versions do this; 0.5 changed how wide the
-band is and when it triggers.
+The padding-band theory was the last one standing and it is dead too.
+`is_scene_blur_enabled()` is `radius > 0 && num_passes > 0`
+(`scenefx-0.5/types/fx/blur_data.c:14`), so running with
+`SOMEWM_BLUR_PASSES=0 SOMEWM_BLUR_RADIUS=0` switches off every blur path
+SceneFX has, padding save/restore included. The border came out pixel for
+pixel the same as with blur on.
 
-| | 0.4 (`wlr_scene.c:2957`) | 0.5 (`wlr_scene.c:2896`, `apply_blur_region`) |
-|---|---|---|
-| region | `expand(damage INTERSECT blur_region, S)` | `expand(expand(damage, S) INTERSECT node_visible, S)` |
-| reach beyond damage | `S` | `2 * S` |
-| triggers when | damage **overlaps** a blurred node | damage comes **within S** of a blurred node |
+Note the earlier run that seemed to clear blur did not: setting
+`c.backdrop_blur = false` destroys the per-client `wlr_scene_blur` nodes, but
+somewm also creates a scene-level `wlr_scene_optimized_blur` layer at startup
+(`somewm.c`), and `should_blur_node_extend_damage()` returns true for that node
+type whenever it is dirty. The machinery kept running, so the identical A and B
+numbers ruled out nothing at the time.
 
-The fork sets `num_passes = 3, radius = 5` (`somewm.c:1203`), and
-`blur_data_calc_size()` is `2^(passes+1) * radius`, so **S = 80 px**. The band
-therefore grew from 80 px to 160 px, and now fires for any damage within 80 px
-of a blur node. With `useless_gap = 3` two tiled windows sit ~6 px apart, so a
-blinking cursor in one terminal drags a 160 px stale-pixel restore band across
-its neighbour's border.
+### What the pixels say
 
-That is the only hypothesis left that explains the first window being clean:
-with a single window the band lands on the static wallpaper, where pasting back
-pre-render pixels is invisible. With a second window it lands on live content
-and on the 1 px border.
+Three runs, three restarts, blur on and off -- always the same shape:
 
-Two secondary defects found in the same code, worth reporting regardless:
+| edge | result |
+|---|---|
+| top, bottom | exact, 1px, full span |
+| right | present but **2px** wide, one pixel inboard of where it belongs |
+| left | absent; the arc is not drawn either |
 
-- `apply_blur_region()` tests the return value of `pixman_region32_intersect()`,
-  which reports allocation success, not whether the result is non-empty. The
-  compensation path is therefore entered for every blur node in the scene.
-- `full_damage` is computed from `original_damage.extents`, so a damage region
-  whose bounding box spans the output but which is mostly empty is mistaken for
-  a full repaint and skips compensation entirely.
+Both right corners trace a clean arc into the vertical column. Neither left
+corner has an arc at all -- the horizontal edges simply begin at x offset
+`corner_radius + border_width`.
 
-Next step, in order:
+For a 1610-wide frame the only border-coloured run across the middle row is at
+x offsets 1608 and 1609, where the rect spans 0..1609 and the punch-hole spans
+1..1608. So the hole behaves as if it sat **one pixel to the left** of the rect:
+on the left it swallows the ring, on the right it uncovers an extra column.
+Vertically it is exact, which is why the horizontal edges are perfect.
 
-1. `sfx.blur_enabled = false` in somewm-one on the 0.20 stack. Clean borders
-   confirm it.
-2. Keep blur but drop `num_passes` to 1 and `radius` to 3 (S = 12 px). If the
-   corrupted band shrinks with S, that is proof rather than inference.
-3. If confirmed, report to wlrfx/scenefx and carry a `diff_files` patch on
-   `subprojects/scenefx-0.5.wrap` until it lands.
+### What that rules out
 
-`plans/scripts/install-scenefx.sh` therefore defaults to `SOMEWM_WLROOTS=0.19`
-until this is resolved. `SOMEWM_WLROOTS=0.20` opts back in.
+- The scene node is right. `root.scene_tree_dump` on the broken session:
+  `rect 1703x1435`, `clip 1701x1433+1+1`, radii 15/14, alpha 1.00, for geometry
+  1701x1433 with `bw=1`.
+- Nothing occludes it. That node's `visible` is the whole rect in **one**
+  rectangle.
+- The draw call is right. Replaying it outside the compositor -- same
+  `FLIPPED_180` projection, same `set_proj_matrix`, same vertex generation as
+  `render()`, same uniforms as `fx_render_pass_add_rounded_rect`, same
+  frame-shaped pixman region `apply_clip_region` leaves, SceneFX 0.5's own
+  shaders concatenated the way `link_quad_program` does -- produces a perfect
+  1px ring.
+
+So the scene holds correct values and the shader draws correct values, yet the
+screen disagrees. The remaining gap is what the renderer receives at run time.
+
+### Instrumentation
+
+`plans/patches/scenefx-0.5-rect-logging.patch` adds a `[RECT]` line to
+`fx_render_pass_add_rounded_rect`, logged on change and gated behind
+`SOMEWM_LOG_RECT=1`, reporting the box, the clip box, their deltas, the radii
+and the colour alpha. `subprojects/` is gitignored, hence the patch file.
+
+Reference from a nested sandbox, where rendering is correct:
+
+    [RECT] box=802x602+478+33 clip=800x600+479+34 dx=1 dy=1 dw=2 dh=2 r=15.0 cr=14.0 a=1.00
+
+`dx=1 dy=1 dw=2 dh=2` is what correct looks like. If the live session reports
+anything else, that is the bug.
 
 ## Remaining
 

@@ -1,0 +1,46 @@
+diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
+index 39b6226..bd8179d 100644
+--- a/render/fx_renderer/fx_pass.c
++++ b/render/fx_renderer/fx_pass.c
+@@ -673,6 +673,41 @@ void fx_render_pass_add_rounded_rect(struct fx_gles_render_pass *pass,
+ 			clipped_region_corners->bottom_right);
+ 	push_fx_debug(renderer);
+ 
++	/* somewm diagnostic: print the boxes this rounded rect is actually drawn
++	 * with. The scene graph holds correct values but the result on screen is
++	 * one pixel off in x, so the question is what the renderer receives.
++	 * Opt-in, throttled, and only for frame-sized rects. */
++	{
++		static int somewm_log = -1;
++		static struct wlr_box last_box, last_clip;
++		static float last_alpha = -1;
++		if (somewm_log < 0) {
++			const char *e = getenv("SOMEWM_LOG_RECT");
++			somewm_log = e && e[0] && e[0] != '0';
++		}
++		/* Log on change, not periodically: an idle session draws few rects and
++		 * a moving window draws many, and only the values matter. */
++		if (somewm_log && box.width > 400
++				&& (!wlr_box_equal(&box, &last_box)
++					|| !wlr_box_equal(clipped_region_box, &last_clip)
++					|| color->a != last_alpha)) {
++			last_box = box;
++			last_clip = *clipped_region_box;
++			last_alpha = color->a;
++			wlr_log(WLR_ERROR, "[RECT] box=%dx%d+%d+%d clip=%dx%d+%d+%d "
++					"dx=%d dy=%d dw=%d dh=%d r=%.1f cr=%.1f a=%.2f clip_rects=%d",
++					box.width, box.height, box.x, box.y,
++					clipped_region_box->width, clipped_region_box->height,
++					clipped_region_box->x, clipped_region_box->y,
++					clipped_region_box->x - box.x, clipped_region_box->y - box.y,
++					box.width - clipped_region_box->width,
++					box.height - clipped_region_box->height,
++					fx_options->corners.top_left,
++					clipped_region_corners->top_left,
++					color->a, pixman_region32_n_rects(&clip_region));
++		}
++	}
++
+ 	setup_blending(WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
+ 
+ 	struct quad_round_shader shader = renderer->shaders.quad_round;
