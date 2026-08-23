@@ -154,6 +154,108 @@ why the problem does not appear there.
 
 ---
 
+## 4b. Phase 1 evidence (measured 2026-08-23, nested sandbox, live rc.lua)
+
+Tooling built for this (all read-only against the nested Xwayland, all refuse to
+touch the live session): `plans/scripts/wine-sandbox.sh`,
+`plans/scripts/x11-census.py`, `plans/scripts/x11-monitor.py`.
+
+Reproducer: Sierra Chart 2926 under Wine 11.15 in a nested somewm with the user's
+real `~/.config/somewm/rc.lua` (9 tags, wibar, sloppy focus).
+
+### E1 — 95 % of `client.get()` is windows the user will never see (H5, confirmed)
+
+With Sierra Chart open and idle, `client.get()` returns **42 clients**:
+
+| category | count |
+|---|---|
+| override-redirect, never mapped (Wine window pool, IME windows, recycled popups) | **33** |
+| managed, never mapped (`Current Quote`, `Chart Values for …`, `TemporaryWindow`) | 7 |
+| actually visible windows (main window + Message Log) | **2** |
+
+Each is a full Lua object with signals, refcounts and a slot in
+`globalconf.clients` / `globalconf.stack`, and each shows up in tasklists and
+focus helpers. `wine notepad` alone produces 11.
+
+The 33 disappear with the planned rewrite. The 7 come from a second, separate
+defect — see E5.
+
+### E2 — an open Wine menu is covered by any ontop drawin (H3, confirmed)
+
+With the `Chart` menu open (override-redirect, correctly placed in `LyrOverlay`),
+creating a plain `wibox{ontop = true}` over it puts the wibox **on top of the
+menu** — screenshot evidence. `stack_refresh()` skips OR clients but then raises
+every drawin to the top of its layer (`stack.c:281-315`), and `LyrOverlay` is
+shared. For the user this is naughty notifications, the Quickshell overlay, or
+any `ontop` client covering an open menu: exactly the reported "wrong z-order".
+
+### E3 — an OR menu becomes `client.focus` (H5, confirmed)
+
+`wine notepad`, menu closed → `client.focus` = the notepad client, 11 clients.
+Menu open → `client.focus` = the override-redirect menu window (no name, no
+screen, no tags), 12 clients. Menu closed → focus returns. So the Lua focus model
+tracks windows that are not window-manager clients at all.
+
+### E4 — sloppy focus does *not* close Wine menus (H5, partially refuted)
+
+Moving the pointer over another client while a Wine menu is open leaves
+`client.focus` on the menu. `exclusive_focus` (set in `mapnotify()` for
+wants-focus OR surfaces) blocks the Lua focus path
+(`somewm_api.c:459-462`), so `c:activate{context="mouse_enter"}` is a no-op while
+a menu is up. **This protection must be preserved by the rewrite** — it is the
+one part of the current model that is doing real work. It is also the reason
+`exclusive_focus` cannot simply be deleted along with the rest.
+
+### E5 — X11 clients are registered before they are mapped (new finding)
+
+`createnotifyx11()` pushes into `globalconf.clients` + `globalconf.stack` at
+*create* time (`xwayland.c:162-170`), so every X11 window a client creates
+becomes a somewm client even if it is never mapped. X11 create is cheap and apps
+pre-create window pools; Sierra Chart holds 7 such managed windows plus the 33 OR
+ones. dwl inserts into `clients` in `mapnotify()`; AwesomeWM manages on MapRequest.
+XDG has the same pattern (`window.c:514-517`) but no equivalent exposure, because
+an xdg_toplevel is only created when the app intends to show it.
+
+Fix belongs in this goal for the OR half; the managed half is a follow-up
+(register on map) and is tracked as a separate commit, since it touches every
+consumer that assumes a client is in the array from create time.
+
+### E6 — floating transient dialogs stay in `LyrTile` (H9, confirmed)
+
+`Message Log` and `System Notification Message` report `floating=true`,
+`type=dialog`, `transient_for=<main>` — and `_scene_layer = "tile"`.
+`client_layer_translator()` checks `transient_for` before `floating` and returns
+`WINDOW_LAYER_IGNORE` (`stack.c:106-110`), so `stack_refresh()` skips them
+(`:262-263`) and they keep the `LyrTile` parent `mapnotify()` gave them. They are
+stacked above their parent by `stack_transients_above()`, but they sit below every
+floating window of every other application.
+
+### E7 — menus and menu-opened dialogs are reliable in the sandbox
+
+12/12 menu opens and 8/8 "open a dialog from the menu" cycles succeeded once the
+input was injected through the compositor (`zwlr_virtual_pointer_v1`) rather than
+through XTEST. One early failure was observed while the startup dialog was still
+being dismissed, but it did not reproduce under measurement.
+
+**Consequence for scope:** the "popups do not appear at all" symptom did **not**
+reproduce deterministically in the nested sandbox. The z-order symptom did (E2),
+and the client-model pollution is severe and measurable (E1). The nested backend
+cannot reproduce DRM/NVIDIA timing, which is where the remaining
+non-determinism most likely lives — see the live-verification step in Phase 4.
+
+### Not reproduced / not yet measured
+
+- H1 (`set_geometry` after map) and H2 (`set_override_redirect` flips): the
+  listeners are provably absent, but Wine was not observed exercising them in the
+  scenarios run. Fix them on the sway parity argument, and cover them with
+  synthetic X11 tests rather than claiming a Wine repro.
+- H4 (X11 restack feedback): not measured yet; still gated on the wlroots 0.19.3
+  source question in 5.6.
+- The Wine Wayland-driver A/B was skipped: the XWayland-path defects found are
+  concrete enough that the control experiment would not change what gets fixed.
+
+---
+
 ## 5. Target design
 
 ### 5.1 `UnmanagedSurface` type
