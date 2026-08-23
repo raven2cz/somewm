@@ -330,10 +330,47 @@ and `flicker` jumps to 1600 of 6752 ring pixels changed between two captures
 right column oscillates between states even when every frame is fully
 redrawn. That is a separate problem from the left one and is not yet explained.
 
-Conclusion for the sync: this is a damage-tracking defect in the wlroots 0.20 /
-SceneFX 0.5 stack as it behaves on NVIDIA DRM, not in the fork. The nested
-backend repaints in full, which is exactly why it never reproduced anything.
-The installer stays on 0.19.
+### Root cause: a one-pixel rounded border ring
+
+SceneFX's own tinywl, on the same machine, same wlroots 0.20, same SceneFX 0.5,
+drawing the same construction, renders correctly. It uses `BORDER_THICKNESS 3`
+and `corner_radius 20`; somewm uses 1 and 14. That was the difference.
+
+Measured live, one client, changing only these two properties over IPC:
+
+| border_width | corner_radius | result |
+|---|---|---|
+| 1 | 14 | 56% -- **left edge entirely absent** |
+| 2 | 14 | **100%**, all four edges ok |
+| 3 | 14 | all four edges present, nothing missing |
+| 1 | 0 (flat 4-rect path) | **100%** |
+
+The border is the difference between an SDF rounded rect of radius
+`corner_radius + border_width` and a punched-out hole of radius
+`corner_radius`. At `border_width = 1` that difference is exactly one pixel
+wide, and the half-pixel conventions the two shader evaluations use
+(`size - 1.0`, `position + 0.5` in `quad_round.frag`) round the surviving alpha
+to zero on one side. At 2px there is enough margin that it always lands. The
+flat path has no SDF at all, hence 100%.
+
+This also explains the flicker: a ring balanced on a rounding boundary flips
+between drawn and not drawn as sub-pixel positions shift while a window moves.
+
+And it explains the first window always being fine -- it is the one that never
+gets re-laid-out, so its ring is rasterised once under conditions that happen to
+work and nothing disturbs it.
+
+**Fix: `theme.border_width = dpi(2)` in somewm-one.** Rounded corners are kept
+and the borders are correct. Verified live at 100.0% on all four edges.
+
+Everything ruled out along the way -- blur, occlusion, the scene node, the
+uniforms, the shaders, mediump precision, the opaque-region change, partial
+damage -- was ruled out correctly; none of them was the cause. The damage
+observations were real but secondary: forcing a full repaint changes which
+side of the ring survives the rounding, which is why it appeared to help.
+
+Nothing here blocks wlroots 0.20. The installer default can move back once the
+theme carries a 2px border.
 
 Not urgent: 0.19 is an upstream-supported configuration and the installer
 defaults to it.
