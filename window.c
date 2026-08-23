@@ -120,6 +120,11 @@ client_clear_scene_child_pointers(Client *c)
 	for (int i = 0; i < 4; i++)
 		c->border[i] = NULL;
 	c->border_frame = NULL;
+#if defined(HAVE_SCENEFX) && defined(HAVE_SCENEFX_CORNER_RADII)
+	/* The blur node is a child of c->scene, so it died with it. Without
+	 * clearing the pointer a remap would resize freed memory. */
+	c->blur_node = NULL;
+#endif
 }
 
 void
@@ -1416,6 +1421,13 @@ apply_geometry_to_wlroots(Client *c)
 	 * top/bottom borders and clips them for rounded corners. Otherwise
 	 * it falls back to standard flat layout. */
 	client_update_border_for_corners(c);
+
+	/* Resize the backdrop blur node with the client. On SceneFX 0.5 blur is a
+	 * scene node with its own size, so a resize leaves it stale; on 0.4 it is
+	 * a per-buffer flag that new buffers drop. Either way it has to be
+	 * re-applied here, because this runs for XWayland clients too -- the
+	 * commit handler that also calls it is only wired up for XDG. */
+	client_apply_backdrop_blur(c);
 
 	/* Update shadow geometry (lazy creation if needed) */
 	{

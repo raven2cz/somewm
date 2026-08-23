@@ -44,10 +44,18 @@ static inline struct fx_corner_radii
 somewm_corner_radii(int radius, somewm_corners_t corners)
 {
 	struct fx_corner_radii radii = {0};
-	if (corners & SOMEWM_CORNER_TOP_LEFT)     radii.top_left = radius;
-	if (corners & SOMEWM_CORNER_TOP_RIGHT)    radii.top_right = radius;
-	if (corners & SOMEWM_CORNER_BOTTOM_RIGHT) radii.bottom_right = radius;
-	if (corners & SOMEWM_CORNER_BOTTOM_LEFT)  radii.bottom_left = radius;
+	uint16_t r;
+
+	/* The fields are uint16_t; clamp rather than wrap, matching SceneFX's own
+	 * corner_radii_new(). */
+	if (radius < 0)
+		radius = 0;
+	r = radius > CORNER_RADIUS_MAX ? CORNER_RADIUS_MAX : (uint16_t)radius;
+
+	if (corners & SOMEWM_CORNER_TOP_LEFT)     radii.top_left = r;
+	if (corners & SOMEWM_CORNER_TOP_RIGHT)    radii.top_right = r;
+	if (corners & SOMEWM_CORNER_BOTTOM_RIGHT) radii.bottom_right = r;
+	if (corners & SOMEWM_CORNER_BOTTOM_LEFT)  radii.bottom_left = r;
 	return radii;
 }
 

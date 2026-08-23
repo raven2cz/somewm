@@ -4531,13 +4531,17 @@ client_apply_backdrop_blur(client_t *c)
     }
 
     {
+        /* Content area, matching client_get_clip(): geometry is
+         * border-exclusive since upstream 3f6cfd9/a247cd5, so only the
+         * titlebars come off the size. The borders still shift the origin,
+         * which is why the position below adds bw. */
         int bw = c->bw;
         int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
         int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
         int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
         int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-        int cw = c->geometry.width - 2 * bw - tl - tr;
-        int ch = c->geometry.height - 2 * bw - tt - tb;
+        int cw = c->geometry.width - tl - tr;
+        int ch = c->geometry.height - tt - tb;
 
         if (cw < 1) cw = 1;
         if (ch < 1) ch = 1;
@@ -4552,8 +4556,17 @@ client_apply_backdrop_blur(client_t *c)
         }
 
         wlr_scene_node_set_position(&c->blur_node->node, bw + tl, bw + tt);
-        /* Behind the client's own content, in front of whatever is below. */
-        wlr_scene_node_lower_to_bottom(&c->blur_node->node);
+
+        /* Order within c->scene must be shadow -> blur -> content, which is
+         * what SceneFX 0.4 produced by drawing the shadow and then blurring at
+         * the client buffer. Lowering unconditionally would put the blur under
+         * the shadow, whose solid interior would then darken translucent
+         * content -- and since shadow creation lowers the shadow too, the two
+         * would flip each other on every refresh. */
+        if (c->shadow.tree)
+            wlr_scene_node_place_above(&c->blur_node->node, &c->shadow.tree->node);
+        else
+            wlr_scene_node_lower_to_bottom(&c->blur_node->node);
         somewm_scene_blur_set_corners(c->blur_node, c->corner_radius,
                 SOMEWM_CORNER_ALL);
     }
