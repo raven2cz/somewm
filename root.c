@@ -2413,6 +2413,63 @@ scene_tree_dump_node(lua_State *L, struct wlr_scene_node *node, int depth,
 	lua_set_int_field(L, "height", h);
 	lua_pushboolean(L, node->enabled);
 	lua_setfield(L, -2, "enabled");
+
+	/* Absolute position, so a node's box can be compared against a
+	 * screenshot without walking the tree by hand. */
+	{
+		int ax = 0, ay = 0;
+		if (wlr_scene_node_coords(node, &ax, &ay)) {
+			lua_set_int_field(L, "abs_x", ax);
+			lua_set_int_field(L, "abs_y", ay);
+		}
+	}
+
+	/* The region the node is actually allowed to paint. A node whose rect is
+	 * the right size can still come out wrong if occlusion from above has
+	 * eaten part of its visible region, and that is invisible from Lua
+	 * otherwise. */
+	{
+		/* wlr_scene_node.visible sits in the WLR_PRIVATE block. wlroots
+		 * defines that macro to nothing for its own build, which makes the
+		 * member anonymous; for consumers it stays a named member. Reach it
+		 * either way -- this is debug-only introspection. */
+#ifdef WLR_PRIVATE
+		const pixman_region32_t *vis = &node->visible;
+#else
+		const pixman_region32_t *vis = &node->WLR_PRIVATE.visible;
+#endif
+		const pixman_box32_t *ext = &vis->extents;
+		int nrects = 0;
+		pixman_region32_rectangles(vis, &nrects);
+		lua_set_int_field(L, "vis_x", ext->x1);
+		lua_set_int_field(L, "vis_y", ext->y1);
+		lua_set_int_field(L, "vis_w", ext->x2 - ext->x1);
+		lua_set_int_field(L, "vis_h", ext->y2 - ext->y1);
+		lua_set_int_field(L, "vis_rects", nrects);
+	}
+
+#ifdef HAVE_SCENEFX
+	/* Corner radii and the clipped_region, as the compositor holds them.
+	 * somewm builds its rounded border as one rect with a punch-hole, so
+	 * these are the numbers that decide where the ring lands. */
+	if (node->type == WLR_SCENE_NODE_RECT) {
+		struct wlr_scene_rect *r = wlr_scene_rect_from_node(node);
+		lua_set_int_field(L, "clip_x", r->clipped_region.area.x);
+		lua_set_int_field(L, "clip_y", r->clipped_region.area.y);
+		lua_set_int_field(L, "clip_w", r->clipped_region.area.width);
+		lua_set_int_field(L, "clip_h", r->clipped_region.area.height);
+#ifdef HAVE_SCENEFX_CORNER_RADII
+		lua_set_int_field(L, "radius", r->corners.top_left);
+		lua_set_int_field(L, "clip_radius", r->clipped_region.corners.top_left);
+#else
+		lua_set_int_field(L, "radius", r->corner_radius);
+		lua_set_int_field(L, "clip_radius", r->clipped_region.corner_radius);
+#endif
+		lua_pushnumber(L, r->color[3]);
+		lua_setfield(L, -2, "alpha");
+	}
+#endif
+
 	lua_rawseti(L, -2, (*index)++);
 
 	if (node->type == WLR_SCENE_NODE_TREE) {

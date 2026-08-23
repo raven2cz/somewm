@@ -14,6 +14,9 @@
 # Usage:
 #   plans/scripts/border-experiment.sh            # runs A and B back to back
 #   plans/scripts/border-experiment.sh --report   # re-print results collected so far
+#   plans/scripts/border-experiment.sh --dump     # scene tree of the focused client:
+#                                                 # node boxes, clipped_region, radii,
+#                                                 # and the region each node may paint
 #
 # The full protocol is three runs:
 #   A  baseline   blur on, default settings           <- this script
@@ -54,8 +57,18 @@ PY
     done
 }
 
+dump_scene() {
+    bold "=== scene tree of the focused client ==="
+    ipc 'local c=client.focus; if not c then return "no focused client" end; local g=c:geometry(); local t=root.scene_tree_dump(c); local o={string.format("%s  geo=%dx%d+%d+%d  bw=%d  corner_radius=%d", c.class or "?", g.width, g.height, g.x, g.y, c.border_width or 0, c.corner_radius or 0)}; o[#o+1]="painted bottom to top:"; for _,n in ipairs(t) do local extra=""; if n.type=="rect" then extra=string.format("  clip=%dx%d+%d+%d  r=%d/%d  alpha=%.2f", n.clip_w, n.clip_h, n.clip_x, n.clip_y, n.radius, n.clip_radius, n.alpha) end; o[#o+1]=string.format("%s%-6s abs=%d,%d size=%dx%d en=%-5s visible=%dx%d+%d+%d in %d rect(s)%s", string.rep("  ", n.depth), n.type, n.abs_x or -1, n.abs_y or -1, n.width, n.height, tostring(n.enabled), n.vis_w, n.vis_h, n.vis_x, n.vis_y, n.vis_rects, extra) end; return table.concat(o,"\n")'
+}
+
 if [[ "${1:-}" == "--report" ]]; then
     report
+    exit 0
+fi
+
+if [[ "${1:-}" == "--dump" ]]; then
+    dump_scene
     exit 0
 fi
 
@@ -113,6 +126,8 @@ sleep 4
 
 bold ">>> A  baseline (blur as configured)"
 python3 "$PROBE" A-baseline
+echo
+dump_scene
 echo
 
 # --- B: blur off -----------------------------------------------------------
