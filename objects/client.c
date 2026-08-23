@@ -4558,7 +4558,22 @@ client_apply_backdrop_blur(client_t *c)
             c->blur_node = wlr_scene_blur_create(c->scene, cw, ch);
             if (!c->blur_node)
                 return;
-            wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur_node, false);
+            /* false samples the live framebuffer, so an upper window blurs the
+             * actual window beneath it (what the fork wanted in f5164d2).
+             * true samples SceneFX's cached bottom layer instead -- wallpaper
+             * and LyrBottom only -- which is what SceneFX's own example uses,
+             * and it skips the partial-damage save/restore compensation that a
+             * gpt-5.6-sol audit identified as the likely source of border
+             * corruption with several overlapping blurred windows.
+             *
+             * Switchable at startup so the two can be compared on real
+             * hardware without a rebuild; the nested backend does not
+             * reproduce the artefact. */
+            {
+                const char *bottom_only = getenv("SOMEWM_BLUR_BOTTOM_ONLY");
+                wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur_node,
+                        bottom_only && *bottom_only && strcmp(bottom_only, "0") != 0);
+            }
         } else {
             wlr_scene_blur_set_size(c->blur_node, cw, ch);
         }
