@@ -71,9 +71,10 @@ libinput = dependency('libinput')
 have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
                                  dependencies: libinput)
 libdrm = dependency('libdrm')
-# Not linked directly; wlroots pulls it in. Probed only so the wlroots version choice
-# below can read its version, so not required: with no pixman-1.pc at all, wlroots
-# resolves pixman through its own wrap and the floor below stops applying.
+# Probed so the wlroots version choice below can read its version, and linked via
+# all_deps because root.c's scene dump touches pixman regions directly. Not
+# required: with no pixman-1.pc at all, wlroots resolves pixman through its own
+# wrap and the floor below stops applying.
 pixman = dependency('pixman-1', required: false)
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
@@ -523,6 +524,11 @@ all_deps = [
   lua_dep,
   wlroots,
   m_dep,
+  # root.c's scene_tree_dump reads a scene node's visible region and counts its
+  # rectangles, so pixman is linked directly now. Still probed with
+  # required: false above -- a not-found dependency here is a no-op, and with
+  # no pixman-1.pc at all wlroots resolves it through its own wrap.
+  pixman,
 ]
 
 if have_xwayland
