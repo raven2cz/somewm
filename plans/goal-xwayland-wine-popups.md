@@ -321,6 +321,37 @@ need to call `wlr_xwayland_surface_restack()` itself. It deliberately skips
 override-redirect surfaces, which is correct: their stacking is the
 application's business. **No fix needed; C9 dropped from the plan.**
 
+### Open: one window that did not appear (live session, 2026-08-23)
+
+After deploying, everything worked except Sierra Chart's
+`Global Settings -> Sierra Chart Server Settings`, which never showed. State
+measured live: the X11 window `viewable`, the client present in
+`client.get()`, but `layer=nil screen=nil tags=0 geometry=0x0+0+0` -- the
+pre-`mapnotify()` state. `xdotool windowunmap` + `windowmap` on the X11 window
+brought it up instantly (`layer=float screen=1 tags=1`), so the surface and
+its buffer were healthy and only the map event was missing. No warnings in the
+log; a synthetic transient dialog with `demands_attention` + urgency did not
+reproduce it.
+
+Added `[X11-CREATE]/[X11-ASSOC]/[X11-MAP]/[X11-DISASSOC]/[X11-DESTROY]`
+traces behind `-d`, plus a fix for the one hole those traces can settle:
+associate arriving on an already-mapped surface, where the map signal has
+already fired and will not fire again.
+
+**That fix was not the cause.** With the traces running, the window mapped
+through the ordinary path (`assoc mapped=0 -> map`, 903x880) and the new
+branch never ran -- zero `mapped=1` in the log. The original failure predates
+the traces and has not recurred, so the cause is still open. Next occurrence:
+
+```bash
+grep -E "X11-CREATE|X11-ASSOC|X11-MAP|X11-DISASSOC|X11-DESTROY" \
+    ~/.local/log/somewm-debug.log | tail -40
+```
+
+A client that shows CREATE without ASSOC, or ASSOC without MAP, names the step
+that went missing. Reproducing it in the sandbox needs Sierra Chart closed in
+the live session first -- one Wine prefix cannot serve two wineservers.
+
 ### Left undone, deliberately
 
 - **E5 (clients registered before they are mapped).** Six of Sierra Chart's
