@@ -188,12 +188,25 @@ luaA_output_invalidate(lua_State *L, output_t *o)
 }
 
 void
-luaA_output_hot_reload(lua_State *L)
+luaA_output_hot_reload_detach(void)
 {
 	Monitor *m;
 
 	/* Discard stale registry refs from the old Lua state */
 	output_count = 0;
+
+	/* Monitor.output is a raw pointer into that state's userdata. It is
+	 * only rebuilt once the fresh state exists, and closing the old state
+	 * frees what it points at, so every monitor.c reader in between would
+	 * be reading freed memory. */
+	wl_list_for_each(m, &mons, link)
+		m->output = NULL;
+}
+
+void
+luaA_output_hot_reload(lua_State *L)
+{
+	Monitor *m;
 
 	/* Recreate output objects for all physical monitors */
 	wl_list_for_each(m, &mons, link) {
@@ -736,10 +749,20 @@ luaA_output_index(lua_State *L)
 	const char *key;
 	output_t *o;
 
+	key = luaL_checkstring(L, 2);
+
+	/* "valid" is the only property readable on a disconnected output, so it
+	 * has to be answered before luaA_checkudata() rejects one. Mirrors the
+	 * special case in luaA_class_index(). */
+	if (strcmp(key, "valid") == 0) {
+		o = (output_t *)luaA_toudata(L, 1, &output_class);
+		lua_pushboolean(L, o && o->valid);
+		return 1;
+	}
+
 	o = (output_t *)luaA_checkudata(L, 1, &output_class);
 	if (!o)
 		return 0;
-	key = luaL_checkstring(L, 2);
 
 	/* Properties */
 	if (strcmp(key, "name") == 0) return luaA_output_get_name(L, o);
@@ -1035,8 +1058,9 @@ luaA_output_call(lua_State *L)
 static bool
 output_checker(output_t *o)
 {
-	(void)o;
-	return true;
+	/* See screen_checker(): queued signals outlive luaA_output_invalidate(),
+	 * so a disconnected output must report invalid to have them dropped. */
+	return o && o->valid;
 }
 
 /* ========================================================================

@@ -14,7 +14,6 @@ local string = string
 local capi = { awesome = awesome }
 local gsurface = require("gears.surface")
 local gdebug  = require("gears.debug")
-local protected_call = require("gears.protected_call")
 local lgi = require("lgi")
 local cairo, Gio, GLib, GObject = lgi.cairo, lgi.Gio, lgi.GLib, lgi.GObject
 
@@ -23,6 +22,7 @@ local sbyte = string.byte
 local tcat = table.concat
 local tins = table.insert
 local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
+local traceback = debug.traceback
 local naughty = require("naughty.core")
 local cst     = require("naughty.constants")
 local nnotif = require("naughty.notification")
@@ -37,6 +37,14 @@ local dbus = { config = {} }
 
 -- This is either nil or a Gio.DBusConnection for emitting signals
 local bus_connection
+
+-- What has to be handed back on "exit" so a hot-reload does not leave the name
+-- owned and the object exported by a Lua state that no longer exists. The
+-- registering connection is kept separately because `on_name_lost` clears
+-- `bus_connection`, which the signal emitters use as their guard.
+local owner_id
+local object_reg_id
+local object_conn
 
 -- DBUS Notification constants
 -- https://specifications.freedesktop.org/notification-spec/notification-spec-latest.html#urgency-levels
@@ -120,6 +128,10 @@ local function convert_icon(w, h, rowstride, channels, data)
     return res
 end
 
+local function reply_id(invocation, id)
+    invocation:return_value(GLib.Variant("(u)", { id }))
+end
+
 local notif_methods = {}
 
 function notif_methods.Notify(sender, object_path, interface, method, parameters, invocation)
@@ -136,8 +148,8 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
         if title ~= "" then
             args.message = title
         else
-            -- FIXME: We have to reply *something* to the DBus invocation.
-            -- Right now this leads to a memory leak, I think.
+            -- Nothing to display, but the invocation still needs a reply.
+            reply_id(invocation, nnotif._gen_next_id())
             return
         end
     end
@@ -319,8 +331,7 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
             end
 
             for k, v in pairs(args) do
-                if k == "destroy" then k = "destroy_cb" end
-                notification[k] = v
+                notification[k == "destroy" and "destroy_cb" or k] = v
             end
 
             -- Update the icon if necessary.
@@ -345,11 +356,11 @@ function notif_methods.Notify(sender, object_path, interface, method, parameters
             notification:connect_signal("destroyed", function(_, r) args.destroy(r) end)
         end
 
-        invocation:return_value(GLib.Variant("(u)", { notification.id }))
+        reply_id(invocation, notification.id)
         return
     end
 
-    invocation:return_value(GLib.Variant("(u)", { nnotif._gen_next_id() }))
+    reply_id(invocation, nnotif._gen_next_id())
 end
 
 function notif_methods.CloseNotification(_, _, _, _, parameters, invocation)
@@ -374,17 +385,31 @@ function notif_methods.GetCapabilities(_, _, _, _, _, invocation)
 end
 
 local function method_call(_, sender, object_path, interface, method, parameters, invocation)
-    if not notif_methods[method] then return end
+    local handler = notif_methods[method]
+    if not handler then
+        invocation:return_error_literal(
+            Gio.DBusError.quark(),
+            Gio.DBusError.UNKNOWN_METHOD,
+            "Unknown method: " .. tostring(method)
+        )
+        return
+    end
 
-    protected_call(
-        notif_methods[method],
-        sender,
-        object_path,
-        interface,
-        method,
-        parameters,
-        invocation
-    )
+    -- An unanswered invocation freezes the sender until the D-Bus timeout
+    -- (~25s), so a handler error must still produce a reply.
+    local ok, err = xpcall(function()
+        handler(sender, object_path, interface, method, parameters, invocation)
+    end, traceback)
+    if not ok then
+        err = tostring(err)
+        gdebug.print_error("Error in org.freedesktop.Notifications."
+            .. tostring(method) .. ": " .. err)
+        invocation:return_error_literal(
+            Gio.DBusError.quark(),
+            Gio.DBusError.FAILED,
+            err:match("^[^\n]*")
+        )
+    end
 end
 
 local function on_bus_acquire(conn, _)
@@ -426,11 +451,21 @@ local function on_bus_acquire(conn, _)
             }
         }
     }
-    conn:register_object("/org/freedesktop/Notifications", interface_info,
-        GObject.Closure(method_call))
+    -- Zero means the export failed, and unregistering it is a GLib critical.
+    local id = conn:register_object("/org/freedesktop/Notifications",
+        interface_info, GObject.Closure(method_call))
+    if id ~= 0 then
+        object_conn, object_reg_id = conn, id
+    end
 end
 
 local bus_proxy, pid_for_unique_name = nil, {}
+
+-- The fetch is in flight for as long as the bus takes to answer, and a reload
+-- landing in that window would otherwise leave the completion below to run
+-- against a state that is gone. Cancelling on "exit" makes it complete inside
+-- the drain the reload runs after "exit", while the state is still there.
+local bus_proxy_cancellable = Gio.Cancellable()
 
 Gio.DBusProxy.new_for_bus(
     Gio.BusType.SESSION,
@@ -439,7 +474,7 @@ Gio.DBusProxy.new_for_bus(
     "org.freedesktop.DBus",
     "/org/freedesktop/DBus",
     "org.freedesktop.DBus",
-    nil,
+    bus_proxy_cancellable,
     function(proxy)
         bus_proxy =  proxy
     end,
@@ -533,9 +568,35 @@ local function on_name_lost(_, _)
     bus_connection = nil
 end
 
-Gio.bus_own_name(Gio.BusType.SESSION, "org.freedesktop.Notifications",
+owner_id = Gio.bus_own_name(Gio.BusType.SESSION, "org.freedesktop.Notifications",
     Gio.BusNameOwnerFlags.NONE, GObject.Closure(on_bus_acquire),
     GObject.Closure(on_name_acquired), GObject.Closure(on_name_lost))
+
+--- Release every D-Bus resource this module owns.
+-- Called on "exit", which a hot-reload emits before it rebuilds the Lua state.
+-- Each release is wrapped because "exit" must not throw.
+--
+-- The connection itself is only dropped, never closed. Closing the shared
+-- session bus is what poisons GLib's singleton cache for the rest of the
+-- process, and dropping the last reference is what lets the cache hand out a
+-- fresh one.
+function dbus._cleanup()
+    if owner_id then
+        pcall(Gio.bus_unown_name, owner_id)
+    end
+    if object_conn and object_reg_id then
+        pcall(function() object_conn:unregister_object(object_reg_id) end)
+    end
+    if bus_proxy_cancellable then
+        pcall(function() bus_proxy_cancellable:cancel() end)
+    end
+    owner_id, object_reg_id, object_conn = nil, nil, nil
+    bus_connection = nil
+    bus_proxy = nil
+    pid_for_unique_name = {}
+end
+
+capi.awesome.connect_signal("exit", dbus._cleanup)
 
 -- For testing
 dbus._notif_methods = notif_methods

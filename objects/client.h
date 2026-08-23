@@ -158,6 +158,15 @@ struct client_t
     struct wlr_scene_tree *scene;
     /** Scene surface node */
     struct wlr_scene_tree *scene_surface;
+#if defined(HAVE_SCENEFX) && defined(HAVE_SCENEFX_CORNER_RADII)
+    /** Per-client backdrop blur node (SceneFX 0.5+). Created on demand by
+     * client_apply_backdrop_blur() and destroyed when blur is turned off. */
+    struct wlr_scene_blur *blur_node;
+#endif
+    /** Popup parent tree: tracks scene_surface's position but is exempt
+     * from client_get_clip()'s content clip (mirrors LayerSurface::popups),
+     * since context menus routinely extend beyond the parent's bounds. */
+    struct wlr_scene_tree *popups;
     /** Border rectangles (flat mode, used when corner_radius == 0) */
     struct wlr_scene_rect *border[4];
     /** Single frame border rect (rounded mode, used when corner_radius > 0) */
@@ -388,7 +397,6 @@ client_t * client_getbyframewin(xcb_window_t);
 void client_ban(client_t *);
 void client_ban_unfocus(client_t *);
 void client_unban(client_t *);
-void client_manage(xcb_window_t, xcb_get_geometry_reply_t *, xcb_get_window_attributes_reply_t *);
 bool client_resize(client_t *, area_t, bool, bool);
 void client_unmanage(client_t *, client_unmanage_t);
 void client_kill(client_t *);
@@ -419,7 +427,6 @@ void client_set_group_window(lua_State *, int, uint32_t);  /* Changed from xcb_w
 /* void client_set_icons(client_t *, cairo_surface_array_t); */
 /* void client_set_icon_from_pixmaps(client_t *, xcb_pixmap_t, xcb_pixmap_t); */
 void client_set_skip_taskbar(lua_State *, int, bool);
-void client_set_motif_wm_hints(lua_State *, int, motif_wm_hints_t);
 void client_focus(client_t *);
 bool client_focus_update(client_t *);
 void client_focus_refresh(void);

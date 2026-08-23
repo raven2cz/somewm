@@ -10,12 +10,8 @@
 extern struct wlr_xdg_activation_v1 *activation;
 
 void spawn_init(void);
-void spawn_start_notify(client_t*, const char*);
 int luaA_spawn(lua_State*);
 void spawn_child_exited(pid_t, int);
-void spawn_invalidate_callbacks(void);
-
-/* Setup function (legacy - no longer used) */
-void luaA_spawn_setup(lua_State *L);
+void spawn_invalidate_callbacks(lua_State *L);
 
 #endif /* SPAWN_H */

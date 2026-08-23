@@ -15,12 +15,14 @@
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include "scenefx_compat.h"
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_icccm.h>
 
 #include "somewm.h"
 #include "somewm_api.h"
+#include "wlr_compat.h"
 #include "focus.h"
 #include "window.h"
 #include "event_queue.h"
@@ -526,8 +528,8 @@ configurex11(struct wl_listener *listener, void *data)
 	}
 	if (some_client_get_floating(c)) {
 		resize(c, (struct wlr_box){.x = event->x - c->bw,
-				.y = event->y - c->bw, .width = event->width + c->bw * 2,
-				.height = event->height + c->bw * 2}, 0);
+				.y = event->y - c->bw, .width = event->width,
+				.height = event->height}, 0);
 	} else {
 		arrange(c->mon);
 	}
@@ -659,10 +661,7 @@ xwaylandready(struct wl_listener *listener, void *data)
 
 	/* Set the default XWayland cursor to match the rest of somewm. */
 	if ((xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1)))
-		wlr_xwayland_set_cursor(xwayland,
-				xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-				xcursor->images[0]->width, xcursor->images[0]->height,
-				xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
 
 	/* Initialize XCB connection for EWMH support (AwesomeWM pattern) */
 	conn = xcb_connect(xwayland->display_name, NULL);

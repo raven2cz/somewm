@@ -54,6 +54,37 @@ enum {
 	/* Global geometry signal */
 	SIG_CLIENT_PROPERTY_GEOMETRY,  /* global */
 
+	/* Output and screen change signals */
+	SIG_PROPERTY_ENABLED,
+	SIG_PROPERTY_SCALE,
+	SIG_PROPERTY_TRANSFORM,
+	SIG_PROPERTY_MODE,
+	SIG_PROPERTY_ADAPTIVE_SYNC,
+	SIG_PROPERTY_SCREEN,
+	SIG_PROPERTY_WORKAREA,   /* 1 arg: old workarea */
+	SIG_PROPERTY_VIEWPORTS,  /* class-level, 1 arg: viewports table */
+	SIG_PRIMARY_CHANGED,
+	SIG_OUTPUT_ADDED,        /* class-level, 1 arg: output */
+
+	/* Layer-shell surface property signals */
+	SIG_PROPERTY_LAYER,
+	SIG_PROPERTY_ANCHOR,
+	SIG_PROPERTY_EXCLUSIVE_ZONE,
+	SIG_PROPERTY_KEYBOARD_INTERACTIVE,
+	SIG_PROPERTY_MARGIN,
+
+	/* Global one-off signals */
+	SIG_XKB_MAP_CHANGED,
+	SIG_XKB_GROUP_CHANGED,
+	SIG_IDLE_STOP,
+	SIG_DPMS_ON,
+	SIG_SPAWN_TIMEOUT,       /* 1 arg: {id=token} */
+	SIG_SPAWN_COMPLETED,     /* 1 arg: {id=token} */
+	SIG_SWITCH_TOGGLE,       /* 1 arg: {device_name, type, state} */
+	SIG_SCREEN_FOCUS,
+	SIG_CLIENT_MAP,
+	SIG_CLIENT_UNMAP,
+
 	/* Placeholder for future conversions */
 
 	SIG_COUNT
@@ -105,10 +136,22 @@ void some_event_queue_signal(lua_State *L, int obj_ud,
 /* Queue a global signal (no object) */
 void some_event_queue_global(uint16_t signal_id);
 
-/* Queue a class-level signal (e.g., client "list").
- * Class signals never carry args in the current design; add an args
- * capture path to some_event_queue_class() before using one. */
+/* Queue a global signal carrying the top nargs stack values as arguments.
+ * Pops the nargs values from the caller's stack. */
+void some_event_queue_global_args(lua_State *L, uint16_t signal_id, int nargs);
+
+/* Queue a global signal carrying one table argument built from alternating
+ * key/value string pairs (nargs counts the varargs, so pairs = nargs / 2),
+ * mirroring luaA_emit_signal_global_with_table. */
+void some_event_queue_global_with_table(uint16_t signal_id, int nargs, ...);
+
+/* Queue a class-level signal (e.g., client "list"). */
 void some_event_queue_class(struct lua_class_t *class_ptr, uint16_t signal_id);
+
+/* Queue a class-level signal carrying the top nargs stack values as
+ * arguments. Pops the nargs values from the caller's stack. */
+void some_event_queue_class_args(lua_State *L, struct lua_class_t *class_ptr,
+                                 uint16_t signal_id, int nargs);
 
 /* Queue a mouse::move with coalescing (updates existing if same object).
  *
@@ -127,12 +170,11 @@ bool some_event_queue_pending(void);
 void some_event_queue_init(void);
 void some_event_queue_wipe(void);
 
-/* Drop pending events without unref-ing. Their registry refs are
- * integer slot indices in the old state's registry, which is about
- * to be leaked with the rest of the state. Unref-ing now would be
- * safe but wasted work; letting them survive into the new state
- * would be a correctness bug: the same integers would point to
- * unrelated slots in the new registry. */
-void some_event_queue_reset(void);
+/* Drop pending events, releasing their refs against L, the state that owns
+ * them. Pass NULL after a state swap, where there is nothing left to unref
+ * against. Letting the events survive into the new state would be a
+ * correctness bug: their registry refs are integer slot indices, and the same
+ * integers point at unrelated slots in the new registry. */
+void some_event_queue_reset(lua_State *L);
 
 #endif /* EVENT_QUEUE_H */

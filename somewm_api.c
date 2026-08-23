@@ -18,9 +18,11 @@
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/xcursor.h>
 #include <wlr/xwayland.h>
 
 #include "somewm_api.h"
+#include "wlr_compat.h"
 #include "xwayland.h"
 #include "xkb.h"
 #include "objects/signal.h"
@@ -39,7 +41,8 @@
 
 /* Mirror of wlroots' private keyboard_group_device struct (wlr_keyboard_group.c).
  * Needed to iterate member keyboards when setting layout group.
- * Must match the exact layout of the wlroots 0.19 struct. */
+ * Must match the exact layout of the wlroots struct; verified identical in 0.19.3
+ * and 0.20.0. */
 struct kb_group_device {
 	struct wlr_keyboard *keyboard;
 	struct wl_listener key;
@@ -440,12 +443,10 @@ some_set_seat_keyboard_focus(Client *c)
 	}
 
 	/* Resolve the previously-focused surface and apply the same old-surface
-	 * handling as focusclient() in focus.c. Without this, Path B diverges
-	 * from Path A on popup grabs and top-layer layer-shell focus (rofi-like
-	 * launchers). The core xdg-shell fix for Chromium
-	 * paint-stall is the activation call further down — this block only
-	 * exists to keep Path B behaviorally equivalent to Path A when the old
-	 * focus holder requires special treatment. */
+	 * handling as focusclient() in focus.c. Without this, the Lua focus
+	 * path diverges from focusclient() on popup grabs, top-layer
+	 * layer-shell focus (rofi-like launchers) and exclusive_focus. Keep
+	 * this block in sync with focusclient(). */
 	{
 		struct wlr_surface *old = seat->keyboard_state.focused_surface;
 		Client *old_c = NULL;
@@ -457,7 +458,7 @@ some_set_seat_keyboard_focus(Client *c)
 			old_client_type = toplevel_from_wlr_surface(old, &old_c, &old_l);
 
 			/* Tear down popups rooted on the old XDG toplevel before we
-			 * change any state. Matches focus.c:65-69. */
+			 * change any state. */
 			if (old_client_type == XDGShell && old_c) {
 				struct wlr_xdg_popup *popup, *tmp;
 				wl_list_for_each_safe(popup, tmp,
@@ -466,9 +467,8 @@ some_set_seat_keyboard_focus(Client *c)
 			}
 
 			/* A top-layer layer-shell surface (rofi, session lock, etc.)
-			 * owns the seat until it relinquishes focus — skip activation
-			 * changes and let the layer surface dismiss itself first.
-			 * Matches focus.c:100-103. */
+			 * owns the seat until it relinquishes focus: skip activation
+			 * changes and let the layer surface dismiss itself first. */
 			if (old_client_type == LayerShell && old_l
 			    && wlr_scene_node_coords(&old_l->scene->node,
 			                             &unused_lx, &unused_ly)
@@ -496,10 +496,10 @@ some_set_seat_keyboard_focus(Client *c)
 	 * (and to a lesser extent GTK4) throttles its content pipeline when it
 	 * sees wl_keyboard.enter without xdg-shell activation, and only resumes
 	 * when input forces invalidation (symptom: stale frame after restore
-	 * from minimize via wibar tasklist click). Path A (focusclient) already
-	 * sends activation; Path B must do it too so the Lua `client.focus = c`
-	 * path is protocol-equivalent to the C path. X11 activation is deferred
-	 * until after keyboard enter — see below. */
+	 * from minimize via wibar tasklist click). focusclient() already sends
+	 * activation; the Lua focus path must do it too so client.focus = c is
+	 * protocol-equivalent to the C path. X11 activation stays after
+	 * keyboard enter, see below. */
 	if (!client_is_x11(c))
 		client_activate_surface(surface, 1);
 
@@ -633,10 +633,7 @@ some_update_cursor_theme(const char *theme_name, uint32_t size)
 	/* Sync XWayland cursor if running */
 	struct wlr_xcursor *xcursor = wlr_xcursor_manager_get_xcursor(cursor_mgr, "default", 1);
 	if (xcursor && xwayland) {
-		wlr_xwayland_set_cursor(xwayland,
-			xcursor->images[0]->buffer, xcursor->images[0]->width * 4,
-			xcursor->images[0]->width, xcursor->images[0]->height,
-			xcursor->images[0]->hotspot_x, xcursor->images[0]->hotspot_y);
+		COMPAT_XWAYLAND_SET_CURSOR(xwayland, xcursor->images[0]);
 	}
 #endif
 }
@@ -1454,9 +1451,9 @@ some_fake_motion(double dx, double dy)
 }
 
 /*
- * Get mouse button states
- * Returns pressed state for buttons 1-5 (left, middle, right, side1, side2)
- * Button mapping: BTN_LEFT=1, BTN_MIDDLE=2, BTN_RIGHT=3, BTN_SIDE=4, BTN_EXTRA=5
+ * Get the X11-style 5-button state mask (Button1Mask = 1<<8, etc.).
+ * Only buttons 1-3 (left, middle, right) are ever tracked: bits 4/5 mean
+ * scroll up/down, which is synthesized from axis events and never held.
  *
  * NOTE: We use globalconf.button_state which is tracked in buttonpress(),
  * NOT seat->pointer_state. This is critical for mousegrabber to work correctly.
@@ -1464,17 +1461,15 @@ some_fake_motion(double dx, double dy)
  * but during compositor-level grabs (like window move/resize) there may be
  * no focused surface. globalconf.button_state is always accurate.
  */
-void
-some_get_button_states(int states[5])
+uint16_t
+some_button_state_mask(void)
 {
-	int i;
+	uint16_t mask = 0;
 
-	if (!states)
-		return;
-
-	/* Read from globalconf.button_state which is updated in buttonpress() */
-	for (i = 0; i < 5; i++)
-		states[i] = globalconf.button_state.buttons[i] ? 1 : 0;
+	for (int i = 0; i < 5; i++)
+		if (globalconf.button_state.buttons[i])
+			mask |= 1 << (8 + i);
+	return mask;
 }
 
 /*

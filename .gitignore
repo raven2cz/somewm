@@ -18,7 +18,11 @@ build/
 build-bench/
 builddir/
 subprojects/wlroots/
+subprojects/wlroots-0.19/
+subprojects/wlroots-0.20/
 subprojects/scenefx/
+subprojects/scenefx-0.4/
+subprojects/scenefx-0.5/
 subprojects/packagecache/
 
 # Development tooling & reports (local only)
@@ -31,3 +35,4 @@ docs/*
 
 # Nix build output
 result
+__pycache__/

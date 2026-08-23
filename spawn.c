@@ -44,21 +44,6 @@ spawn_init(void)
      * Wayland startup notification is handled via wlr_xdg_activation_v1. */
 }
 
-/** Tell the spawn module that an app has been started.
- * \param c The client that just started.
- * \param startup_id The startup id of the started application.
- *
- * X11-only: Matches client to pending startup sequence.
- * Wayland uses XDG Activation token matching instead.
- */
-void
-spawn_start_notify(client_t *c, const char *startup_id)
-{
-    /* X11-only: Matches client class/instance to pending sn sequences.
-     * Wayland activation token matching is done in somewm.c. */
-    (void)c;
-    (void)startup_id;
-}
 
 /* Helper: Find child by PID */
 static running_child_t *
@@ -143,14 +128,13 @@ parse_command(lua_State *L, int idx, GError **error)
 	return argv;
 }
 
-/** Invalidate all exit callbacks in the running children array.
- * Called during hot-reload before the old Lua state is abandoned.
- * We can't luaL_unref (old state is leaked), but setting callbacks
- * to LUA_NOREF prevents spawn_child_exited from trying to call
- * stale registry refs in the new state.
+/** Release all exit callbacks in the running children array.
+ * Called during hot-reload before the old Lua state is closed. The refs
+ * are unref'd against the dying state, and LUA_NOREF keeps
+ * spawn_child_exited from resolving stale registry refs in the new one.
  */
 void
-spawn_invalidate_callbacks(void)
+spawn_invalidate_callbacks(lua_State *L)
 {
 	if (!running_children)
 		return;
@@ -158,6 +142,7 @@ spawn_invalidate_callbacks(void)
 	for (guint i = 0; i < running_children->len; i++) {
 		running_child_t *child = &g_array_index(running_children,
 			running_child_t, i);
+		luaL_unref(L, LUA_REGISTRYINDEX, child->exit_callback);
 		child->exit_callback = LUA_NOREF;
 	}
 }
@@ -453,14 +438,4 @@ luaA_spawn(lua_State *L)
 		lua_pushnil(L);
 
 	return 5;
-}
-
-/** Setup the spawn module
- * Registers awesome.spawn() function
- */
-void
-luaA_spawn_setup(lua_State *L)
-{
-	/* Note: This function is no longer used - awesome.spawn is registered
-	 * directly in awesome.c's methods table. Kept for compatibility. */
 }

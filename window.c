@@ -99,10 +99,13 @@ client_scene_node_destroy(Client *c)
 {
 	if (client_has_surface(c)) {
 		struct wlr_surface *surface = client_surface(c);
-		client_surface_clear_scene_data(surface, c->scene);
+		client_surface_clear_scene_data(surface, c->popups);
 	}
+	/* c->popups and c->scene_surface are both descendants of c->scene,
+	 * destroyed recursively along with it. */
 	wlr_scene_node_destroy(&c->scene->node);
 	c->scene = NULL;
+	c->popups = NULL;
 }
 
 /* Clear fork-specific scene child pointers (titlebars, borders) after
@@ -117,17 +120,21 @@ client_clear_scene_child_pointers(Client *c)
 	for (int i = 0; i < 4; i++)
 		c->border[i] = NULL;
 	c->border_frame = NULL;
+#if defined(HAVE_SCENEFX) && defined(HAVE_SCENEFX_CORNER_RADII)
+	/* The blur node is a child of c->scene, so it died with it. Without
+	 * clearing the pointer a remap would resize freed memory. */
+	c->blur_node = NULL;
+#endif
 }
 
 void
 applybounds(Client *c, struct wlr_box *bbox)
 {
-	/* Minimum geometry must fit borders AND titlebars with at least 1px content */
-	int min_w = 1 + 2 * (int)c->bw
-		+ c->titlebar[CLIENT_TITLEBAR_LEFT].size
+	/* Minimum geometry must fit titlebars with at least 1px content;
+	 * borders sit outside the geometry */
+	int min_w = 1 + c->titlebar[CLIENT_TITLEBAR_LEFT].size
 		+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-	int min_h = 1 + 2 * (int)c->bw
-		+ c->titlebar[CLIENT_TITLEBAR_TOP].size
+	int min_h = 1 + c->titlebar[CLIENT_TITLEBAR_TOP].size
 		+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 	c->geometry.width = MAX(min_w, c->geometry.width);
 	c->geometry.height = MAX(min_h, c->geometry.height);
@@ -269,14 +276,9 @@ initialcommitnotify(struct wl_listener *listener, void *data)
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE |
 			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
 
-	/* Honor state requests that arrived before the initial commit so Gtk/Qt
-	 * clients start maximized when they ask for it (e.g. via
-	 * xdg_toplevel.set_maximized before the first ack_configure). We cannot
-	 * call wlr_xdg_toplevel_set_maximized() in maximizenotify() before the
-	 * surface is initialized, so we fold the pending request into the first
-	 * configure here. Minimize is handled via Lua state only — no xdg reply. */
-	if (c->surface.xdg->toplevel->requested.maximized)
-		wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, true);
+	/* A set_maximized that arrived before this commit already ran through
+	 * maximizenotify() into c->maximized; apply_geometry_to_wlroots() puts
+	 * it on the wire once the client is mapped. Nothing to fold in here. */
 
 	if (c->decoration)
 		requestdecorationmode(&c->set_decoration_mode, c->decoration);
@@ -427,7 +429,7 @@ commitpopup(struct wl_listener *listener, void *data)
 	}
 
 	/* Set root scene tree for coordinate calculation */
-	p->root = (type == LayerShell) ? l->popups : c->scene_surface;
+	p->root = (type == LayerShell) ? l->popups : c->popups;
 
 	/* Inherit parent's opacity on newly created popup */
 	if (l && l->lua_object) {
@@ -872,7 +874,7 @@ mapnotify(struct wl_listener *listener, void *data)
 #endif
 
 	/* Create scene tree for this client and its border */
-	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
+	c->scene = wlr_scene_tree_create(layers[LyrTile]);
 	/* Enabled later by a call to arrange() */
 	wlr_scene_node_set_enabled(&c->scene->node, false);
 	c->scene_surface = c->client_type == XDGShell
@@ -887,7 +889,22 @@ mapnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	c->scene->node.data = c->scene_surface->node.data = c;
+	/* Dedicated popup-parenting tree: tracks scene_surface's offset (see
+	 * the position update alongside it below) but, unlike scene_surface,
+	 * is never passed to wlr_scene_subsurface_tree_set_clip(). Context
+	 * menus routinely extend beyond the parent's own content bounds, so
+	 * parenting them on the clipped node would crop them (mirrors
+	 * LayerSurface::popups, which has the same exemption). */
+	c->popups = wlr_scene_tree_create(c->scene);
+
+	/* Popups (context menus, dropdowns) are parented via this surface's
+	 * data pointer (see commitpopup()). Point it at popups, not
+	 * scene_surface: scene_surface is offset by (bw + titlebar) from
+	 * scene same as popups is, but scene_surface also carries the
+	 * client's content clip, which would crop any popup parented there. */
+	client_surface(c)->data = c->popups;
+
+	c->scene->node.data = c->scene_surface->node.data = c->popups->node.data = c;
 
 	/* Register commit listener AFTER wlr_scene_xdg_surface_create() so our listener
 	 * fires AFTER wlroots' internal surface_reconfigure() which resets opacity to 1.0.
@@ -936,20 +953,13 @@ mapnotify(struct wl_listener *listener, void *data)
 			c->urgent ? get_urgentcolor() : get_bordercolor());
 	c->border_frame->node.data = c;
 	wlr_scene_node_set_enabled(&c->border_frame->node, false);
-	/* Frame stays above surface — clipped_region punch-hole ensures
+	/* Frame stays above surface -- clipped_region punch-hole ensures
 	 * it never overdraws content.  lower_to_bottom causes SDF mismatch
 	 * teeth between border inner edge and surface outer edge shaders. */
 #endif
 
-	/* Create shadow (compositor-level, replaces picom shadows) */
-	{
-		const shadow_config_t *shadow_config = shadow_get_effective_config(
-			c->shadow_config, false);
-		if (shadow_config && shadow_config->enabled) {
-			shadow_create(c->scene, &c->shadow, shadow_config,
-				c->geometry.width, c->geometry.height);
-		}
-	}
+	/* Shadow is lazily created by apply_geometry_to_wlroots() on the first
+	 * refresh cycle after the map */
 
 	/* Create foreign toplevel handle for external tools (rofi, taskbars, etc.) */
 	if (foreign_toplevel_mgr) {
@@ -973,10 +983,6 @@ mapnotify(struct wl_listener *listener, void *data)
 			LISTEN(&c->toplevel_handle->events.request_minimize, &c->foreign_request_minimize, foreign_toplevel_request_minimize);
 		}
 	}
-
-	/* Initialize client geometry with room for border */
-	c->geometry.width += 2 * c->bw;
-	c->geometry.height += 2 * c->bw;
 
 	/* Client was already added to arrays in createnotify() (matches AwesomeWM pattern)
 	 * No need to add again here - doing so would create duplicates */
@@ -1241,7 +1247,7 @@ mapnotify(struct wl_listener *listener, void *data)
 			setfullscreen(w, 0);
 	}
 
-	luaA_emit_signal_global("client::map");
+	some_event_queue_global(SIG_CLIENT_MAP);
 
 	/* If the cursor is over this new client's CONTENT, set pointer focus directly.
 	 * Don't use motionnotify(0,...) because xytonode may not find the surface yet
@@ -1257,8 +1263,8 @@ mapnotify(struct wl_listener *listener, void *data)
 		int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 		int x0 = c->geometry.x + (int)c->bw + tl;
 		int y0 = c->geometry.y + (int)c->bw + tt;
-		int x1 = c->geometry.x + c->geometry.width  - (int)c->bw - tr;
-		int y1 = c->geometry.y + c->geometry.height - (int)c->bw - tb;
+		int x1 = c->geometry.x + (int)c->bw + c->geometry.width  - tr;
+		int y1 = c->geometry.y + (int)c->bw + c->geometry.height - tb;
 		if (cursor->x >= x0 && cursor->x < x1 && cursor->y >= y0 && cursor->y < y1) {
 			double sx, sy;
 			cursor_to_client_coordinates(c, &sx, &sy);
@@ -1270,88 +1276,46 @@ mapnotify(struct wl_listener *listener, void *data)
 void
 maximizenotify(struct wl_listener *listener, void *data)
 {
-	/* Emitted when a client clicks its own CSD maximize button or calls
-	 * xdg_toplevel.{set,unset}_maximized. Routes through the same Lua API
-	 * as protocols.c:foreign_toplevel_request_maximize, so both entry
-	 * points (CSD button + wibar tasklist) behave identically.
+	/* CSD maximize button, or xdg_toplevel.{set,unset}_maximized. Routes
+	 * through the same Lua setter as the foreign-toplevel path, so a
+	 * titlebar button and a tasklist click behave identically.
 	 *
-	 * Ordering matters: we MUST let Lua apply the maximized geometry
-	 * (awful arrangers resize c to the full screen rect) BEFORE we ack
-	 * the xdg maximize state. If we send set_maximized(true) first, the
-	 * next configure carries maximized=true at the OLD floating size;
-	 * Firefox/GTK computes its CSD hit regions against that stale size
-	 * and — especially after a suspend/resume cycle — can end up treating
-	 * the next pointer press as a resize drag. Letting Lua arrange first
-	 * means the only configure the client sees is
-	 * (maximized=true, full-screen size) in one coherent message.
-	 *
-	 * Protocol compliance: xdg-shell requires a configure after every
-	 * set_maximized / unset_maximized, even for redundant or policy-
-	 * ignored requests. client_set_maximized_common() emits one via
-	 * wlr_xdg_toplevel_set_maximized when the state actually changes;
-	 * if Lua short-circuits (already in the requested state), we emit a
-	 * trailing redundant-ack below. */
+	 * set_maximized while fullscreen has no effect (xdg-shell.xml:1049). */
 	Client *c = wl_container_of(listener, c, maximize);
-	struct wlr_xdg_toplevel *toplevel;
-	bool wants, before;
-	lua_State *L;
+	lua_State *L = globalconf_get_lua_State();
+	bool before;
 
 	if (!c->surface.xdg || !c->surface.xdg->toplevel)
 		return;
-	toplevel = c->surface.xdg->toplevel;
-	wants = toplevel->requested.maximized;
-
-	/* xdg-shell: set_maximized while fullscreen has no direct effect
-	 * (see xdg-shell.xml:1049). Keep our fullscreen/maximized mutual
-	 * exclusion and just ack the request with the current state. */
-	if (c->fullscreen) {
-		if (c->surface.xdg->initialized)
-			wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
-		return;
-	}
-
-	L = globalconf_get_lua_State();
-	if (!L) {
-		/* No Lua VM — still owe the client a configure. */
-		if (c->surface.xdg->initialized)
-			wlr_xdg_toplevel_set_maximized(toplevel, wants);
-		return;
-	}
 
 	before = c->maximized;
-	luaA_object_push(L, c);
-	client_set_maximized(L, -1, wants);
-	lua_pop(L, 1);
+	if (L && !c->fullscreen) {
+		luaA_object_push(L, c);
+		client_set_maximized(L, -1, c->surface.xdg->toplevel->requested.maximized);
+		lua_pop(L, 1);
+	}
 
-	/* Redundant request ack: Lua short-circuited because we were already
-	 * in the requested state, so client_set_maximized_common didn't fire
-	 * its own set_maximized. xdg-shell still requires a configure. */
-	if (c->surface.xdg->initialized && before == c->maximized)
-		wlr_xdg_toplevel_set_maximized(toplevel, c->maximized);
+	/* xdg-shell owes a configure for every request. When the state changed,
+	 * apply_geometry_to_wlroots() sends one next frame carrying the new
+	 * maximized flag and the new size together; acking here too would land
+	 * first, with stale state. So only ack what we ignored or no-opped. */
+	if (c->surface.xdg->initialized && before == (bool)c->maximized)
+		wlr_xdg_surface_schedule_configure(c->surface.xdg);
 }
 
 void
 minimizenotify(struct wl_listener *listener, void *data)
 {
-	/* Emitted when a client clicks its own CSD minimize button or calls
-	 * xdg_toplevel.set_minimized. Unlike maximize, xdg-shell has no
-	 * unset_minimized — the request is always "minimize me" (xdg-shell.xml:
-	 * 1132). Unminimize happens via Lua: wibar tasklist click
-	 * (rc.lua: c:activate { action="toggle_minimization" }) or the
-	 * Super+Ctrl+n keybind.
-	 *
-	 * The xdg protocol does not require a configure reply for minimize,
-	 * so unlike maximize we don't need to guarantee a wlroots call. We
-	 * just route the event through to Lua. */
+	/* CSD minimize button, or xdg_toplevel.set_minimized. xdg-shell has no
+	 * unset_minimized (xdg-shell.xml:1132), so the request is always
+	 * "minimize me" and unminimize stays a Lua-side concern. No configure
+	 * is owed for it either. */
 	Client *c = wl_container_of(listener, c, minimize);
 	lua_State *L;
 
 	if (!c->surface.xdg || !c->surface.xdg->toplevel)
 		return;
-	/* client_set_minimized calls wlr_xdg_toplevel_set_suspended which
-	 * needs an initialized surface. Pre-initial requests are vanishingly
-	 * rare for CSD button clicks (surface is already mapped), but guard
-	 * anyway — the banning flag isn't meaningful before map either. */
+	/* Nothing to hide before the client has committed a surface. */
 	if (!c->surface.xdg->initialized)
 		return;
 
@@ -1421,6 +1385,7 @@ apply_geometry_to_wlroots(Client *c)
 {
 	struct wlr_box clip;
 	int titlebar_left, titlebar_top;
+	int frame_w, frame_h;
 
 	if (!c->scene || !client_surface(c) || !client_surface(c)->mapped)
 		return;
@@ -1437,14 +1402,37 @@ apply_geometry_to_wlroots(Client *c)
 	titlebar_left = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	titlebar_top = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 
+	/* The frame footprint is the geometry plus the border drawn outside it */
+	frame_w = c->geometry.width + 2 * c->bw;
+	frame_h = c->geometry.height + 2 * c->bw;
+
 	/* Update scene-graph position and borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geometry.x, c->geometry.y);
 	/* Offset scene_surface by titlebar sizes (titlebars occupy space in geometry) */
 	wlr_scene_node_set_position(&c->scene_surface->node, c->bw + titlebar_left, c->bw + titlebar_top);
-	/* Update border geometry. When corner_radius > 0, the helper extends
-	 * top/bottom borders and clips them for rounded corners. Otherwise
-	 * it falls back to standard flat layout. */
-	client_update_border_for_corners(c);
+	/* popups tracks scene_surface's offset exactly, so popups stay correctly
+	 * positioned, but (unlike scene_surface) is never clipped. Also keep it
+	 * raised above borders/shadow: siblings created later in c->scene (the
+	 * border loop in mapnotify, the lazily-created shadow below) stack on
+	 * top by default, which would otherwise paint over open popups. */
+	wlr_scene_node_set_position(&c->popups->node, c->bw + titlebar_left, c->bw + titlebar_top);
+	wlr_scene_node_raise_to_top(&c->popups->node);
+	/* Border geometry is deliberately NOT updated here. The visibility block
+	 * further down decides it once, on every path: it calls this same helper
+	 * for clients that are fully visible or loosely clipped, and disables the
+	 * border nodes outright for strict-clipped or fully-offscreen ones.
+	 * Enabling them here first meant a clipped client toggled enabled ->
+	 * disabled on every refresh, and each toggle damages the whole border
+	 * region. With more than one window open -- the second onwards is the one
+	 * that gets clipped -- that read as the border flickering, and it got
+	 * worse while dragging, when refreshes come per motion event. */
+
+	/* Resize the backdrop blur node with the client. On SceneFX 0.5 blur is a
+	 * scene node with its own size, so a resize leaves it stale; on 0.4 it is
+	 * a per-buffer flag that new buffers drop. Either way it has to be
+	 * re-applied here, because this runs for XWayland clients too -- the
+	 * commit handler that also calls it is only wired up for XDG. */
+	client_apply_backdrop_blur(c);
 
 	/* Update shadow geometry (lazy creation if needed) */
 	{
@@ -1453,10 +1441,10 @@ apply_geometry_to_wlroots(Client *c)
 		if (shadow_config && shadow_config->enabled) {
 			if (c->shadow.tree) {
 				shadow_update_geometry(&c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
+					frame_w, frame_h);
 			} else {
 				shadow_create(c->scene, &c->shadow, shadow_config,
-					c->geometry.width, c->geometry.height);
+					frame_w, frame_h);
 			}
 		}
 	}
@@ -1480,15 +1468,18 @@ apply_geometry_to_wlroots(Client *c)
 				&& c->surface.xwayland->fullscreen != c->fullscreen)
 			client_set_fullscreen_internal(c, c->fullscreen);
 #endif
+		/* Same for maximized: GTK and Chromium draw their own titlebar
+		 * button from it, and it must arrive with the matching size. */
+		if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel
+				&& c->surface.xdg->toplevel->scheduled.maximized != !!c->maximized)
+			wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, !!c->maximized);
 		if (c->fullscreen) {
-			/* Fullscreen: client gets full geometry minus borders only */
-			c->resize = client_set_size(c,
-					c->geometry.width - 2 * c->bw,
-					c->geometry.height - 2 * c->bw);
+			/* Fullscreen: no titlebars (and bw is 0), client gets the full geometry */
+			c->resize = client_set_size(c, c->geometry.width, c->geometry.height);
 		} else {
-			int sw = c->geometry.width - 2 * c->bw
+			int sw = c->geometry.width
 				- titlebar_left - c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-			int sh = c->geometry.height - 2 * c->bw
+			int sh = c->geometry.height
 				- titlebar_top - c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 			if (sw < 1) sw = 1;
 			if (sh < 1) sh = 1;
@@ -1634,17 +1625,17 @@ resize(Client *c, struct wlr_box geo, int interact)
 	c->geometry = geo;
 	applybounds(c, bbox);
 
-	/* Apply aspect ratio constraint on content area (excluding borders/titlebars).
-	 * Lua sets aspect_ratio = content_width / content_height, so we must
-	 * subtract decoration sizes before comparing, then add them back. */
+	/* Apply aspect ratio constraint (Wayland equivalent of ICCCM aspect hints).
+	 * The ratio describes the content -- that is the point for mpv and other
+	 * video clients -- so titlebars come off and go back on. Borders do not:
+	 * c->geometry has been border-exclusive since upstream 3f6cfd9/a247cd5. */
 	if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-		int bw2 = 2 * c->bw;
 		int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
 			+ c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
 		int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
 			+ c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-		int w = c->geometry.width - bw2 - tb_w;
-		int h = c->geometry.height - bw2 - tb_h;
+		int w = c->geometry.width - tb_w;
+		int h = c->geometry.height - tb_h;
 		if (w > 0 && h > 0) {
 			double current = (double)w / h;
 			/* Tolerance: ~1 pixel to prevent rounding oscillation */
@@ -1654,8 +1645,8 @@ resize(Client *c, struct wlr_box geo, int interact)
 			} else if (c->aspect_ratio - current > epsilon) {
 				h = (int)(w / c->aspect_ratio + 0.5);
 			}
-			c->geometry.width = w + bw2 + tb_w;
-			c->geometry.height = h + bw2 + tb_h;
+			c->geometry.width = w + tb_w;
+			c->geometry.height = h + tb_h;
 		}
 	}
 
@@ -1695,22 +1686,10 @@ resize(Client *c, struct wlr_box geo, int interact)
 void
 setfullscreen(Client *c, int fullscreen)
 {
-	int was_fullscreen;
+	int was_fullscreen = c->fullscreen;
 
-	if (!c->mon || !client_surface(c)->mapped) {
-		c->fullscreen = fullscreen;
-		return;
-	}
-
-	was_fullscreen = c->fullscreen;
-
-	/* Same-value transition for non-fullscreen clients is a no-op. We must
-	 * not run the exit branch's resize(c, c->prev, 0) because that would
-	 * restore geometry to a stale memento (e.g. initial configure size
-	 * before placement rules ran). Fullscreen → fullscreen is preserved
-	 * because setmon() re-applies setfullscreen(c, c->fullscreen) to
-	 * re-expand the client onto the new monitor's full area. */
-	if (!fullscreen && !was_fullscreen)
+	c->fullscreen = fullscreen;
+	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
 	/* Fullscreen is mutually exclusive with maximized states */
@@ -1725,20 +1704,21 @@ setfullscreen(Client *c, int fullscreen)
 
 	c->fullscreen = fullscreen;
 	c->bw = fullscreen ? 0 : get_border_width();
-	client_set_fullscreen_internal(c, fullscreen);
+	/* Only on the edge: wlroots does not dedupe, so an unconditional call
+	 * would send a fullscreen configure to every client setmon() touches. */
+	if (was_fullscreen != fullscreen)
+		client_set_fullscreen_internal(c, fullscreen);
 	wlr_scene_node_reparent(&c->scene->node, layers[c->fullscreen ? LyrFS : LyrTile]);
 
+	/* c->prev is the pre-fullscreen restore point: capture only on the
+	 * non-FS -> FS edge, consume only on FS -> non-FS. setmon() and
+	 * fullscreennotify() both re-call with the current value, and running
+	 * either edge on a no-op corrupts the memento. */
 	if (fullscreen) {
-		/* Only capture pre-fullscreen geometry on the non-FS → FS
-		 * transition. Redundant enter-FS calls (setmon() re-applies
-		 * `setfullscreen(c, c->fullscreen)` after monitor move, and
-		 * fullscreennotify() can fire while already fullscreen) would
-		 * otherwise overwrite c->prev with the current fullscreen rect
-		 * — losing the original restore point. */
 		if (!was_fullscreen)
 			c->prev = c->geometry;
 		resize(c, c->mon->m, 0);
-	} else {
+	} else if (was_fullscreen) {
 		/* restore previous size instead of arrange for floating windows since
 		 * client positions are set by the user and cannot be recalculated */
 		resize(c, c->prev, 0);
@@ -1778,12 +1758,7 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	old_screen = c->screen;  /* Capture before update */
 
 	c->mon = m;
-	/* NOTE: c->prev is a restore-memento owned by setfullscreen() (and, in
-	 * the future, maximize). Monitor assignment must not touch it — doing
-	 * so pollutes the memento with the initial configure geometry (e.g.
-	 * 254x306 before placement rules have maximized the client) and the
-	 * next same-value setfullscreen(c, 0) resizes the client to that stub.
-	 * Restore points belong to their owning transition, not to setmon. */
+	/* c->prev belongs to setfullscreen(); do not write it here. */
 
 	/* Update c->screen to match c->mon for Lua property access */
 	c->screen = luaA_screen_get_by_monitor(L, m);
@@ -1968,7 +1943,7 @@ unmapnotify(struct wl_listener *listener, void *data)
 		return;
 	}
 
-	luaA_emit_signal_global("client::unmap");
+	some_event_queue_global(SIG_CLIENT_UNMAP);
 
 	if (c->toplevel_handle) {
 		wl_list_remove(&c->foreign_request_activate.link);

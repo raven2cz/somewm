@@ -79,21 +79,13 @@ bool
 mouse_query_pointer(int16_t *x, int16_t *y, uint16_t *mask)
 {
     double dx, dy;
-    int button_states[5];
 
     some_get_cursor_position(&dx, &dy);
     *x = (int16_t)dx;
     *y = (int16_t)dy;
 
-    if (mask) {
-        some_get_button_states(button_states);
-        /* Convert button array to X11-style mask for API compatibility */
-        *mask = 0;
-        for (int i = 0; i < 5; i++) {
-            if (button_states[i])
-                *mask |= (1 << (8 + i)); /* XCB_BUTTON_MASK_1 = 1<<8, etc. */
-        }
-    }
+    if (mask)
+        *mask = some_button_state_mask();
 
     return true;
 }
@@ -317,6 +309,20 @@ static int
 luaA_mouse_set_newindex_miss_handler(lua_State *L)
 {
     return luaA_registerfct(L, 1, &miss_newindex_handler);
+}
+
+/** Release the miss handlers at hot-reload.
+ * Same reasoning as luaA_root_hot_reload: unref against the state that owns
+ * them, or luaA_registerfct unrefs an old-state ref against the new registry
+ * when awful.mouse re-registers.
+ */
+void
+luaA_mouse_hot_reload(lua_State *L)
+{
+    luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
+    luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
+    miss_index_handler = LUA_REFNIL;
+    miss_newindex_handler = LUA_REFNIL;
 }
 
 const struct luaL_Reg awesome_mouse_methods[] =

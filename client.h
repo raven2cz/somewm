@@ -7,6 +7,7 @@
  */
 
 /* Need complete client_t definition for inline functions */
+#include <xdg-shell-protocol.h>
 #include <assert.h>
 #include "somewm_types.h"  /* For Client typedef and Monitor */
 #include "objects/client.h" /* For complete client_t definition */
@@ -169,16 +170,14 @@ client_get_appid(Client *c)
 static inline void
 client_get_clip(Client *c, struct wlr_box *clip)
 {
-	/* Clip must match the content area: geometry minus borders AND titlebars.
-	 * The surface node is positioned at (bw + tl, bw + tt) in the parent,
-	 * so clip dimensions must be the content size to prevent the surface
-	 * from bleeding past the bottom/right borders. */
+	/* Content area: geometry minus titlebars (borders sit outside the
+	 * geometry). Clipping to it keeps oversized buffers off the borders. */
 	int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
 	int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
 	int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
 	int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-	int cw = c->geometry.width - 2 * c->bw - tl - tr;
-	int ch = c->geometry.height - 2 * c->bw - tt - tb;
+	int cw = c->geometry.width - tl - tr;
+	int ch = c->geometry.height - tt - tb;
 	if (cw < 1) cw = 1;
 	if (ch < 1) ch = 1;
 
@@ -264,14 +263,12 @@ client_is_float_type(Client *c)
 		if (surface->modal)
 			return 1;
 
-#ifdef WLR_VERSION_0_19
 		if (COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_DIALOG)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_SPLASH)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_TOOLBAR)
 				|| COMPAT_XWAYLAND_HAS_WINDOW_TYPE(surface, WLR_XWAYLAND_NET_WM_WINDOW_TYPE_UTILITY)) {
 			return 1;
 		}
-#endif
 
 		return size_hints && size_hints->min_width > 0 && size_hints->min_height > 0
 			&& (size_hints->max_width == size_hints->min_width

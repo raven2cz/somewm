@@ -13,6 +13,7 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 | GTK theme detection | Creates GTK widgets, queries `GtkStyleContext` | Parses `gtk-3.0/settings.ini` and `gtk-4.0/settings.ini` | Creating GTK windows inside a compositor is unsafe |
 | Xresources | Queries `xrdb` server | Parses `~/.Xresources` file directly | No `xrdb` server on Wayland |
 | Wibox shape surfaces | 1-bit (`cairo.Format.A1`) | Full ARGB32 with anti-aliasing | Enables anti-aliased rounded corners and HiDPI scaling |
+| Client-drawn titlebar buttons | No equivalent (X11 apps ask via `_NET_WM_STATE`) | `xdg_toplevel.set_maximized` / `set_minimized` set `c.maximized` / `c.minimized` | GTK and Chromium draw their own titlebars; the requests go through the same `request::geometry` path `awful.permissions` already governs |
 | Config/cache paths | `~/.config/awesome/`, `~/.cache/awesome/` | `~/.config/somewm/`, `~/.cache/somewm/` | Rebranded |
 
 ### Detailed Explanations
@@ -25,16 +26,17 @@ This document tracks all known differences between somewm and AwesomeWM. These e
 
 **Titlebar Border Positioning**
 - In X11, borders are drawn OUTSIDE the window frame by the X server
-- In Wayland, borders are scene rects at geometry edges
-- Titlebars must start INSIDE the border area, hence `border_width` inset
+- In Wayland, somewm draws borders as scene rects around the geometry: the scene tree origin is the outer border corner and the client footprint is `geometry` plus `border_width` on each side
+- `c->geometry` excludes the border, matching AwesomeWM
+- Titlebars are inside the geometry and must start INSIDE the border area, hence `border_width` inset
 - See `titlebar_get_area()` in `objects/client.c`
 
 **WM Restart**
 - AwesomeWM re-execs itself via `execvp()`, restarting the entire process
 - SomeWM performs in-process Lua hot-reload: tears down the Lua VM, rebuilds it from `rc.lua`, and reattaches existing clients
 - wlroots, the scene graph, and client surfaces are untouched during reload
-- The old Lua state is intentionally leaked (~1-2 MB) to avoid Lgi closure crashes
-- An LD_PRELOAD closure guard (`lgi_closure_guard.so`) blocks stale FFI closures from the leaked state
+- The old Lua state is closed, so a module must release what it registered with GLib or GDBus when `"exit"` is emitted, or its callback outlives the state it points into
+- A source sweep in C and an LD_PRELOAD closure guard (`lgi_closure_guard.so`) back that contract up and report when it is broken. The sweep destroys any GLib source the closed state still owned, so it never dispatches; the guard cannot do the same, since libffi reads a closure's `cif` (which lives in the closed state) before the guard is entered
 
 **Window Visibility Timing**
 - X11: `xcb_map_window()` maps immediately, content shows when ready
@@ -80,13 +82,28 @@ Queued signals (delivered at the next frame boundary):
 - **Mouse**: `mouse::enter`, `mouse::leave`, `mouse::move` (coalesced to one event per object per frame)
 - **Lifecycle**: `list`, `swapped`
 - **Request**: `request::activate`, `request::urgent`, `request::tag`, `request::select`, plus the systray equivalents (`request::secondary_activate`, `request::context_menu`, `request::scroll`)
+- **Output and screen changes** (when triggered by a monitor being plugged or unplugged, or by an external tool changing output state, e.g. wlr-randr / kanshi): output `property::enabled`, `property::scale`, `property::transform`, `property::mode`, `property::adaptive_sync`, `property::screen` (screen attached), output class `added`; screen `property::scale`, `property::geometry`, `property::workarea`, `primary_changed`, screen class `list`, `property::_viewports`. The Lua-initiated paths stay synchronous: `screen.fake_add`, `screen.fake_remove`, and `s:swap(...)` emit `list` inline, and `screen.primary = s` emits `primary_changed` inline.
+
+  `property::workarea` has two emitters and only the C-driven one queues. `screen_update_workarea()` recomputes the workarea from drawin and client struts and emits inline, so a wibar appearing or a client setting struts still notifies Lua immediately. The same function queues instead when it runs as part of the C geometry path (`luaA_screen_update_geometry` -> `luaA_screen_recalculate_workarea`), because `property::geometry` is queued there and a synchronous workarea signal would otherwise overtake the geometry signal it is meant to follow. Handlers rely on that order: `awful.permissions` re-snaps maximized clients on `property::workarea`, and `awful.layout` shifts clients by the geometry delta on `property::geometry`.
+- **Layer shell**: `property::layer`, `property::anchor`, `property::exclusive_zone`, `property::keyboard_interactive`, `property::margin`
+- **Globals**: `xkb::map_changed`, `xkb::group_changed`, `idle::stop`, `dpms::on` (from input activity; `awesome.dpms_on()` emits synchronously), `spawn::timeout`, `spawn::completed`, `switch::toggle`, `screen::focus`, `client::map`, `client::unmap`
+
+  `xkb::map_changed` and `xkb::group_changed` are queued even though `awful.keyboard` and `awful.keygrabber` use them to drop a cached modifier map. For one loop iteration after a layout switch those caches still hand out the old map, so a keygrabber running across the switch can convert a modifier against stale data. `xkb_refresh` is already a deferred idle callback, so queueing adds one iteration rather than introducing the delay outright, and the window closes at the next drain.
 
 Kept synchronous:
 
 - `request::manage`, `request::unmanage`: rules must run before the client is visible, and client properties must still be valid during the handler
 - `request::geometry`: the Lua handler applies new geometry (fullscreen / maximize) via `c:geometry(...)`, and C code inspects `c->geometry` immediately after the emission (`client_set_fullscreen` calls `client_resize_do` on the next line). Queueing would leave that resize operating on stale bounds.
+- `request::focus_restore`: C checks whether the handler set a focused client and falls back to the topmost client otherwise, a synchronous request/response
 - `scanning`, `scanned`: startup synchronization barriers
-- Scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`): the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit
+- Client scalar `property::*` signals (`property::name`, `property::type`, `property::window`, `property::screen`, `property::fullscreen`, `property::maximized*`, `property::size_hints_honor`): the new value is already in C state when the signal fires; queueing them adds latency with no batching benefit. `property::screen` additionally has a synchronous Lua path (`c.screen = s`); queueing only the C path could deliver a stale change after a newer one.
+- Screen and output teardown (`removed` on both, output `property::screen` when the screen is detached): cleanup invalidates the objects before the drain runs, so queued delivery would be silently dropped, the same reason `request::unmanage` is synchronous. That drop is what `screen_checker()` and `output_checker()` are for: they report a torn-down screen or output invalid so `luaA_object_emit_signal` discards any signal still queued against it. Without them the drain would run handlers on a screen whose index already refers to a different, live screen. As in AwesomeWM, `valid` is then the only property readable on such an object; every other read raises `invalid object`, and `screen[s]` returns nil.
+- Screen addition (`added`, `_added`): the hotplug code assigns orphaned clients right after the emission and relies on Lua handlers having created the screen's tags and wibars first, the same reason `request::manage` is synchronous. Both wait on the lifecycle redesign (objects created in a pending state, resolved at the frame boundary).
+- layer_surface `request::manage`, `request::unmanage`, `request::keyboard`: same reasons as the client variants; for `request::keyboard`, C reads `has_keyboard_focus` immediately after the emission
+- Keybinding, button, and grabber dispatch (`press`, `release`, keygrabber/mousegrabber callbacks): C reads the handler's result to decide whether the input propagates to the client. The deferred design splits this into a synchronous lookup against a pre-registered binding table with dispatch through the queue; until then it stays synchronous.
+- `dbus.c` method dispatch: handler return values become the D-Bus reply
+- `idle::start`: the idle timer emits the signal and then calls the user's `awesome.set_idle_timeout` callback on the next line. Queueing only the signal would run the callback first, so a handler that snapshots pre-idle state would see it already changed.
+- `logind::prepare_sleep`: logind gives a bounded window between `PrepareForSleep(true)` and the machine suspending, which handlers use to lock the screen. A queued signal may not drain before the loop stops, and `a_dbus_process_request` goes on to dispatch the raw D-Bus signal synchronously, which would otherwise arrive first.
 
 ### Signals removed
 
@@ -145,9 +162,9 @@ These APIs exist and can be called without error, but have no effect on Wayland.
 
 ### Client Shape (Rounded Corners)
 
-Location: `luaa.c` require() hook, patched at load time
+Location: `lua/awful/client/shape.lua`
 
-AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are replaced with no-ops via a require() hook so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
+AwesomeWM uses the X11 Shape Extension (`xcb_shape_mask()`) to apply non-rectangular window shapes (e.g. rounded corners via `gears.shape.rounded_rect`). Wayland has no equivalent protocol-level feature. The `awful.client.shape.update.*` functions are no-ops so that user configs referencing `client.shape_bounding` or `client.shape_clip` load without error.
 
 See `ideas/Shapes.md` for technical rationale and potential future approaches (shader-based clipping, custom render pass).
 
@@ -245,13 +262,101 @@ These modifications to AwesomeWM's Lua libraries were necessary for Wayland comp
 |------|--------|--------|
 | `wibox/widget/systray.lua` | Complete rewrite | SNI D-Bus protocol replaces X11 XEmbed |
 | `beautiful/gtk.lua` | Complete rewrite | File parsing replaces live GTK widget queries |
-| `wibox/init.lua` | ARGB32 shapes, HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model |
+| `wibox/init.lua` | ARGB32 shape masks (AwesomeWM uses A1), HiDPI scaling, surface lifetime, `shape_border` | Wayland scene graph and compositing model; ARGB32 gives anti-aliased edges on curved shapes. The rendering path accepts either format, so a config may still assign A1 masks. |
 | `wibox/drawable.lua` | HiDPI scale-change handler | Recreates surfaces when `screen.scale` changes |
 | `awful/client.lua` | `c.type or "normal"` fallback | Native Wayland clients may not set window type |
 | `awful/permissions/init.lua` | Layer surface keyboard focus handlers | Wayland layer-shell has no X11 equivalent |
 | `awful/mouse/snap.lua` | ARGB32 shapes, surface lifetime | Same Wayland surface patterns as `wibox/init.lua` |
 | `gears/filesystem.lua` | `somewm/` paths | Rebranded config/cache directories |
 | `naughty/dbus.lua` | `awesome.version or "somewm-dev"` fallback | Version string safety |
+
+### Removed APIs
+
+| API | Replacement | Reason |
+|-----|-------------|--------|
+| `_timer` | `gears.timer` | An undocumented C wrapper around `wl_event_loop_add_timer` with no callers in the tree. Its timers were never removed on a hot-reload, so each one outlived the Lua state that owned it. `gears.timer` is GLib-based and unaffected. |
+| `_key` | `awful.key` | An undocumented C module (`_key.bind`, `_key.get_all`) with no callers in the tree. Nothing read back the function it stored, so a binding made through it could never fire, and the array it kept grew by a duplicate set per hot-reload. Real keybindings go through `awful.key` and the `key` object, which are untouched. |
+| `<class>.add_signal` and `gears.object.add_signal` | none needed | Signals have not needed declaring since AwesomeWM 4. The C version was a no-op generated onto every class (`client`, `screen`, `tag`, `drawin`, `key`, `button`, `output`, `layer_surface`), the Lua one only printed a deprecation. Neither had a caller. Calling either now errors instead of doing nothing. |
+| the `.data` property on capi objects | `._private` | An alias that warned and then returned the same table `._private` returns. No caller in the tree. `._private` is unchanged. |
+| `awful.ipc.remove_subscriber` | none needed | Nothing ever called it, so the subscriber count it maintained only grew and the broadcast fast path stayed permanently on. C tracks subscriber fds itself now (`_ipc_has_subscribers`). |
+| `gears.wallpaper` | `awful.wallpaper` | Deprecated upstream; somewmrc already uses `awful.wallpaper`. Removing it also deletes the somewm-side machinery that existed only to serve it: the `require()` hook that recorded wallpaper globals and the per-screen wallpaper cache in `root.c` (`root.wallpaper_cache_show`/`_has`/`_clear`/`_preload`), which `awful.wallpaper` never populated. An rc.lua calling `gears.wallpaper.*` errors. release/1.4 keeps it, matching AwesomeWM master. |
+| `awesome.api_level` | none | 2.0 is a hard reset and does not promise behavior across versions, so there is nothing for a config to select. Reading it now returns `nil`, so an rc.lua that compares it to a number errors. Three library behaviors that used to branch on it are now fixed at what level 4 did: `awful.autofocus` loads without a warning, `awful.permissions` does not wire `mouse::enter` to `request::autoactivate` (rc.lua does that), and `wibox.widget.base.make_widget` still defaults `enable_properties` to `false`. |
+| `gears.debug.deprecate_class` | none | Existed only to proxy a class that moved between API levels. No callers in the tree. |
+| `awful.util` | `gears.*` | 34 of its 38 functions already redirected to `gears.*` with a deprecation warning, so those move to the function that warning named (`awful.util.table.join` is `gears.table.join`, `awful.util.get_cache_dir` is `gears.filesystem.get_cache_dir`, and so on). Most are a straight module swap; the six that need more are listed under the table. The remaining four had no `gears` equivalent: `checkfile` was inlined into its only consumer, and `eval`, `restart` and `geticonpath` are gone, as is the `shell` field. An rc.lua touching any `awful.util` field errors, since the module itself no longer exists. |
+
+The `awful.util` redirects whose `gears` name differs, plus the two whose
+target is gone in 2.0 as well:
+
+| Old | Use instead |
+|-----|-------------|
+| `awful.util.escape` / `.unescape` | `gears.string.xml_escape` / `xml_unescape` |
+| `awful.util.mkdir` | `gears.filesystem.make_directories` |
+| `awful.util.get_rectangle_in_direction` | `gears.geometry.rectangle.get_in_direction` |
+| `awful.util.getdir("config"/"cache")` | `gears.filesystem.get_xdg_config_home() .. "somewm/"` / `gears.filesystem.get_cache_dir()` |
+| `awful.util.deprecate_class` | nothing, `gears.debug.deprecate_class` is gone too |
+
+AwesomeWM's stock `rc.lua` uses `awful.util.eval` for its "run Lua code" prompt.
+There is no replacement to call, so inline it:
+
+```lua
+exe_callback = function(s) return assert((loadstring or load)(s))() end,
+```
+
+`gears.debug.deprecate` stays, minus its `args.deprecated_in` option: it now always prints the warning. It no longer emits `debug::deprecation`, which had no listener anywhere, and no longer routes deprecations into `debug::error`. `debug::error` itself is unchanged and still carries real Lua errors. At level 4 a deprecation could reach neither signal, so nothing observable changed.
+
+### Removed deprecated aliases
+
+With no API level to gate them, the aliases that carried a `deprecated_in`
+version gate are gone, along with the ones AwesomeWM had already reduced to
+documentation. Each had a working replacement and no caller in the tree.
+
+| Removed | Use instead |
+|---------|-------------|
+| `awful.screen.getdistance_sq(s, x, y)` | `s:get_square_distance(x, y)` |
+| `awful.screen.padding(s, p)` | the `screen.padding` property |
+| `awful.mouse.client.dragtotag.border(c)` | set `awful.mouse.snap.drag_to_tag_enabled`, then `awful.mouse.client.move(c)` |
+| `awful.mouse.client.corner(c, corner)` | `awful.placement.closest_corner` |
+| `awful.mouse.client_under_pointer()` | `mouse.current_client` |
+| `awful.key.execute(mod, k)` | `awful.keyboard.emulate_key_combination(mod, k)` |
+| `menubar.get(s)` and calling `menubar(s)` | `menubar.refresh(s)` |
+| `beautiful.theme_assets.recolor_titlebar_normal/_focus(t, c)` | `beautiful.theme_assets.recolor_titlebar(t, c, "normal"/"focus")` |
+| `gears.filesystem.mkdir(dir)` | `gears.filesystem.make_directories(dir)` |
+| `gears.filesystem.get_dir("config"/"cache")` | `gears.filesystem.get_xdg_config_home() .. "somewm/"` / `gears.filesystem.get_cache_dir()` |
+| `wibox.layout.ratio:ajust_ratio` / `:ajust_widget_ratio` | `:adjust_ratio` / `:adjust_widget_ratio` (the spelling was a typo) |
+| `wibox.layout.grid:get_dimension()` | the `row_count` and `column_count` properties |
+| `naughty.notification.run` and `.destroy` properties | the `invoked` and `destroyed` signals |
+| the client `marked` and `unmarked` signals | `property::marked` |
+| the textbox `property::align` signal | `property::halign` |
+| `naughty.notificationClosedReason` | `naughty.notification_closed_reason` |
+| `notification_closed_reason.dismissedByUser` / `.dismissedByCommand` | `.dismissed_by_user` / `.dismissed_by_command` |
+
+`naughty.notification.run` and `.destroy` were already inert: nothing read them
+once the legacy notification layout was dropped, so setting them did nothing
+before this change either.
+
+The two camelCase notification-reason spellings were undocumented aliases of the
+snake_case ones and had no caller in the tree. The snake_case names are unchanged.
+
+`naughty.notify` itself is gone. It has no implementation and the `naughty`
+index handler returns `nil` for it, so calling it errors. Construct notifications
+with `naughty.notification { message = ... }`. The constructor still accepts
+`text` and maps it to `message`, so `naughty.notification { text = ... }` works.
+
+A further set of `@deprecatedproperty` entries documented names that had no
+getter or setter behind them: the ten directional `wibox.layout.grid`
+properties (`forced_num_rows`, `min_cols_size`, `horizontal_spacing`, and so
+on), `wibox.container.background.shape_border_width`/`_color`,
+`naughty.notification.text`, and `wibox.widget.textbox.align`. Assigning to any
+of them was already a silent no-op. Only the documentation was removed. The
+`text` entry covers the property only; the constructor argument of the same name
+still works, as above.
+
+Some `@deprecated` entries were left in place because they are not aliases.
+`beautiful.xresources.get_dpi` is the only way to read the DPI without a
+screen; `wibox.container.background.bgimage` draws `beautiful.taglist_squares_*`
+and the tasklist background images; `wibox.layout.grid:add_widget_at` is the
+method the grid uses internally; and `menubar.icon_theme` / `menubar.index_theme`
+mark their whole API deprecated while `wibox.widget.systray_icon` depends on it.
 
 ### New Lua Modules (no AwesomeWM equivalent)
 

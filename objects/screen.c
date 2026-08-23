@@ -9,6 +9,7 @@
 #include "common/luaobject.h"
 #include "../somewm_api.h"
 #include "../globalconf.h"
+#include "../event_queue.h"
 #include "common/util.h"
 #include "../x11_compat.h"
 #include <stdio.h>
@@ -51,18 +52,43 @@ static bool screens_scanned = false;
 extern void signal_array_init(signal_array_t *arr);
 extern void signal_array_wipe(signal_array_t *arr);
 
-/** Reset screen_refs array for hot-reload.
- * Unrefs all screen objects from the old Lua registry and resets the array.
- * Must be called BEFORE lua_close() so the unrefs happen against the live state.
+/** Drop the screen_refs array at a Lua state swap.
+ * The entries are registry refs owned by the state being torn down, so they are
+ * dropped without unref: both paths close that state, which frees the registry
+ * they index, and unreffing them against the new one would free live slots.
  */
 void
 luaA_screen_refs_reset(void)
 {
 	screen_count = 0;
-	/* Keep allocated capacity for reuse. screen_refs entries are Lua registry
-	 * refs from the old state - they become invalid after lua_close(). */
+	/* Keep allocated capacity for reuse. */
 	primary_screen = NULL;
 	screens_scanned = false;
+}
+
+/** Rebuild screen objects for the physical monitors in a fresh Lua state.
+ * The config-timeout path closes the state, which frees every screen userdata
+ * while screen_refs still holds its registry ints and the Monitor structs live
+ * on. Without this the fresh state has no screens: screen.primary is nil,
+ * pushing a stale ref warns "on non-object", and naughty's startup-error
+ * fallback concludes no screen exists and fake_adds a phantom one.
+ *
+ * The reload path does not use this; it replays its own screen snapshots so
+ * geometry and names survive. Here there is nothing to preserve, so this
+ * mirrors what createmon() does at startup.
+ */
+void
+luaA_screen_hot_reload(lua_State *L)
+{
+	Monitor *m;
+	int index = 1;
+
+	luaA_screen_refs_reset();
+
+	wl_list_for_each(m, &mons, link) {
+		luaA_screen_new(L, m, index++);
+		lua_pop(L, 1);  /* luaA_screen_new leaves the screen on the stack */
+	}
 }
 
 /** Get all screen objects for hot-reload snapshot.
@@ -93,10 +119,12 @@ luaA_screen_get_all(lua_State *L, screen_t **out_screens, int *out_count)
  * ======================================================================== */
 
 /** Create a new screen object
+ * Leaves the screen userdata on the stack on both exits, so the caller pops
+ * regardless of what comes back.
  * \param L Lua state
  * \param m Monitor pointer
  * \param index Screen index (1-based)
- * \return Pointer to new screen object
+ * \return Pointer to new screen object, NULL if the ref array could not grow
  */
 screen_t *
 luaA_screen_new(lua_State *L, Monitor *m, int index)
@@ -321,7 +349,8 @@ luaA_screen_scanned_done(void)
 void
 luaA_screen_emit_list(lua_State *L)
 {
-	luaA_class_emit_signal(L, &screen_class, "list", 0);
+	(void)L;
+	some_event_queue_class(&screen_class, SIG_LIST);
 }
 
 /* Forward declaration for viewports function */
@@ -336,7 +365,7 @@ luaA_screen_emit_viewports(lua_State *L)
 {
 	/* Push the viewports table onto stack as signal argument */
 	luaA_screen_viewports(L);
-	luaA_class_emit_signal(L, &screen_class, "property::_viewports", 1);
+	some_event_queue_class_args(L, &screen_class, SIG_PROPERTY_VIEWPORTS, 1);
 }
 
 /** Emit primary_changed signal on a screen object
@@ -348,7 +377,7 @@ luaA_screen_emit_primary_changed(lua_State *L, screen_t *screen)
 	if (!screen || !screen->valid)
 		return;
 	luaA_screen_push(L, screen);
-	luaA_object_emit_signal(L, -1, "primary_changed", 0);
+	some_event_queue_signal0(L, -1, SIG_PRIMARY_CHANGED);
 	lua_pop(L, 1);
 }
 
@@ -542,17 +571,21 @@ push_wlr_box(lua_State *L, struct wlr_box *box)
 
 /* Note: wlr_box_equal() is provided by wlroots in wlr/util/box.h */
 
+static void screen_update_workarea_ex(screen_t *screen, bool defer);
+
 /** Recalculate workarea for a screen including all drawin struts
  * \param L Lua state (unused, kept for compatibility)
  * \param screen Screen to recalculate workarea for
  *
- * Wrapper for screen_update_workarea() for internal use.
+ * Wrapper for screen_update_workarea() used by the C-initiated geometry path,
+ * which queues property::geometry. The workarea signal has to be queued too,
+ * or it would overtake the geometry signal it is supposed to follow.
  */
 static void
 luaA_screen_recalculate_workarea(lua_State *L, screen_t *screen)
 {
 	(void)L;
-	screen_update_workarea(screen);
+	screen_update_workarea_ex(screen, true);
 }
 
 /** Update screen geometry from monitor and emit property::geometry if changed
@@ -596,10 +629,10 @@ luaA_screen_update_geometry(lua_State *L, screen_t *screen)
 			}
 		}
 
-		/* Emit property::geometry signal with old geometry as argument */
+		/* Queue property::geometry signal with old geometry as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_geom);
-		luaA_object_emit_signal(L, -2, "property::geometry", 1);
+		some_event_queue_signal(L, -2, SIG_PROPERTY_GEOMETRY, 1);
 		lua_pop(L, 1);  /* Pop screen object */
 
 		/* Recalculate workarea including drawin struts.
@@ -645,10 +678,10 @@ screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
 			screen->monitor->w = new_workarea;
 		}
 
-		/* Emit property::workarea signal with old workarea as argument */
+		/* Queue property::workarea signal with old workarea as argument */
 		luaA_screen_push(L, screen);
 		push_wlr_box(L, &old_workarea);
-		luaA_object_emit_signal(L, -2, "property::workarea", 1);
+		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
 		lua_pop(L, 1);  /* Pop screen object */
 	}
 }
@@ -661,6 +694,15 @@ screen_set_workarea(lua_State *L, screen_t *screen, struct wlr_box *workarea)
  */
 void
 screen_update_workarea(screen_t *screen)
+{
+	screen_update_workarea_ex(screen, false);
+}
+
+/** screen_update_workarea(), with control over how property::workarea is sent.
+ * \param defer Queue the signal instead of emitting it inline.
+ */
+static void
+screen_update_workarea_ex(screen_t *screen, bool defer)
 {
 	area_t area = screen->geometry;
 	uint16_t top = 0, bottom = 0, left = 0, right = 0;
@@ -757,7 +799,10 @@ screen_update_workarea(screen_t *screen)
 	lua_State *L = globalconf_get_lua_State();
 	luaA_object_push(L, screen);
 	luaA_pusharea(L, old_workarea);
-	luaA_object_emit_signal(L, -2, "property::workarea", 1);
+	if (defer)
+		some_event_queue_signal(L, -2, SIG_PROPERTY_WORKAREA, 1);
+	else
+		luaA_object_emit_signal(L, -2, "property::workarea", 1);
 	lua_pop(L, 1);
 }
 
@@ -1810,7 +1855,10 @@ luaA_screen_module_index(lua_State *L)
 	 * already be a screen object. Calling screen[s] returns s unchanged.
 	 */
 	if (lua_isuserdata(L, 2)) {
-		screen_t *s = luaA_checkscreen(L, 2);
+		/* luaA_toudata, not luaA_checkscreen: a removed screen must yield
+		 * nil here so get_screen() callers fall through their nil guard,
+		 * rather than raising "invalid object". */
+		screen_t *s = luaA_toudata(L, 2, &screen_class);
 		if (s && s->valid) {
 			/* Return the same screen object */
 			lua_pushvalue(L, 2);
@@ -1861,7 +1909,10 @@ luaA_screen_module_newindex(lua_State *L)
 
 		if ((new_primary_screen) && (new_primary_screen != primary_screen)) {
 			primary_screen = new_primary_screen;
-			luaA_screen_emit_primary_changed(L, primary_screen);
+			/* Lua-initiated: emit synchronously, like fake_add/swap do */
+			luaA_screen_push(L, primary_screen);
+			luaA_object_emit_signal(L, -1, "primary_changed", 0);
+			lua_pop(L, 1);
 		}
 		return 0;
 	}
@@ -1975,12 +2026,21 @@ luaA_screen_disconnect_signal(lua_State *L)
 static int
 luaA_screen_index(lua_State *L)
 {
-	const char *key;
+	const char *key = luaL_checkstring(L, 2);
+	screen_t *s;
+
+	/* "valid" is the only property readable on a torn-down screen, so it has
+	 * to be answered before luaA_checkscreen() rejects one. Mirrors the
+	 * special case in luaA_class_index(). */
+	if (strcmp(key, "valid") == 0) {
+		s = luaA_toudata(L, 1, &screen_class);
+		lua_pushboolean(L, s && s->valid);
+		return 1;
+	}
 
 	/* Validate screen object (luaA_checkscreen will error if invalid) */
-	screen_t *s = luaA_checkscreen(L, 1);
+	s = luaA_checkscreen(L, 1);
 	(void)s;  /* Used for validation */
-	key = luaL_checkstring(L, 2);
 
 	/* Check for properties */
 	if (strcmp(key, "geometry") == 0)
@@ -1995,11 +2055,6 @@ luaA_screen_index(lua_State *L)
 		return luaA_screen_get_name(L);
 	if (strcmp(key, "_managed") == 0)
 		return luaA_screen_get_managed(L);
-	if (strcmp(key, "valid") == 0) {
-		screen_t *screen = luaA_checkscreen(L, 1);
-		lua_pushboolean(L, screen->valid);
-		return 1;
-	}
 	if (strcmp(key, "scale") == 0) {
 		screen_t *screen = luaA_checkscreen(L, 1);
 		return luaA_screen_get_scale(L, screen);
@@ -2351,10 +2406,11 @@ const luaL_Reg screen_meta[] = {
 static bool
 screen_checker(screen_t *s)
 {
-	(void)s;
-	/* In somewm, screens are always valid once created
-	 * TODO: Implement proper validation if needed */
-	return true;
+	/* Signals queued before screen_removed() drain after it, so the queue
+	 * can hold the last reference to a torn-down screen. Reporting it
+	 * invalid makes luaA_object_emit_signal drop those events instead of
+	 * running handlers against a screen whose index now aliases a live one. */
+	return s && s->valid;
 }
 
 /* Screen class methods (for global screen table) */

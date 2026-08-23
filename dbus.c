@@ -377,6 +377,10 @@ a_dbus_process_request(DBusConnection *dbus_connection, DBusMessage *msg)
             dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_BOOLEAN) {
             dbus_message_iter_get_basic(&iter, &is_sleeping);
 
+            /* Synchronous: logind allows a bounded window before the
+             * machine suspends, and the loop may stop before the next
+             * drain. The raw D-Bus signal is dispatched just below, so a
+             * queued one would also arrive after it. */
             lua_pushboolean(L, is_sleeping);
             luaA_emit_signal_global_with_stack(L, "logind::prepare_sleep", 1);
         }
@@ -698,6 +702,23 @@ a_dbus_cleanup(void)
     a_dbus_cleanup_bus(dbus_connection_system, &system_source);
 }
 
+/** Release the signal handler table at hot-reload.
+ * The handlers are object refs in the state being closed, so they are unref'd
+ * there and nowhere else. Re-init matters as much as the wipe:
+ * signal_array_wipe frees tab without clearing len, and the next
+ * signal_array_insert would binary-search a NULL tab.
+ */
+void
+a_dbus_hot_reload(lua_State *L)
+{
+    foreach(sig, dbus_signals)
+        foreach(func, sig->sigfuncs)
+            luaA_object_unref(L, (void *) *func);
+
+    signal_array_wipe(&dbus_signals);
+    signal_array_init(&dbus_signals);
+}
+
 /** Retrieve the D-Bus bus by its name.
  * \param name The name of the bus.
  * \return The corresponding D-Bus connection.
@@ -931,6 +952,13 @@ a_dbus_init(void)
 void
 a_dbus_cleanup(void)
 {
+}
+
+/** Empty stub if dbus is not enabled */
+void
+a_dbus_hot_reload(lua_State *L)
+{
+    (void) L;
 }
 
 #endif

@@ -247,10 +247,6 @@ end
 -- @param command_string Raw command string from socket
 -- @param client_fd File descriptor of connected client (for reference)
 -- @return Response string in protocol format ("OK\n\n" or "ERROR msg\n\n")
--- Active subscribers: client_fd -> filter_set (table of event_type=true, or true for all)
-local subscribers = {}
-local subscriber_count = 0
-
 function ipc.dispatch(command_string, client_fd)
   -- Check for --json flag
   local json_mode = false
@@ -269,27 +265,12 @@ function ipc.dispatch(command_string, client_fd)
     return "ERROR Empty command\n\n"
   end
 
-  -- Handle subscribe specially (needs client_fd)
+  -- Handle subscribe specially (needs client_fd). Event-type arguments are
+  -- accepted and ignored: subscription is a per-fd flag in C, and every
+  -- subscriber gets every event. Filtering them is the client's job.
   if cmd_name == "subscribe" then
     if _ipc_subscribe then
       _ipc_subscribe(client_fd)
-    end
-    -- Store filter set for this subscriber
-    if not subscribers[client_fd] then
-      subscriber_count = subscriber_count + 1
-    end
-    if #args > 0 then
-      local filters = {}
-      for _, event_type in ipairs(args) do
-        if event_type == "all" then
-          filters = true
-          break
-        end
-        filters[event_type] = true
-      end
-      subscribers[client_fd] = filters
-    else
-      subscribers[client_fd] = true -- true means all events
     end
     if json_mode then
       return json_encode({status = "ok", result = "Subscribed to events"}) .. "\n\n"
@@ -351,18 +332,11 @@ end
 -- @param event_type Event type string (e.g., "client_focus", "tag_switch")
 -- @param data Table of event data to JSON-encode
 function ipc.broadcast(event_type, data)
-  if subscriber_count <= 0 or not _ipc_broadcast then return end
+  if not _ipc_broadcast or not _ipc_has_subscribers then return end
+  if not _ipc_has_subscribers() then return end
 
   local message = "EVENT " .. event_type .. " " .. json_encode(data or {}) .. "\n"
   _ipc_broadcast(message)
-end
-
---- Remove a subscriber (called when client disconnects or via cleanup)
-function ipc.remove_subscriber(client_fd)
-  if subscribers[client_fd] then
-    subscribers[client_fd] = nil
-    subscriber_count = subscriber_count - 1
-  end
 end
 
 --- Register all built-in commands
@@ -2352,8 +2326,8 @@ local function register_builtin_commands()
   local function parse_modifiers(mod_str)
     if not mod_str or mod_str == "" then return {} end
     local mods = {}
-    for mod in mod_str:gmatch("[^+,]+") do
-      mod = mod:match("^%s*(.-)%s*$")  -- trim whitespace
+    for raw in mod_str:gmatch("[^+,]+") do
+      local mod = raw:match("^%s*(.-)%s*$")  -- trim whitespace
       if mod ~= "" then
         table.insert(mods, mod)
       end
@@ -3355,23 +3329,41 @@ local function register_builtin_commands()
   -- WALLPAPER COMMANDS
   -- =================================================================
 
-  --- wallpaper.set <path> [screen] - Set wallpaper from image file
-  ipc.register("wallpaper.set", function(path, screen_arg)
-    if not path then
-      error("Usage: wallpaper set <path> [screen]")
-    end
-
+  local function resolve_screen(screen_arg)
     local s
     if screen_arg then
       local idx = tonumber(screen_arg)
       if idx then s = capi.screen[idx] end
     end
     s = s or awful_screen.focused()
-
     if not s then error("No screen available") end
+    return s
+  end
 
-    local gears_wallpaper = require("gears.wallpaper")
-    gears_wallpaper.maximized(path, s, false)
+  --- wallpaper.set <path> [screen] - Set wallpaper from image file
+  ipc.register("wallpaper.set", function(path, screen_arg)
+    if not path then
+      error("Usage: wallpaper set <path> [screen]")
+    end
+    local s = resolve_screen(screen_arg)
+
+    local wallpaper = require("awful.wallpaper")
+    local wibox = require("wibox")
+    wallpaper {
+      screen = s,
+      widget = {
+        {
+          image     = path,
+          upscale   = true,
+          downscale = true,
+          widget    = wibox.widget.imagebox,
+        },
+        valign = "center",
+        halign = "center",
+        tiled  = false,
+        widget = wibox.container.tile,
+      }
+    }
     return string.format("Set wallpaper to %s on screen %d", path, s.index)
   end)
 
@@ -3380,18 +3372,10 @@ local function register_builtin_commands()
     if not color then
       error("Usage: wallpaper color <hex> [screen]")
     end
+    local s = resolve_screen(screen_arg)
 
-    local s
-    if screen_arg then
-      local idx = tonumber(screen_arg)
-      if idx then s = capi.screen[idx] end
-    end
-    s = s or awful_screen.focused()
-
-    if not s then error("No screen available") end
-
-    local gears_wallpaper = require("gears.wallpaper")
-    gears_wallpaper.set(require("gears.color")(color))
+    local wallpaper = require("awful.wallpaper")
+    wallpaper { screen = s, bg = color }
     return string.format("Set wallpaper color to %s", color)
   end)
 

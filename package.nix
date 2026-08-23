@@ -24,10 +24,11 @@
   wayland,
   wayland-protocols,
   wayland-scanner,
-  wlroots_0_19,
+  wlroots_0_20,
   xwayland,
   gtk3Support ? true,
   gtk3 ? null,
+  wrapGAppsHook3,
   extraGIPackages ? [ ],
   extraLuaPackages ? (_: [ ]),
 }:
@@ -56,6 +57,7 @@ stdenv.mkDerivation {
     ninja
     pkg-config
     wayland-scanner
+    wrapGAppsHook3
   ];
 
   buildInputs = [
@@ -74,7 +76,7 @@ stdenv.mkDerivation {
     pango
     wayland
     wayland-protocols
-    wlroots_0_19
+    wlroots_0_20
     libxcb
     libxcb-wm
     libxcb-util

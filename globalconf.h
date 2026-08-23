@@ -59,6 +59,9 @@ typedef struct wallpaper_cache_entry {
 /* With per-screen caching, need more entries (e.g., 2 screens × 9 tags = 18) */
 #define WALLPAPER_CACHE_MAX 32
 
+/** Initialise the wallpaper cache list (call once, after globalconf is zeroed) */
+void wallpaper_cache_init(void);
+
 /** Look up a cached wallpaper entry by path and screen index */
 wallpaper_cache_entry_t *wallpaper_cache_lookup(const char *path, int screen_index);
 
@@ -243,14 +246,12 @@ typedef struct
      * This is the Wayland equivalent of X11's passive button grab state.
      */
     struct {
-        bool buttons[5];  /* Button 1-5 pressed states (true = pressed) */
+        bool buttons[5];  /* X11 button 1-5 pressed states; only 1-3 are
+                           * ever set (4/5 mean scroll, never held) */
     } button_state;
 
     /** The exit code that main() will return with */
     int exit_code;
-
-    /** The Global API level */
-    int api_level;
 
     /** Preferred icon size for clients */
     uint32_t preferred_icon_size;
@@ -307,9 +308,9 @@ typedef struct
     int argc;
     char **argv;
 
-    /** Highest GLib source ID after compositor setup (before Lua loads).
-     *  During hot-reload, all sources above this baseline are removed
-     *  to prevent stale Lgi FFI closures from firing with dead lua_State*. */
+    /** Highest GLib source ID before the first config loads. A reload removes
+     *  every source above it, bar the few C-owned ones attached later and
+     *  exempted by luaA_glib_source_protect(). */
     unsigned int glib_source_baseline;
 
     /** True while hot-reload is tearing down/rebuilding the Lua state.
@@ -340,11 +341,6 @@ typedef struct
      */
     cairo_surface_t *wallpaper;
 
-    /** Wallpaper scene graph node
-     * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
-     */
-    struct wlr_scene_buffer *wallpaper_buffer_node;
-
     /* ========== WALLPAPER CACHE ========== */
 
     /** Wallpaper cache for instant switching (toggle visibility vs destroy/recreate)
@@ -358,6 +354,11 @@ typedef struct
      */
     #define WALLPAPER_MAX_SCREENS 16
     struct wallpaper_cache_entry *current_wallpaper_per_screen[WALLPAPER_MAX_SCREENS];
+
+    /** Wallpaper scene graph node
+     * Wayland-specific: wlr_scene_buffer in LyrBg layer for display
+     */
+    struct wlr_scene_buffer *wallpaper_buffer_node;
 
     /* ========== SYSTRAY SUPPORT ========== */
 
@@ -482,17 +483,6 @@ void globalconf_init(lua_State *L);
  * This should be called at shutdown to free all allocated resources.
  */
 void globalconf_wipe(void);
-
-/** Update wallpaper from root window (X11-only stub).
- * Wayland wallpaper is set via root_set_wallpaper() or root_set_wallpaper_buffer().
- */
-void root_update_wallpaper(void);
-
-/** Initialize wallpaper cache (call after scene graph is created) */
-void wallpaper_cache_init(void);
-
-/** Cleanup wallpaper cache (call before destroying scene) */
-void wallpaper_cache_cleanup(void);
 
 #endif /* SOMEWM_GLOBALCONF_H */
 /* vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80 */

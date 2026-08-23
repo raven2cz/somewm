@@ -186,7 +186,7 @@ uint32_t some_get_cursor_size(void);
 void some_update_cursor_theme(const char *theme_name, uint32_t size);
 void some_get_cursor_position(double *x, double *y);
 void some_set_cursor_position(double x, double y, int silent);
-void some_get_button_states(int states[5]);
+uint16_t some_button_state_mask(void);
 Client *some_object_under_cursor(void);
 drawin_t *some_drawin_under_cursor(void);
 void some_warp_cursor_to_monitor(Monitor *m);
@@ -247,6 +247,7 @@ int some_is_ext_session_locked(void);
 /* Lock activation/deactivation - defined in somewm.c, called from luaa.c */
 void some_activate_lua_lock(void);
 void some_deactivate_lua_lock(void);
+void some_deactivate_lua_lock_no_focus(void);
 void some_promote_lock_cover(drawin_t *d);
 void some_clear_pre_lock_client(client_t *c);
 
@@ -265,6 +266,7 @@ static inline bool session_is_locked(void) {
  * Hot-reload support
  */
 void some_refresh(void);
+void somewm_pin_lgi_libs(void);
 
 /*
  * Test helpers - headless output hotplug simulation

@@ -37,7 +37,6 @@
 #include <wlr/render/wlr_texture.h>
 #include <wlr/render/pass.h>
 #include <wlr/types/wlr_buffer.h>
-#include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <cairo.h>
@@ -655,7 +654,7 @@ luaA_root_size_mm(lua_State *L)
 	return 2;
 }
 
-/** root.cursor(cursor_name) - Set cursor (stub for AwesomeWM compatibility)
+/** root.cursor(cursor_name) - Set the default cursor
  * \param cursor_name Name of cursor to set (e.g., "left_ptr")
  */
 static int
@@ -1420,7 +1419,7 @@ wallpaper_cache_preload_path(const char *path, int screen_index, screen_t *scree
 			guchar g = src_row[x * n_channels + 1];
 			guchar b = src_row[x * n_channels + 2];
 			guchar a = (n_channels == 4) ? src_row[x * n_channels + 3] : 255;
-			dest_row[x] = (a << 24) | (r << 16) | (g << 8) | b;
+			dest_row[x] = ((uint32_t)a << 24) | (r << 16) | (g << 8) | b;
 		}
 	}
 	cairo_surface_mark_dirty(img_surface);
@@ -1583,6 +1582,31 @@ luaA_root_set_call_handler(lua_State *L)
 	return luaA_registerfct(L, 1, &miss_call_handler);
 }
 
+/** Release the miss handlers and the global bindings at hot-reload.
+ * The handlers are unref'd against the state that owns them. Leaving them set
+ * is worse than a stale read: luaA_registerfct unrefs the old value when
+ * awful._compat re-registers, which would free a live slot in the new
+ * registry, and the reset loops in luaA_root_keys/luaA_root_buttons would
+ * luaA_object_unref old-state objects the moment the reloaded config assigns
+ * its bindings. The key and button arrays are item refs on the root object,
+ * which goes with the state, so wiping the arrays is all they need.
+ */
+void
+luaA_root_hot_reload(lua_State *L)
+{
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_index_handler);
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_newindex_handler);
+	luaL_unref(L, LUA_REGISTRYINDEX, miss_call_handler);
+	miss_index_handler = LUA_REFNIL;
+	miss_newindex_handler = LUA_REFNIL;
+	miss_call_handler = LUA_REFNIL;
+
+	key_array_wipe(&globalconf.keys);
+	key_array_init(&globalconf.keys);
+	button_array_wipe(&globalconf.buttons);
+	button_array_init(&globalconf.buttons);
+}
+
 /* ========== SCREENSHOT SUPPORT ========== */
 
 /* struct screenshot_render_data is declared in screenshot_compose.h so it can
@@ -1637,7 +1661,7 @@ composite_widgets_directly(cairo_t *cr, bool ontop_only)
 			/* Apply shape_bounding mask if set (for rounded corners etc.) */
 			if (drawin->shape_bounding &&
 			    cairo_surface_status(drawin->shape_bounding) == CAIRO_STATUS_SUCCESS) {
-				masked_surface = drawin_apply_shape_mask_for_screenshot(
+				masked_surface = drawin_apply_shape_mask(
 					drawin->drawable->surface, drawin->shape_bounding);
 				if (masked_surface)
 					surface_to_composite = masked_surface;
@@ -2358,6 +2382,179 @@ luaA_root_xwayland_unmanaged(lua_State *L)
 	return 1;
 }
 
+/* Recursive worker for root.scene_tree_dump(). */
+static void
+scene_tree_dump_node(lua_State *L, struct wlr_scene_node *node, int depth,
+                     int *index, const char *label)
+{
+	const char *type = "?";
+	int w = 0, h = 0;
+
+	switch (node->type) {
+	case WLR_SCENE_NODE_TREE:   type = "tree"; break;
+	case WLR_SCENE_NODE_RECT:   type = "rect"; break;
+	case WLR_SCENE_NODE_BUFFER: type = "buffer"; break;
+	default: break;
+	}
+	if (node->type == WLR_SCENE_NODE_RECT) {
+		struct wlr_scene_rect *r = wlr_scene_rect_from_node(node);
+		w = r->width; h = r->height;
+	}
+
+	lua_newtable(L);
+	lua_set_int_field(L, "depth", depth);
+	lua_pushstring(L, type);
+	lua_setfield(L, -2, "type");
+	lua_pushstring(L, label ? label : "");
+	lua_setfield(L, -2, "label");
+	lua_set_int_field(L, "x", node->x);
+	lua_set_int_field(L, "y", node->y);
+	lua_set_int_field(L, "width", w);
+	lua_set_int_field(L, "height", h);
+	lua_pushboolean(L, node->enabled);
+	lua_setfield(L, -2, "enabled");
+
+	/* Absolute position, so a node's box can be compared against a
+	 * screenshot without walking the tree by hand. */
+	{
+		int ax = 0, ay = 0;
+		if (wlr_scene_node_coords(node, &ax, &ay)) {
+			lua_set_int_field(L, "abs_x", ax);
+			lua_set_int_field(L, "abs_y", ay);
+		}
+	}
+
+	/* The region the node is actually allowed to paint. A node whose rect is
+	 * the right size can still come out wrong if occlusion from above has
+	 * eaten part of its visible region, and that is invisible from Lua
+	 * otherwise. */
+	{
+		/* wlr_scene_node.visible sits in the WLR_PRIVATE block. wlroots
+		 * defines that macro to nothing for its own build, which makes the
+		 * member anonymous; for consumers it stays a named member. Reach it
+		 * either way -- this is debug-only introspection. */
+#ifdef WLR_PRIVATE
+		const pixman_region32_t *vis = &node->visible;
+#else
+		const pixman_region32_t *vis = &node->WLR_PRIVATE.visible;
+#endif
+		const pixman_box32_t *ext = &vis->extents;
+		int nrects = 0;
+		pixman_region32_rectangles(vis, &nrects);
+		lua_set_int_field(L, "vis_x", ext->x1);
+		lua_set_int_field(L, "vis_y", ext->y1);
+		lua_set_int_field(L, "vis_w", ext->x2 - ext->x1);
+		lua_set_int_field(L, "vis_h", ext->y2 - ext->y1);
+		lua_set_int_field(L, "vis_rects", nrects);
+	}
+
+#ifdef HAVE_SCENEFX
+	/* Corner radii and the clipped_region, as the compositor holds them.
+	 * somewm builds its rounded border as one rect with a punch-hole, so
+	 * these are the numbers that decide where the ring lands. */
+	if (node->type == WLR_SCENE_NODE_RECT) {
+		struct wlr_scene_rect *r = wlr_scene_rect_from_node(node);
+		lua_set_int_field(L, "clip_x", r->clipped_region.area.x);
+		lua_set_int_field(L, "clip_y", r->clipped_region.area.y);
+		lua_set_int_field(L, "clip_w", r->clipped_region.area.width);
+		lua_set_int_field(L, "clip_h", r->clipped_region.area.height);
+#ifdef HAVE_SCENEFX_CORNER_RADII
+		lua_set_int_field(L, "radius", r->corners.top_left);
+		lua_set_int_field(L, "clip_radius", r->clipped_region.corners.top_left);
+#else
+		lua_set_int_field(L, "radius", r->corner_radius);
+		lua_set_int_field(L, "clip_radius", r->clipped_region.corner_radius);
+#endif
+		lua_pushnumber(L, r->color[3]);
+		lua_setfield(L, -2, "alpha");
+	}
+#endif
+
+	lua_rawseti(L, -2, (*index)++);
+
+	if (node->type == WLR_SCENE_NODE_TREE) {
+		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &tree->children, link)
+			scene_tree_dump_node(L, child, depth + 1, index, NULL);
+	}
+}
+
+/** Dump a client's scene subtree, in paint order.
+ *
+ * Borders, shadow, titlebars and the blur node are compositor-owned siblings
+ * inside c->scene, not part of the client's surface tree, so their order and
+ * geometry cannot be inspected from the client side. This exposes the actual
+ * tree for auditing.
+ *
+ * @tparam client c
+ * @treturn table Array of { depth, type, label, x, y, width, height, enabled },
+ *   in the order they are painted (first = bottom).
+ * @staticfct scene_tree_dump
+ */
+static int
+luaA_root_scene_tree_dump(lua_State *L)
+{
+	client_t *c = luaA_checkudata(L, 1, &client_class);
+	int index = 1;
+
+	lua_newtable(L);
+	if (!c->scene)
+		return 1;
+
+	/* Label the nodes we know by pointer, so the dump is readable. */
+	{
+		struct wlr_scene_node *child;
+		scene_tree_dump_node(L, &c->scene->node, 0, &index, "c->scene");
+		(void)child;
+	}
+	return 1;
+}
+
+/** Paint order of the clients inside one scene layer.
+ *
+ * stack_refresh() reparents and reorders client scene nodes every time it
+ * runs. If that order is not stable between refreshes, windows visibly churn.
+ * client.get(nil, true) reports the compositor's intended stack; this reports
+ * what the scene graph actually holds, which is what gets painted.
+ *
+ * @tparam string layer One of the LyrX names, e.g. "tile", "float".
+ * @treturn table Array of window ids / client names, bottom-most first.
+ * @staticfct layer_order
+ */
+static int
+luaA_root_layer_order(lua_State *L)
+{
+	const char *want = luaL_checkstring(L, 1);
+	static const char *const names[NUM_LAYERS] = {
+		[LyrBg] = "background", [LyrBottom] = "bottom", [LyrTile] = "tile",
+		[LyrFloat] = "float", [LyrWibox] = "wibox", [LyrTop] = "top",
+		[LyrFS] = "fullscreen", [LyrOverlay] = "overlay",
+		[LyrUnmanaged] = "unmanaged", [LyrBlock] = "block",
+	};
+	int idx = -1, i = 1;
+	struct wlr_scene_node *node;
+
+	for (int n = 0; n < NUM_LAYERS; n++)
+		if (names[n] && strcmp(names[n], want) == 0) { idx = n; break; }
+
+	lua_newtable(L);
+	if (idx < 0 || !layers[idx])
+		return 1;
+
+	wl_list_for_each(node, &layers[idx]->children, link) {
+		client_t *c = node->data;
+		lua_newtable(L);
+		lua_set_int_field(L, "window", (c && c->window) ? (int)c->window : 0);
+		lua_pushstring(L, (c && c->name) ? c->name : "?");
+		lua_setfield(L, -2, "name");
+		lua_pushboolean(L, node->enabled);
+		lua_setfield(L, -2, "enabled");
+		lua_rawseti(L, -2, i++);
+	}
+	return 1;
+}
+
 static int
 luaA_root_drawable_stats(lua_State *L)
 {
@@ -2421,6 +2618,8 @@ const luaL_Reg root_methods[] = {
 	{ "wallpaper_cache_preload", luaA_root_wallpaper_cache_preload },
 	{ "wallpaper_cache_stats", luaA_root_wallpaper_cache_stats },
 	{ "drawable_stats", luaA_root_drawable_stats },
+	{ "scene_tree_dump", luaA_root_scene_tree_dump },
+	{ "layer_order", luaA_root_layer_order },
 	{ "xwayland_unmanaged", luaA_root_xwayland_unmanaged },
 	{ "memory_stats", luaA_root_memory_stats },
 	/* Wallpaper overlay helpers for tag slide animation */

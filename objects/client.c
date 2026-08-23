@@ -378,7 +378,7 @@ lua_class_t client_class;
  *
  *    client.connect_signal("property::urgent", function(c)
  *        if c.urgent then
- *            naughty.notify {
+ *            naughty.notification {
  *                title = "Urgent client",
  *                message = c.name,
  *            }
@@ -1715,17 +1715,6 @@ client_emit_scanning(void)
 }
 
 void
-client_set_motif_wm_hints(lua_State *L, int cidx, motif_wm_hints_t hints)
-{
-    client_t *c = luaA_checkudata(L, cidx, &client_class);
-    if (memcmp(&c->motif_wm_hints, &hints, sizeof(c->motif_wm_hints)) == 0)
-        return;
-
-    memcpy(&c->motif_wm_hints, &hints, sizeof(c->motif_wm_hints));
-    luaA_object_emit_signal(L, cidx, "property::motif_wm_hints", 0);
-}
-
-void
 client_find_transient_for(client_t *c)
 {
     int counter;
@@ -2167,11 +2156,14 @@ client_border_refresh(void)
         if(!c->scene || !c->border[0])
             continue;
 
-        /* Sync wlroots border width (bw) with Lua-facing border_width.
-         * Fullscreen clients must keep bw=0 regardless of border_width. */
+        /* Sync wlroots border width (bw) with Lua-facing border_width;
+         * client_geometry_refresh() runs right after this and applies the
+         * new width to the border rects, surface offset and shadow.
+         * Fullscreen keeps bw at 0 (matches setfullscreen()), so a
+         * border_color change while fullscreen doesn't re-grow the frame. */
         c->bw = c->fullscreen ? 0 : c->border_width;
 
-        /* Update border geometry — handles both flat and rounded corners.
+        /* Update border geometry -- handles both flat and rounded corners.
          * When corner_radius > 0, extends top/bottom borders and clips them.
          * When corner_radius == 0, uses standard flat layout. */
         client_update_border_for_corners(c);
@@ -2226,8 +2218,9 @@ client_geometry_refresh(void)
 void
 client_refresh(void)
 {
-    client_geometry_refresh();
+    /* Border refresh first: it syncs c->bw, which the geometry pass reads */
     client_border_refresh();
+    client_geometry_refresh();
     client_focus_refresh();
 }
 
@@ -2271,254 +2264,6 @@ client_destroy_later(void)
 
     /* Everything's done, clear the list */
     globalconf.destroy_later_windows.len = 0;
-}
-
-static void
-border_width_callback(client_t *c, uint16_t old_width, uint16_t new_width)
-{
-    if(c->size_hints.flags & XCB_ICCCM_SIZE_HINT_P_WIN_GRAVITY)
-    {
-        area_t geometry = c->geometry;
-        int16_t diff = new_width - old_width;
-        xwindow_translate_for_gravity(c->size_hints.win_gravity,
-                                      diff, diff, diff, diff,
-                                      &geometry.x, &geometry.y);
-        /* inform client about changes */
-        client_resize_do(c, geometry, false);
-    }
-}
-
-static void
-client_update_properties(lua_State *L, int cidx, client_t *c)
-{
-    /* get all hints */
-    xcb_get_property_cookie_t wm_normal_hints   = property_get_wm_normal_hints(c);
-    xcb_get_property_cookie_t wm_hints          = property_get_wm_hints(c);
-    xcb_get_property_cookie_t wm_transient_for  = property_get_wm_transient_for(c);
-    xcb_get_property_cookie_t wm_client_leader  = property_get_wm_client_leader(c);
-    xcb_get_property_cookie_t wm_client_machine = property_get_wm_client_machine(c);
-    xcb_get_property_cookie_t wm_window_role    = property_get_wm_window_role(c);
-    xcb_get_property_cookie_t net_wm_pid        = property_get_net_wm_pid(c);
-    xcb_get_property_cookie_t net_wm_icon       = property_get_net_wm_icon(c);
-    xcb_get_property_cookie_t wm_name           = property_get_wm_name(c);
-    xcb_get_property_cookie_t net_wm_name       = property_get_net_wm_name(c);
-    xcb_get_property_cookie_t wm_icon_name      = property_get_wm_icon_name(c);
-    xcb_get_property_cookie_t net_wm_icon_name  = property_get_net_wm_icon_name(c);
-    xcb_get_property_cookie_t wm_class          = property_get_wm_class(c);
-    xcb_get_property_cookie_t wm_protocols      = property_get_wm_protocols(c);
-    xcb_get_property_cookie_t motif_wm_hints    = property_get_motif_wm_hints(c);
-    xcb_get_property_cookie_t opacity           = xwindow_get_opacity_unchecked(c->window);
-
-    /* update strut */
-    /* TODO: ewmh_process_client_strut(c) - implement _NET_WM_STRUT handling */
-
-    /* Now process all replies */
-    property_update_wm_normal_hints(c, wm_normal_hints);
-    property_update_wm_hints(c, wm_hints);
-    property_update_wm_transient_for(c, wm_transient_for);
-    property_update_wm_client_leader(c, wm_client_leader);
-    property_update_wm_client_machine(c, wm_client_machine);
-    property_update_wm_window_role(c, wm_window_role);
-    property_update_net_wm_pid(c, net_wm_pid);
-    property_update_net_wm_icon(c, net_wm_icon);
-    property_update_wm_name(c, wm_name);
-    property_update_net_wm_name(c, net_wm_name);
-    property_update_wm_icon_name(c, wm_icon_name);
-    property_update_net_wm_icon_name(c, net_wm_icon_name);
-    property_update_wm_class(c, wm_class);
-    property_update_wm_protocols(c, wm_protocols);
-    property_update_motif_wm_hints(c, motif_wm_hints);
-    window_set_opacity(L, cidx, xwindow_get_opacity_from_cookie(opacity));
-}
-
-/** Manage a new client.
- * \param w The window.
- * \param wgeom Window geometry.
- * \param startup True if we are managing at startup time.
- */
-void
-client_manage(xcb_window_t w, xcb_get_geometry_reply_t *wgeom, xcb_get_window_attributes_reply_t *wattr)
-{
-    xcb_void_cookie_t reparent_cookie;
-    lua_State *L = globalconf_get_lua_State();
-    const uint32_t select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
-    uint32_t no_event[] = { 0 };
-    xcb_get_property_cookie_t startup_id_q;
-    xcb_get_property_reply_t *reply;
-    char *startup_id;
-    xcb_generic_error_t *error;
-    client_t *c;
-
-    if(systray_iskdedockapp(w))
-    {
-        systray_request_handle(w);
-        return;
-    }
-
-    /* If this is a new client that just has been launched, then request its
-     * startup id. */
-    startup_id_q = xcb_get_property(globalconf.connection, false,
-                                     w, _NET_STARTUP_ID,
-                                     XCB_GET_PROPERTY_TYPE_ANY, 0, UINT_MAX);
-
-    /* Make sure the window is automatically mapped if awesome exits or dies. */
-    xcb_change_save_set(globalconf.connection, XCB_SET_MODE_INSERT, w);
-    if (globalconf.have_shape)
-        xcb_shape_select_input(globalconf.connection, w, 1);
-
-    c = client_new(L);
-    c->border_width_callback = (void (*) (void *, uint16_t, uint16_t)) border_width_callback;
-
-    /* Initialize button array (AwesomeWM pattern) */
-    button_array_init(&c->buttons);
-
-    /* consider the window banned */
-    c->isbanned = true;
-    /* Store window and visual */
-    c->window = w;
-    c->visualtype = draw_find_visual(globalconf.screen, wattr->visual);
-    c->frame_window = xcb_generate_id(globalconf.connection);
-    xcb_create_window(globalconf.connection, globalconf.default_depth, c->frame_window, globalconf.screen->root,
-                      wgeom->x, wgeom->y, wgeom->width, wgeom->height,
-                      wgeom->border_width, XCB_COPY_FROM_PARENT, globalconf.visual->visual_id,
-                      XCB_CW_BORDER_PIXEL | XCB_CW_BIT_GRAVITY | XCB_CW_WIN_GRAVITY
-                      | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP,
-                      (const uint32_t [])
-                      {
-                          globalconf.screen->black_pixel,
-                          XCB_GRAVITY_NORTH_WEST,
-                          XCB_GRAVITY_NORTH_WEST,
-                          1,
-                          FRAME_SELECT_INPUT_EVENT_MASK,
-                          globalconf.default_cmap
-                      });
-
-    /* The client may already be mapped, thus we must be sure that we don't send
-     * ourselves an UnmapNotify due to the xcb_reparent_window().
-     *
-     * Grab the server to make sure we don't lose any events.
-     */
-    xcb_grab_server(globalconf.connection);
-
-    xcb_change_window_attributes(globalconf.connection,
-                                 globalconf.screen->root,
-                                 XCB_CW_EVENT_MASK,
-                                 no_event);
-    reparent_cookie = xcb_reparent_window_checked(globalconf.connection, w, c->frame_window, 0, 0);
-    xcb_map_window(globalconf.connection, w);
-    xcb_change_window_attributes(globalconf.connection,
-                                 globalconf.screen->root,
-                                 XCB_CW_EVENT_MASK,
-                                 ROOT_WINDOW_EVENT_MASK);
-    xutil_ungrab_server(globalconf.connection);
-
-    /* Do this now so that we don't get any events for the above
-     * (Else, reparent could cause an UnmapNotify) */
-    xcb_change_window_attributes(globalconf.connection, w, XCB_CW_EVENT_MASK, select_input_val);
-
-    /* The frame window gets the border, not the real client window */
-    xcb_configure_window(globalconf.connection, w,
-                         XCB_CONFIG_WINDOW_BORDER_WIDTH,
-                         (uint32_t[]) { 0 });
-
-    /* Move this window to the bottom of the stack. Without this we would force
-     * other windows which will be above this one to redraw themselves because
-     * this window occludes them for a tiny moment. The next stack_refresh()
-     * will fix this up and move the window to its correct place. */
-    xcb_configure_window(globalconf.connection, c->frame_window,
-                         XCB_CONFIG_WINDOW_STACK_MODE,
-                         (uint32_t[]) { XCB_STACK_MODE_BELOW});
-
-    /* Duplicate client and push it in client list */
-    lua_pushvalue(L, -1);
-    client_array_push(&globalconf.clients, luaA_object_ref(L, -1));
-
-    /* Set the right screen */
-    screen_client_moveto(c, screen_getbycoord(wgeom->x, wgeom->y), false);
-
-    /* Store initial geometry and emits signals so we inform that geometry have
-     * been set. */
-
-    c->geometry.x = wgeom->x;
-    c->geometry.y = wgeom->y;
-    c->geometry.width = wgeom->width;
-    c->geometry.height = wgeom->height;
-
-    some_event_queue_signal0(L, -1, SIG_PROPERTY_X);
-    some_event_queue_signal0(L, -1, SIG_PROPERTY_Y);
-    some_event_queue_signal0(L, -1, SIG_PROPERTY_WIDTH);
-    some_event_queue_signal0(L, -1, SIG_PROPERTY_HEIGHT);
-    luaA_object_emit_signal(L, -1, "property::window", 0);
-    some_event_queue_signal0(L, -1, SIG_PROPERTY_GEOMETRY);
-
-    /* Set border width */
-    window_set_border_width(L, -1, wgeom->border_width);
-
-    /* we honor size hints by default */
-    c->size_hints_honor = true;
-    luaA_object_emit_signal(L, -1, "property::size_hints_honor", 0);
-
-    /* update all properties */
-    client_update_properties(L, -1, c);
-
-    /* check if this is a TRANSIENT_FOR of another client */
-    foreach(oc, globalconf.clients)
-        if ((*oc)->transient_for_window == w)
-            client_find_transient_for(*oc);
-
-    /* Put the window in normal state. */
-    xwindow_set_state(c->window, XCB_ICCCM_WM_STATE_NORMAL);
-
-    /* Then check clients hints */
-    ewmh_client_check_hints(c);
-
-    /* Push client in stack */
-    stack_client_push(c);
-
-    /* Request our response */
-    reply = xcb_get_property_reply(globalconf.connection, startup_id_q, NULL);
-    /* Say spawn that a client has been started, with startup id as argument */
-    startup_id = xutil_get_text_property_from_reply(reply);
-    p_delete(&reply);
-
-    if (startup_id == NULL && c->leader_window != XCB_NONE) {
-        /* GTK hides this property elsewhere. No idea why. */
-        startup_id_q = xcb_get_property(globalconf.connection, false,
-                                        c->leader_window, _NET_STARTUP_ID,
-                                        XCB_GET_PROPERTY_TYPE_ANY, 0, UINT_MAX);
-        reply = xcb_get_property_reply(globalconf.connection, startup_id_q, NULL);
-        startup_id = xutil_get_text_property_from_reply(reply);
-        p_delete(&reply);
-    }
-    c->startup_id = startup_id;
-
-    spawn_start_notify(c, startup_id);
-
-    some_event_queue_class(&client_class, SIG_LIST);
-
-    /* Add the context */
-    if (globalconf.loop == NULL)
-        lua_pushliteral(L, "startup");
-    else
-        lua_pushliteral(L, "new");
-
-    /* Hints */
-    lua_newtable(L);
-
-    /* client is still on top of the stack; emit signal */
-    luaA_object_emit_signal(L, -3, "request::manage", 2);
-
-    error = xcb_request_check(globalconf.connection, reparent_cookie);
-    if (error != NULL) {
-        warn("Failed to manage window with name '%s', class '%s', instance '%s', because reparenting failed.",
-                NONULL(c->name), NONULL(c->class), NONULL(c->instance));
-        event_handle((xcb_generic_event_t *) error);
-        p_delete(&error);
-        client_unmanage(c, CLIENT_UNMANAGE_FAILED);
-    }
-
-    /* pop client */
-    lua_pop(L, 1);
 }
 
 static void
@@ -2773,7 +2518,7 @@ client_resize_do(client_t *c, area_t geometry, bool silent)
 }
 
 /** Resize client window.
- * The sizes given as parameters are with borders!
+ * The sizes given as parameters are *without* borders!
  * \param c Client to resize.
  * \param geometry New window geometry.
  * \param honor_hints Use size hints.
@@ -2796,16 +2541,17 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
         geometry = client_apply_size_hints(c, geometry);
     }
 
-    /* Apply aspect ratio constraint on content area (excluding borders/titlebars).
-     * Lua sets aspect_ratio = content_width / content_height. */
+    /* Apply aspect ratio constraint on the content area.
+     * Lua sets aspect_ratio = content_width / content_height. Only titlebars
+     * come off: geometry has been border-exclusive since upstream
+     * 3f6cfd9/a247cd5, so borders are not part of it. */
     if (c->aspect_ratio > 0 && !c->fullscreen && !c->maximized) {
-        int bw2 = 2 * c->border_width;
         int tb_h = c->titlebar[CLIENT_TITLEBAR_TOP].size
             + c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
         int tb_w = c->titlebar[CLIENT_TITLEBAR_LEFT].size
             + c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
-        int cw = geometry.width - bw2 - tb_w;
-        int ch = geometry.height - bw2 - tb_h;
+        int cw = geometry.width - tb_w;
+        int ch = geometry.height - tb_h;
         if (cw > 0 && ch > 0) {
             double current = (double)cw / ch;
             double epsilon = 1.5 / (double)ch;
@@ -2814,8 +2560,8 @@ client_resize(client_t *c, area_t geometry, bool honor_hints, bool silent)
             } else if (c->aspect_ratio - current > epsilon) {
                 ch = (int)(cw / c->aspect_ratio + 0.5);
             }
-            geometry.width = cw + bw2 + tb_w;
-            geometry.height = ch + bw2 + tb_h;
+            geometry.width = cw + tb_w;
+            geometry.height = ch + tb_h;
         }
     }
 
@@ -2859,17 +2605,10 @@ client_set_minimized(lua_State *L, int cidx, bool s)
         if(c->scene)
             wlr_scene_node_set_enabled(&c->scene->node, !s);
 
-        /* NOTE: xdg-shell state (suspended, maximized, size) is NOT driven
-         * from here. The property::minimized signal below triggers
-         * awful.layout.arrange() → window.c arrange() which calls
-         * client_set_suspended(c, !client_isvisible(c)). wlroots batches
-         * the pending toplevel state (size, maximized, activated, suspended)
-         * into a single coherent configure, matching KWin's pattern
-         * (xdgshellwindow.cpp:873 doSetActive → scheduleConfigure). Earlier
-         * versions called set_suspended + set_maximized + apply_geometry
-         * here directly, which fired three separate events at different
-         * layers and left Firefox/Chrome CSD with stale hit regions after
-         * restore-from-minimize. */
+        /* xdg state is not set here. property::minimized below reaches
+         * arrange(), which calls client_set_suspended() - one configure
+         * carrying suspended and the new size together, instead of a bare
+         * suspended change a frame ahead of the size. */
 
         if(c->toplevel_handle)
             wlr_foreign_toplevel_handle_v1_set_minimized(c->toplevel_handle, s);
@@ -3047,14 +2786,9 @@ client_set_maximized_common(lua_State *L, int cidx, bool s, const char* type, co
             luaA_object_emit_signal(L, abs_cidx, "property::maximized", 0);
             if(c->toplevel_handle)
                 wlr_foreign_toplevel_handle_v1_set_maximized(c->toplevel_handle, c->maximized);
-            /* Inform the xdg-shell client of its new maximized state.
-             * Without this, CSD buttons in Gtk/Qt apps render stale state
-             * when maximize is toggled via Lua (c.maximized = true) or via
-             * the foreign-toplevel protocol (wibar tasklist click). The xdg
-             * protocol path calls this directly in the request handler to
-             * also cover redundant requests where next==current. */
-            if(c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->initialized)
-                wlr_xdg_toplevel_set_maximized(c->surface.xdg->toplevel, c->maximized);
+            /* xdg-shell state is not written here. apply_geometry_to_wlroots()
+             * reconciles it, so it batches into the same configure as the
+             * size change (same as fullscreen). */
         }
 
         stack_windows();
@@ -3850,12 +3584,11 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     /* Wayland deviation: titlebars must be inset by border_width.
      * In X11, borders are drawn OUTSIDE the frame by the X server.
-     * In Wayland, we draw borders as scene rects at geometry edges,
-     * so titlebars must start INSIDE the border area. */
+     * In Wayland, we draw borders as scene rects outside the geometry,
+     * with the scene tree origin at the outer border corner, so
+     * titlebars (inside the geometry) start at a border_width inset. */
     result.x = bw;
     result.y = bw;
-    result.width -= 2 * bw;
-    result.height -= 2 * bw;
 
     // Let's try some ascii art (with borders):
     // +---------------------------+  <- border
@@ -3872,13 +3605,13 @@ titlebar_get_area(client_t *c, client_titlebar_t bar)
 
     switch (bar) {
     case CLIENT_TITLEBAR_BOTTOM:
-        result.y = c->geometry.height - bw - c->titlebar[bar].size;
+        result.y = bw + c->geometry.height - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_TOP:
         result.height = c->titlebar[bar].size;
         break;
     case CLIENT_TITLEBAR_RIGHT:
-        result.x = c->geometry.width - bw - c->titlebar[bar].size;
+        result.x = bw + c->geometry.width - c->titlebar[bar].size;
         /* Fall through */
     case CLIENT_TITLEBAR_LEFT:
         result.y = bw + c->titlebar[CLIENT_TITLEBAR_TOP].size;
@@ -4011,13 +3744,13 @@ titlebar_get_drawable(lua_State *L, client_t *c, int cl_idx, client_titlebar_t b
              * because apps that don't send frequent commits (firefox, GTK)
              * would show sharp titlebar corners until next surface commit. */
             if (c->corner_radius > 0) {
-                static const enum corner_location bar_cr[CLIENT_TITLEBAR_COUNT] = {
-                    [CLIENT_TITLEBAR_TOP]    = CORNER_LOCATION_TOP,
-                    [CLIENT_TITLEBAR_BOTTOM] = CORNER_LOCATION_BOTTOM,
-                    [CLIENT_TITLEBAR_LEFT]   = CORNER_LOCATION_NONE,
-                    [CLIENT_TITLEBAR_RIGHT]  = CORNER_LOCATION_NONE,
+                static const somewm_corners_t bar_cr[CLIENT_TITLEBAR_COUNT] = {
+                    [CLIENT_TITLEBAR_TOP]    = SOMEWM_CORNER_TOP,
+                    [CLIENT_TITLEBAR_BOTTOM] = SOMEWM_CORNER_BOTTOM,
+                    [CLIENT_TITLEBAR_LEFT]   = SOMEWM_CORNER_NONE,
+                    [CLIENT_TITLEBAR_RIGHT]  = SOMEWM_CORNER_NONE,
                 };
-                wlr_scene_buffer_set_corner_radius(
+                somewm_scene_buffer_set_corners(
                     c->titlebar[bar].scene_buffer,
                     c->corner_radius + 1, bar_cr[bar]);
             }
@@ -4525,11 +4258,11 @@ luaA_client_set_opacity(lua_State *L, client_t *c)
 #ifdef HAVE_SCENEFX
 static void
 apply_corner_radius_to_tree(struct wlr_scene_node *node, int radius,
-                            enum corner_location corners)
+                            somewm_corners_t corners)
 {
     if (node->type == WLR_SCENE_NODE_BUFFER) {
         struct wlr_scene_buffer *buf = wlr_scene_buffer_from_node(node);
-        wlr_scene_buffer_set_corner_radius(buf, radius, corners);
+        somewm_scene_buffer_set_corners(buf, radius, corners);
     } else if (node->type == WLR_SCENE_NODE_TREE) {
         struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
         struct wlr_scene_node *child;
@@ -4551,11 +4284,11 @@ client_apply_corner_radius(client_t *c)
      * the surface doesn't need rounding there (the titlebar handles it). */
     int tt = c->titlebar[CLIENT_TITLEBAR_TOP].size;
     int tb = c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
-    enum corner_location surface_corners = CORNER_LOCATION_ALL;
+    somewm_corners_t surface_corners = SOMEWM_CORNER_ALL;
     if (tt > 0)
-        surface_corners &= ~(CORNER_LOCATION_TOP_LEFT | CORNER_LOCATION_TOP_RIGHT);
+        surface_corners &= ~(SOMEWM_CORNER_TOP_LEFT | SOMEWM_CORNER_TOP_RIGHT);
     if (tb > 0)
-        surface_corners &= ~(CORNER_LOCATION_BOTTOM_LEFT | CORNER_LOCATION_BOTTOM_RIGHT);
+        surface_corners &= ~(SOMEWM_CORNER_BOTTOM_LEFT | SOMEWM_CORNER_BOTTOM_RIGHT);
 
     /* Apply to client surface buffers */
     if (c->scene_surface)
@@ -4567,23 +4300,23 @@ client_apply_corner_radius(client_t *c)
      * compensating for sub-pixel mismatch between buffer and rect shaders. */
     if (radius > 0) {
         int tb_radius = radius + 1;
-        static const enum corner_location bar_corners[CLIENT_TITLEBAR_COUNT] = {
-            [CLIENT_TITLEBAR_TOP]    = CORNER_LOCATION_TOP,
-            [CLIENT_TITLEBAR_BOTTOM] = CORNER_LOCATION_BOTTOM,
-            [CLIENT_TITLEBAR_LEFT]   = CORNER_LOCATION_NONE,
-            [CLIENT_TITLEBAR_RIGHT]  = CORNER_LOCATION_NONE,
+        static const somewm_corners_t bar_corners[CLIENT_TITLEBAR_COUNT] = {
+            [CLIENT_TITLEBAR_TOP]    = SOMEWM_CORNER_TOP,
+            [CLIENT_TITLEBAR_BOTTOM] = SOMEWM_CORNER_BOTTOM,
+            [CLIENT_TITLEBAR_LEFT]   = SOMEWM_CORNER_NONE,
+            [CLIENT_TITLEBAR_RIGHT]  = SOMEWM_CORNER_NONE,
         };
         for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
             if (c->titlebar[i].scene_buffer && c->titlebar[i].size > 0) {
-                wlr_scene_buffer_set_corner_radius(
+                somewm_scene_buffer_set_corners(
                     c->titlebar[i].scene_buffer, tb_radius, bar_corners[i]);
             }
         }
     } else {
         for (int i = 0; i < CLIENT_TITLEBAR_COUNT; i++) {
             if (c->titlebar[i].scene_buffer)
-                wlr_scene_buffer_set_corner_radius(
-                    c->titlebar[i].scene_buffer, 0, CORNER_LOCATION_NONE);
+                somewm_scene_buffer_set_corners(
+                    c->titlebar[i].scene_buffer, 0, SOMEWM_CORNER_NONE);
         }
     }
 
@@ -4627,8 +4360,15 @@ client_update_border_for_corners(client_t *c)
         return;
 
     int bw = c->bw;
-    int w = c->geometry.width;
-    int h = c->geometry.height;
+    /* Frame footprint: the geometry plus the border drawn outside it. Upstream
+     * made c->geometry border-exclusive (3f6cfd9, a247cd5, 6de5e1e), so the
+     * border rects and the rounded frame have to add it back -- this helper
+     * replaces the open-coded sizing that upstream keeps in
+     * apply_geometry_to_wlroots(), which computes exactly this. With the bare
+     * geometry the frame came out 2*bw too small and sat over the content
+     * instead of around it. */
+    int w = c->geometry.width + 2 * bw;
+    int h = c->geometry.height + 2 * bw;
 
     if (bw <= 0) {
         /* No border — hide everything */
@@ -4659,8 +4399,8 @@ client_update_border_for_corners(client_t *c)
         wlr_scene_node_set_enabled(&c->border_frame->node, true);
         wlr_scene_node_set_position(&c->border_frame->node, 0, 0);
         wlr_scene_rect_set_size(c->border_frame, w, h);
-        wlr_scene_rect_set_corner_radius(c->border_frame,
-            cr + bw, CORNER_LOCATION_ALL);
+        somewm_scene_rect_set_corners(c->border_frame,
+            cr + bw, SOMEWM_CORNER_ALL);
 
         /* Punch out the content area — inner edge matches surface corner radius.
          * Clamp to >= 1 to avoid negative dimensions on very small windows.
@@ -4670,12 +4410,13 @@ client_update_border_for_corners(client_t *c)
         int ch = h - 2 * bw;
         if (cw < 1) cw = 1;
         if (ch < 1) ch = 1;
-        wlr_scene_rect_set_clipped_region(c->border_frame,
-            (struct clipped_region) {
-                .corner_radius = cr,
-                .corners = CORNER_LOCATION_ALL,
-                .area = { bw, bw, cw, ch },
-            });
+        {
+            /* corner_radius + bitmask on SceneFX 0.4, a per-corner struct on
+             * 0.5 -- the macro writes whichever the linked version wants. */
+            struct clipped_region region = { .area = { bw, bw, cw, ch } };
+            SOMEWM_CLIPPED_REGION_SET_CORNERS(region, cr, SOMEWM_CORNER_ALL);
+            wlr_scene_rect_set_clipped_region(c->border_frame, region);
+        }
     } else
 #endif /* HAVE_SCENEFX */
     {
@@ -4701,8 +4442,8 @@ client_update_border_for_corners(client_t *c)
 #ifdef HAVE_SCENEFX
         /* Clear any corner radius from flat border rects */
         for (int i = 0; i < 4; i++) {
-            wlr_scene_rect_set_corner_radius(c->border[i],
-                0, CORNER_LOCATION_NONE);
+            somewm_scene_rect_set_corners(c->border[i],
+                0, SOMEWM_CORNER_NONE);
         }
 #endif
     }
@@ -4732,6 +4473,9 @@ luaA_client_set_corner_radius(lua_State *L, client_t *c)
  * ======================================================================== */
 
 #ifdef HAVE_SCENEFX
+#ifndef HAVE_SCENEFX_CORNER_RADII
+/* SceneFX 0.4: blur is a per-buffer flag, so it is applied by walking the
+ * client's surface tree. */
 static void
 apply_backdrop_blur_to_tree(struct wlr_scene_node *node, bool enabled)
 {
@@ -4758,7 +4502,8 @@ apply_backdrop_blur_to_tree(struct wlr_scene_node *node, bool enabled)
         }
     }
 }
-#endif
+#endif /* !HAVE_SCENEFX_CORNER_RADII */
+#endif /* HAVE_SCENEFX */
 
 void
 client_apply_backdrop_blur(client_t *c)
@@ -4766,19 +4511,123 @@ client_apply_backdrop_blur(client_t *c)
 #ifdef HAVE_SCENEFX
     bool enabled = c->backdrop_blur;
 
-    /* Skip blur for fullscreen clients — nothing visible behind them
+    /* Skip blur for fullscreen clients -- nothing visible behind them
      * (matches SwayFX behavior, avoids unnecessary GPU work). */
     if (c->fullscreen)
         enabled = false;
 
-    /* Walk client surface tree only — popups and borders are excluded.
+#ifdef HAVE_SCENEFX_CORNER_RADII
+    /* SceneFX 0.5 turned per-client blur into its own scene node instead of a
+     * flag on every buffer: the node blurs whatever is behind it, so it lives
+     * under the client's content and is sized to the content area.
+     *
+     * should_only_blur_bottom_layer stays false for the same reason the 0.4
+     * path passed optimized=false: blurring only the bottom layer samples the
+     * pre-rendered cache below the scene-level optimized blur layer, which is
+     * just the wallpaper, so overlapping windows would show through as
+     * wallpaper instead of their live content. */
+    if (!c->scene || !c->scene_surface) {
+        return;
+    }
+
+    if (!enabled) {
+        if (c->blur_node) {
+            wlr_scene_node_destroy(&c->blur_node->node);
+            c->blur_node = NULL;
+        }
+        return;
+    }
+
+    {
+        /* Content area, matching client_get_clip(): geometry is
+         * border-exclusive since upstream 3f6cfd9/a247cd5, so only the
+         * titlebars come off the size. The borders still shift the origin,
+         * which is why the position below adds bw. */
+        int bw = c->bw;
+        int tl = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+        int tt = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_TOP].size;
+        int tr = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_RIGHT].size;
+        int tb = c->fullscreen ? 0 : c->titlebar[CLIENT_TITLEBAR_BOTTOM].size;
+        int cw = c->geometry.width - tl - tr;
+        int ch = c->geometry.height - tt - tb;
+
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+
+        if (!c->blur_node) {
+            c->blur_node = wlr_scene_blur_create(c->scene, cw, ch);
+            if (!c->blur_node)
+                return;
+            /* false samples the live framebuffer, so an upper window blurs the
+             * actual window beneath it (what the fork wanted in f5164d2).
+             * true samples SceneFX's cached bottom layer instead -- wallpaper
+             * and LyrBottom only -- which is what SceneFX's own example uses,
+             * and it skips the partial-damage save/restore compensation that a
+             * gpt-5.6-sol audit identified as the likely source of border
+             * corruption with several overlapping blurred windows.
+             *
+             * Switchable at startup so the two can be compared on real
+             * hardware without a rebuild; the nested backend does not
+             * reproduce the artefact. */
+            {
+                const char *bottom_only = getenv("SOMEWM_BLUR_BOTTOM_ONLY");
+                wlr_scene_blur_set_should_only_blur_bottom_layer(c->blur_node,
+                        bottom_only && *bottom_only && strcmp(bottom_only, "0") != 0);
+            }
+        } else {
+            wlr_scene_blur_set_size(c->blur_node, cw, ch);
+        }
+
+        wlr_scene_node_set_position(&c->blur_node->node, bw + tl, bw + tt);
+
+        /* Order within c->scene must be shadow -> blur -> content, which is
+         * what SceneFX 0.4 produced by drawing the shadow and then blurring at
+         * the client buffer. Lowering unconditionally would put the blur under
+         * the shadow, whose solid interior would then darken translucent
+         * content -- and since shadow creation lowers the shadow too, the two
+         * would flip each other on every refresh. */
+        if (c->shadow.tree)
+            wlr_scene_node_place_above(&c->blur_node->node, &c->shadow.tree->node);
+        else
+            wlr_scene_node_lower_to_bottom(&c->blur_node->node);
+        somewm_scene_blur_set_corners(c->blur_node, c->corner_radius,
+                SOMEWM_CORNER_ALL);
+    }
+#else
+    /* Walk client surface tree only -- popups and borders are excluded.
      * Popups live in a sibling tree, not under scene_surface (same
      * limitation as corner_radius and other compositor-imposed effects). */
     if (c->scene_surface)
         apply_backdrop_blur_to_tree(&c->scene_surface->node, enabled);
+#endif
 #else
     (void)c;
 #endif
+}
+
+/** Whether a real backdrop-blur scene node is attached right now.
+ *
+ * backdrop_blur only records what was asked for. On SceneFX 0.5 the effect is
+ * a scene node the compositor creates and destroys; on 0.4 it is a flag on the
+ * client's buffers. Tests need to see the effect, not the request.
+ *
+ * @property _has_blur_node
+ * @tparam boolean _has_blur_node
+ * @readonly
+ */
+static int
+luaA_client_get__has_blur_node(lua_State *L, client_t *c)
+{
+#if defined(HAVE_SCENEFX) && defined(HAVE_SCENEFX_CORNER_RADII)
+    lua_pushboolean(L, c->blur_node != NULL);
+#elif defined(HAVE_SCENEFX)
+    /* 0.4 has no node; report the applied flag, which is what it sets. */
+    lua_pushboolean(L, c->backdrop_blur && !c->fullscreen && c->scene_surface);
+#else
+    (void)c;
+    lua_pushboolean(L, false);
+#endif
+    return 1;
 }
 
 static int
@@ -4865,7 +4714,7 @@ luaA_client_set_shadow(lua_State *L, client_t *c)
     /* Update shadow if client is mapped */
     if (c->scene) {
         shadow_update_config(&c->shadow, c->scene, &new_config,
-            c->geometry.width, c->geometry.height);
+            c->geometry.width + 2 * c->bw, c->geometry.height + 2 * c->bw);
     }
 
     luaA_object_emit_signal(L, -3, "property::shadow", 0);
@@ -4937,6 +4786,16 @@ luaA_client_get_xdg_fullscreen(lua_State *L, client_t *c)
         lua_pushboolean(L, c->surface.xdg->toplevel->scheduled.fullscreen);
     else
         lua_pushboolean(L, c->fullscreen);
+    return 1;
+}
+
+static int
+luaA_client_get_xdg_maximized(lua_State *L, client_t *c)
+{
+    if (c->client_type == XDGShell && c->surface.xdg && c->surface.xdg->toplevel)
+        lua_pushboolean(L, c->surface.xdg->toplevel->scheduled.maximized);
+    else
+        lua_pushboolean(L, c->maximized);
     return 1;
 }
 
@@ -5058,12 +4917,13 @@ luaA_client_get_content(lua_State *L, client_t *c)
      * clients (issue #539).
      *
      * wlr_scene_node_for_each_buffer reports (sx, sy) accumulated from the
-     * starting node down, NOT scene-absolute. So buffer positions are already
-     * relative to c->scene_surface's frame; no offset subtraction needed. */
+     * starting node down INCLUDING the starting node's own position, which
+     * for c->scene_surface is the (bw + titlebar) inset within c->scene.
+     * Subtract it so buffers land at the content origin of the capture. */
     rdata.cr        = cr;
     rdata.renderer  = drw;
-    rdata.offset_x  = 0;
-    rdata.offset_y  = 0;
+    rdata.offset_x  = -c->scene_surface->node.x;
+    rdata.offset_y  = -c->scene_surface->node.y;
     wlr_scene_node_for_each_buffer(&c->scene_surface->node,
                                    composite_scene_buffer_to_cairo, &rdata);
 
@@ -5710,6 +5570,7 @@ client_class_setup(lua_State *L)
         { "client_shape_input", NULL, (lua_class_propfunc_t) luaA_client_get_client_shape_input, NULL },
         { "content", NULL, (lua_class_propfunc_t) luaA_client_get_content, NULL },
         { "backdrop_blur", (lua_class_propfunc_t) luaA_client_set_backdrop_blur, (lua_class_propfunc_t) luaA_client_get_backdrop_blur, (lua_class_propfunc_t) luaA_client_set_backdrop_blur },
+        { "_has_blur_node", NULL, (lua_class_propfunc_t) luaA_client_get__has_blur_node, NULL },
         { "corner_radius", (lua_class_propfunc_t) luaA_client_set_corner_radius, (lua_class_propfunc_t) luaA_client_get_corner_radius, (lua_class_propfunc_t) luaA_client_set_corner_radius },
         { "first_tag", NULL, (lua_class_propfunc_t) luaA_client_get_first_tag, NULL },
         { "focusable", (lua_class_propfunc_t) luaA_client_set_focusable, (lua_class_propfunc_t) luaA_client_get_focusable, (lua_class_propfunc_t) luaA_client_set_focusable },
@@ -5751,6 +5612,7 @@ client_class_setup(lua_State *L)
         { "urgent", (lua_class_propfunc_t) luaA_client_set_urgent, (lua_class_propfunc_t) luaA_client_get_urgent, (lua_class_propfunc_t) luaA_client_set_urgent },
         { "window", NULL, (lua_class_propfunc_t) luaA_client_get_window, NULL },
         { "xdg_fullscreen", NULL, (lua_class_propfunc_t) luaA_client_get_xdg_fullscreen, NULL },
+        { "xdg_maximized", NULL, (lua_class_propfunc_t) luaA_client_get_xdg_maximized, NULL },
     };
     luaA_class_add_properties(&client_class, properties, countof(properties));
     /* _buttons is a method (in client_meta), not a property - matches AwesomeWM */

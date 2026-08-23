@@ -7,6 +7,22 @@ project(
     'c_std=gnu11',
     'warning_level=2',
     'werror=true',
+    # Vendored code is not ours to keep warning-clean, and wlroots 0.19.3 is old enough
+    # that newer compilers flag it. Subproject-scoped overrides are the only form that
+    # cascades to nested subprojects; subproject() default_options does not. Entries for
+    # subprojects that never get configured are ignored, so this lists everything wlroots
+    # can pull in: its own wraps, plus libdisplay-info's transitive v4l-utils.
+    'wlroots-0.19:werror=false',
+    'wlroots-0.20:werror=false',
+    'wayland:werror=false',
+    'wayland-protocols:werror=false',
+    'libdrm:werror=false',
+    'libxkbcommon:werror=false',
+    'pixman:werror=false',
+    'seatd:werror=false',
+    'libliftoff:werror=false',
+    'libdisplay-info:werror=false',
+    'v4l-utils:werror=false',
   ],
 )
 
@@ -55,6 +71,11 @@ libinput = dependency('libinput')
 have_3fg_drag = cc.has_function('libinput_device_config_3fg_drag_get_finger_count',
                                  dependencies: libinput)
 libdrm = dependency('libdrm')
+# Probed so the wlroots version choice below can read its version, and linked via
+# all_deps because root.c's scene dump touches pixman regions directly. Not
+# required: with no pixman-1.pc at all, wlroots resolves pixman through its own
+# wrap and the floor below stops applying.
+pixman = dependency('pixman-1', required: false)
 dbus = dependency('dbus-1')
 glib = dependency('glib-2.0')
 gio = dependency('gio-2.0')
@@ -104,16 +125,71 @@ lgi_output = lgi_check_result.stdout().strip()
 lgi_version = lgi_output.split('Found lgi ')[-1].split('\n')[0]
 message('Found LGI version: ' + lgi_version)
 
-# wlroots 0.19 only - use system if available, otherwise build from subproject
-# We only support 0.19+ due to Xwayland bugs in earlier versions
-wlroots = dependency('wlroots-0.19', version : '>=0.19.3', static: false, required: false)
+# wlroots 0.19 or 0.20. wlroots 0.20 raises floors that stable distros do not meet yet
+# (Debian 13 ships wayland-server 1.23.1, libdrm 2.4.124, xkbcommon 1.7.0, pixman 0.44),
+# so fall back to 0.19 there rather than failing to configure.
+#
+# Mirrors what wlroots 0.20 asks of its own dependencies: meson.build for wayland-server,
+# libdrm and xkbcommon, protocol/meson.build for wayland-protocols, render/pixman for
+# pixman. All of these have a wrap fallback upstream except render/pixman's stricter
+# >=0.46.0, which has none and so hard-fails; the rest merely make wlroots source-build a
+# core system library, which is worth avoiding too. Hence all of them are listed.
+wlroots_020_floors = {
+  # name: [minimum, installed]
+  'wayland-server': ['>=1.24.0', wayland_server.version()],
+  'libdrm': ['>=2.4.129', libdrm.version()],
+  'xkbcommon': ['>=1.8.0', xkbcommon.version()],
+  'wayland-protocols': ['>=1.47', wayland_protocols.version()],
+}
+if pixman.found()
+  wlroots_020_floors += {'pixman-1': ['>=0.46.0', pixman.version()]}
+endif
+
+wlroots_020_unmet = []
+foreach name, floor : wlroots_020_floors
+  if not floor[1].version_compare(floor[0])
+    wlroots_020_unmet += name + ' ' + floor[1] + ' (need ' + floor[0] + ')'
+  endif
+endforeach
+
+# An installed wlroots 0.20 met those floors when it was built, so it outranks the probe:
+# a distro that backports 0.20 onto older deps should still get 0.20.
+wlroots_020 = dependency('wlroots-0.20', version: '>=0.20.0', static: false,
+                         required: false, allow_fallback: false)
+
+wlroots_version = get_option('wlroots_version')
+if wlroots_version == 'auto'
+  if wlroots_020.found() or wlroots_020_unmet.length() == 0
+    wlroots_version = '0.20'
+  else
+    wlroots_version = '0.19'
+    message('Selecting wlroots 0.19, too old for 0.20: ' + ', '.join(wlroots_020_unmet))
+  endif
+elif wlroots_version == '0.20' and not wlroots_020.found() and wlroots_020_unmet.length() != 0
+  error('wlroots 0.20 requires newer dependencies than this system has: '
+    + ', '.join(wlroots_020_unmet)
+    + '. Use -Dwlroots_version=0.19 or upgrade them.')
+endif
+
+if wlroots_version == '0.20'
+  wlroots = wlroots_020
+else
+  wlroots = dependency('wlroots-0.19', version: '>=0.19.3', static: false,
+                       required: false, allow_fallback: false)
+endif
 
 if not wlroots.found()
-  message('System wlroots 0.19 not found, building from subproject...')
+  message('System wlroots ' + wlroots_version + ' not found, building from subproject...')
 
+  # SceneFX links against wlroots and carries its own copies of a few wlroots
+  # internals (types/output/output.c). Against a static wlroots those symbols
+  # collide at link time ("multiple definition of output_pending_resolution"),
+  # so a source-built wlroots has to be shared whenever SceneFX may be used.
+  # Installing the distro's wlroots package avoids this path entirely.
   wlroots_options = [
     'examples=false',
-    'default_library=static',
+    get_option('scenefx').allowed() ? 'default_library=shared'
+                                    : 'default_library=static',
   ]
   if have_xwayland
     wlroots_options += 'xwayland=enabled'
@@ -121,26 +197,39 @@ if not wlroots.found()
     wlroots_options += 'xwayland=disabled'
   endif
 
-  wlroots_proj = subproject('wlroots', default_options: wlroots_options)
+  # One wrap per version: subprojects/wlroots-<version>.wrap, checked out into a
+  # matching directory. Adding a version is a new wrap plus a meson_options.txt choice.
+  wlroots_proj = subproject('wlroots-' + wlroots_version, default_options: wlroots_options)
   wlroots = wlroots_proj.get_variable('wlroots')
 endif
 
-wlroots_version = '0.19'
+# The Debian CI job greps this line to prove `auto` picks 0.19 there; keep the wording.
 message('Using wlroots version: ' + wlroots_version)
 
-# SceneFX (optional visual effects - rounded corners, shadows, blur)
-# Drop-in replacement for wlroots scene renderer, requires wlroots 0.19
+# SceneFX supplies the optional visual effects (rounded corners, shadows, blur).
+# Its releases track wlroots one-to-one -- 0.4 builds against wlroots 0.19, 0.5
+# against 0.20, and each refuses the other's version range -- so the choice
+# follows wlroots_version rather than being pinned here. One wrap per version,
+# mirroring how wlroots itself is handled above.
 scenefx_option = get_option('scenefx')
-scenefx = dependency('scenefx-0.4', required: scenefx_option)
+scenefx_version = wlroots_version == '0.20' ? '0.5' : '0.4'
+scenefx = dependency('scenefx-' + scenefx_version, required: false,
+                     allow_fallback: false)
 if not scenefx.found()
-  scenefx_sub = subproject('scenefx', required: scenefx_option)
+  scenefx_sub = subproject('scenefx-' + scenefx_version, required: scenefx_option)
   if scenefx_sub.found()
     scenefx = scenefx_sub.get_variable('scenefx')
   endif
 endif
 have_scenefx = scenefx.found()
 if have_scenefx
-  message('SceneFX visual effects enabled')
+  message('SceneFX ' + scenefx_version + ' enabled (wlroots ' + wlroots_version + ')')
+  # 0.5 replaced the enum corner_location bitmask with a per-corner radius
+  # struct; scenefx_compat.h keys off this to expose one API to the rest of
+  # the tree.
+  if scenefx_version != '0.4'
+    add_project_arguments('-DHAVE_SCENEFX_CORNER_RADII', language: 'c')
+  endif
 else
   message('SceneFX not found or disabled, visual effects disabled')
 endif
@@ -278,6 +367,21 @@ virtual_pointer_client_code = custom_target(
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# idle-inhibit client protocol (header + code) for the idle-inhibitor test client
+idle_inhibit_client_header = custom_target(
+  'idle-inhibit-unstable-v1-client-protocol.h',
+  input: wayland_protocols_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml',
+  output: 'idle-inhibit-unstable-v1-client-protocol.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+
+idle_inhibit_client_code = custom_target(
+  'idle-inhibit-unstable-v1-client-protocol.c',
+  input: wayland_protocols_dir / 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml',
+  output: 'idle-inhibit-unstable-v1-client-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ==============================================================================
 # Compiler Flags
 # ==============================================================================
@@ -295,9 +399,6 @@ add_project_arguments(
   '-DWITH_DBUS',
   language: 'c',
 )
-
-# Always 0.19 - we only support this version
-add_project_arguments('-DWLR_VERSION_0_19', language: 'c')
 
 if have_xwayland
   add_project_arguments('-DXWAYLAND', language: 'c')
@@ -389,9 +490,9 @@ somewm_sources = [
   'objects/drawin.c',
   'objects/layer_surface.c',
   'objects/signal.c',
-  'objects/timer.c',
   'objects/key.c',
   'objects/keybinding.c',
+  'objects/timer.c',
   # objects/awesome.c merged into luaa.c
   'objects/button.c',
   'objects/wibox.c',
@@ -423,6 +524,11 @@ all_deps = [
   lua_dep,
   wlroots,
   m_dep,
+  # root.c's scene_tree_dump reads a scene node's visible region and counts its
+  # rectangles, so pixman is linked directly now. Still probed with
+  # required: false above -- a not-found dependency here is a no-op, and with
+  # no pixman-1.pc at all wlroots resolves it through its own wrap.
+  pixman,
 ]
 
 if have_xwayland
@@ -489,6 +595,25 @@ test_transient_client = executable(
 test_fullscreen_client = executable(
   'test-fullscreen-client',
   ['tests/test-fullscreen-client.c', xdg_shell_client_code],
+  xdg_shell_client_header,
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test client that creates an idle inhibitor and destroys it in either order
+# (inhibitor first while staying mapped, or surface first)
+test_idle_inhibit_client = executable(
+  'test-idle-inhibit-client',
+  ['tests/test-idle-inhibit-client.c', xdg_shell_client_code, idle_inhibit_client_code],
+  [xdg_shell_client_header, idle_inhibit_client_header],
+  dependencies: [wayland_client],
+  install: false,
+)
+
+# Test XDG client that drives CSD maximize/minimize requests
+test_csd_state_client = executable(
+  'test-csd-state-client',
+  ['tests/test-csd-state-client.c', xdg_shell_client_code],
   xdg_shell_client_header,
   dependencies: [wayland_client],
   install: false,
