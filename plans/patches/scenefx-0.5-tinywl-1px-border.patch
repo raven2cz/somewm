@@ -1,0 +1,13 @@
+diff --git a/tinywl/tinywl.c b/tinywl/tinywl.c
+index 2f29028..005f58a 100644
+--- a/tinywl/tinywl.c
++++ b/tinywl/tinywl.c
+@@ -28,7 +28,7 @@
+ #include <wlr/util/log.h>
+ #include <xkbcommon/xkbcommon.h>
+ 
+-#define BORDER_THICKNESS 3
++#define BORDER_THICKNESS 1
+ 
+ /* For brevity's sake, struct members are annotated where they are used. */
+ enum tinywl_cursor_mode {

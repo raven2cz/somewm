@@ -369,8 +369,52 @@ damage -- was ruled out correctly; none of them was the cause. The damage
 observations were real but secondary: forcing a full repaint changes which
 side of the ring survives the rounding, which is why it appeared to help.
 
+### Sharpened: it is the rounded path, at any radius
+
+Sweeping corner_radius at border_width 1 on one live client:
+
+| border_width | corner_radius | result |
+|---|---|---|
+| 1 | 0 | 100%, both vertical edges clean |
+| 1 | 1 | right edge one pixel out |
+| 1 | 2 | right edge one pixel out |
+| 1 | 4 | right edge one pixel out |
+| 1 | 14 | right edge one pixel out |
+
+The radius does not matter. What matters is only whether the rounded path runs
+at all: `corner_radius = 0` takes the flat four-rect branch and is exact,
+anything above zero takes the single frame rect with a `clipped_region` and the
+ring lands a pixel off.
+
+It is not a constant offset either. Earlier runs lost the **left** edge; this
+sweep shifted the **right** one, same construction, different window position.
+So it is a rounding boundary that tips one way or the other depending on where
+the window sits -- which is also why it visibly slides and drops out while a
+window is dragged, and why a fixed one-pixel compensation in
+`client_update_border_for_corners()` would be right only half the time.
+
+The fork's own geometry is provably correct: `clipped_region` is
+`{bw, bw, w - 2bw, h - 2bw}`, symmetric, and the renderer receives exactly that
+(`dx=1 dy=1 dw=2 dh=2` from the [RECT] instrumentation). The fragility is that
+SceneFX forms the ring as the difference of two SDF shapes one pixel apart, and
+`quad_round.frag`'s half-pixel conventions (`size - 1.0`, `position + 0.5`)
+cannot resolve that reliably.
+
 Nothing here blocks wlroots 0.20. The installer default can move back once the
 theme carries a 2px border.
+
+### Reproducer for upstream
+
+`plans/patches/scenefx-0.5-tinywl-1px-border.patch` sets SceneFX's own tinywl
+to `BORDER_THICKNESS 1` (it ships with 3). tinywl draws the identical
+construction and renders correctly at 3, so if it breaks at 1 the whole report
+is one constant in their own example, with no somewm code involved. Built and
+ready at `build-fx-0.20/subprojects/scenefx-0.5/tinywl/tinywl`; needs a DRM
+session to run.
+
+Both patch files are kept here because `subprojects/` is gitignored. Apply with
+`git -C subprojects/scenefx-0.5 apply plans/patches/<file>` after a fresh wrap
+checkout.
 
 Not urgent: 0.19 is an upstream-supported configuration and the installer
 defaults to it.
