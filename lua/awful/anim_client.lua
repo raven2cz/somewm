@@ -491,6 +491,68 @@ function anim_client.enable(user_config)
     end)
 
     -- Phase 2: screen::arrange fires AFTER layout.arrange commits positions
+    -- One client's share of the arrange pass. A function rather than an inline
+    -- loop body so the early exits can be plain returns: `goto` is Lua 5.2+,
+    -- and tests/check-lua-compat.sh holds this tree to Lua 5.1.
+    local function arrange_client(c)
+        local st = get(c)
+        local new_geo = c:geometry()
+
+        -- Capture previous layout target BEFORE updating settled cache.
+        -- This is critical for the re-snap guard: we compare the previous
+        -- layout target with the new one, NOT the visual mid-point.
+        local prev_settled = layout_settled[c]
+        local old_geo = st.layout_visual or prev_settled
+
+        -- Always track the layout-assigned position
+        layout_settled[c] = new_geo
+
+        -- Determine animation type: swap (explicit) or layout (reflow)
+        local anim_type
+        if st.swap_pending then
+            st.swap_pending = false
+            anim_type = "swap"
+        else
+            anim_type = "layout"
+        end
+
+        if not is_enabled(anim_type) then
+            st.layout_visual = nil
+            return
+        end
+
+        -- Skip if maximize/fullscreen animation owns this client
+        -- (geo_animating=true but layout_visual=nil means non-layout anim)
+        if st.geo_animating and not st.layout_visual then
+            return
+        end
+
+        -- Re-snap: layout target unchanged and animation running → keep
+        -- visual position (counteracts layout's non-silent c:geometry()).
+        -- Compare prev_settled (last layout target) with new_geo, NOT
+        -- the visual mid-point — otherwise this guard almost never fires.
+        if st.geo_animating and st.layout_visual and prev_settled
+                and not geos_differ(prev_settled, new_geo) then
+            c:_set_geometry_silent(st.layout_visual)
+            return
+        end
+
+        -- First arrange for this client: no old position
+        if not old_geo then return end
+
+        -- Skip negligible changes (< 2px per axis)
+        if not geos_differ(old_geo, new_geo) then
+            if st.geo_animating then cancel(c, "geo") end
+            st.layout_visual = nil
+            return
+        end
+
+        -- Cancel any running animation, snap back, animate
+        cancel(c, "geo")
+        c:_set_geometry_silent(old_geo)
+        start_layout_animation(c, st, old_geo, new_geo, anim_type)
+    end
+
     screen.connect_signal("arrange", function(s)
         if mousegrabber.isrunning() then return end
         if anim_client._tag_slide_active then return end
@@ -500,64 +562,7 @@ function anim_client.enable(user_config)
         if not tiled then return end
 
         for _, c in ipairs(tiled) do
-            local st = get(c)
-            local new_geo = c:geometry()
-
-            -- Capture previous layout target BEFORE updating settled cache.
-            -- This is critical for the re-snap guard: we compare the previous
-            -- layout target with the new one, NOT the visual mid-point.
-            local prev_settled = layout_settled[c]
-            local old_geo = st.layout_visual or prev_settled
-
-            -- Always track the layout-assigned position
-            layout_settled[c] = new_geo
-
-            -- Determine animation type: swap (explicit) or layout (reflow)
-            local anim_type
-            if st.swap_pending then
-                st.swap_pending = false
-                anim_type = "swap"
-            else
-                anim_type = "layout"
-            end
-
-            if not is_enabled(anim_type) then
-                st.layout_visual = nil
-                goto continue
-            end
-
-            -- Skip if maximize/fullscreen animation owns this client
-            -- (geo_animating=true but layout_visual=nil means non-layout anim)
-            if st.geo_animating and not st.layout_visual then
-                goto continue
-            end
-
-            -- Re-snap: layout target unchanged and animation running → keep
-            -- visual position (counteracts layout's non-silent c:geometry()).
-            -- Compare prev_settled (last layout target) with new_geo, NOT
-            -- the visual mid-point — otherwise this guard almost never fires.
-            if st.geo_animating and st.layout_visual and prev_settled
-                    and not geos_differ(prev_settled, new_geo) then
-                c:_set_geometry_silent(st.layout_visual)
-                goto continue
-            end
-
-            -- First arrange for this client: no old position
-            if not old_geo then goto continue end
-
-            -- Skip negligible changes (< 2px per axis)
-            if not geos_differ(old_geo, new_geo) then
-                if st.geo_animating then cancel(c, "geo") end
-                st.layout_visual = nil
-                goto continue
-            end
-
-            -- Cancel any running animation, snap back, animate
-            cancel(c, "geo")
-            c:_set_geometry_silent(old_geo)
-            start_layout_animation(c, st, old_geo, new_geo, anim_type)
-
-            ::continue::
+            arrange_client(c)
         end
     end)
 
