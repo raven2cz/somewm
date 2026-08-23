@@ -498,8 +498,10 @@ When debugging NVIDIA issues, check:
 For cross-model code review, these CLI tools are available:
 
 ```bash
-# OpenAI Codex CLI (gpt-5.5 model)
-cat diff.patch | codex exec -m gpt-5.5 --full-auto "Review prompt here"
+# OpenAI Codex CLI - default model is gpt-5.6-sol (set in ~/.codex/config.toml)
+cat diff.patch | codex exec --sandbox workspace-write "Review prompt here"
+# Cheaper model for small reviews:
+cat diff.patch | codex exec -m gpt-5.5 --sandbox workspace-write "Review prompt here"
 
 # Google Gemini CLI (gemini-3.1-pro-preview model)
 cat diff.patch | gemini -m gemini-3.1-pro-preview -p "Review prompt here"
@@ -509,7 +511,9 @@ cat diff.patch | gemini -m gemini-3.1-pro-preview -p "Review prompt here"
 ```
 
 **IMPORTANT:** Do NOT guess CLI flags — these are the correct invocations:
-- `codex exec` (not `codex --quiet`), with `-m model --full-auto`
+- `codex exec` (not `codex --quiet`); omit `-m` to get the default `gpt-5.6-sol`.
+  `-m sol` is rejected ("model is not supported"); the full name is required.
+  `--full-auto` is deprecated, use `--sandbox workspace-write`
 - `gemini -m model -p "prompt"` (not `gemini-cli`, binary is `gemini`)
 - Pipe diff to stdin, review prompt as the command argument
 
