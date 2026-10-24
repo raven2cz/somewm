@@ -120,7 +120,9 @@ mousegrabber_release_focus(void)
 {
     client_t *c = globalconf.focus.client;
 
-    if (c && c->isbanned)
+    /* Current visibility, not the cached isbanned: the grab's last callback
+     * may have made the client visible again before banning_refresh ran. */
+    if (c && !client_isvisible(c))
         client_ban_unfocus(c);
     layer_focus_restore_deferred(true);
     /* request::focus_restore runs Lua, which may have started a new grab;
