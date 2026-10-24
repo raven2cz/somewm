@@ -6,7 +6,9 @@ TV, Sierra Chart under Wine, Steam). The v2 line was built and verified only
 in a nested/headless sandbox on an AMD box (see [README.md](README.md),
 section "Verified on boxszn"). This plan is what that box could not do.
 
-Read first: `CLAUDE.md` (v2 sections), [README.md](README.md). Speak Czech
+Read first: [HANDOFF.md](HANDOFF.md) (complete state: what was done, why,
+what is and is not fixed, how to run things), `CLAUDE.md` (v2 sections),
+[README.md](README.md). Speak Czech
 with the user; write results in English.
 
 ## Ground rules
@@ -63,8 +65,16 @@ Claude unless the user runs `! sudo pacman -S ...` themselves).
 The nested backend renders on the NVIDIA GPU through GLES2, so corner and
 animation rendering is exercised on the real driver, without DRM/KMS.
 
-B0. Install v2 into a private prefix so the nested binary does not read the
-v1 Lua tree in `/usr/local/share/somewm`:
+B0. One command does all of B0 (private prefix build + config copy + nested
+sandbox, `SOMEWM_NO_AUTOSTART=1`, `SOMEWM_NO_SHELL=1`):
+```bash
+~/git/github/somewm/plans/scripts/v2-stack-sandbox.sh          # nested, real GPU
+( source ~/.local/somewm-v2-sbx/env; somewm-client eval 'return awesome.version' )
+~/git/github/somewm/plans/scripts/v2-stack-sandbox.sh --stop
+```
+Add `--shell` to also run somewm-shell (throwaway HOME). The manual
+equivalent, for reference: install v2 into a private prefix so the nested
+binary does not read the v1 Lua tree in `/usr/local/share/somewm`:
 ```bash
 P=$HOME/.local/somewm-v2; B=$HOME/.cache/somewm-v2-build
 cd ~/git/github/somewm && meson setup $B --prefix=$P -Dsystemd=disabled -Dbuildtype=release
@@ -174,8 +184,8 @@ steps; that is also what upstream needs for an issue.
 
 1. Is v2 good enough as the daily driver (gates: B3/D3 corners, D6 games,
    W1-W3 Sierra Chart)?
-2. Which fork commits to offer upstream (the human maintainer submits; follow
-   `CONTRIBUTING.md`/`AI_POLICY.md`, disclose AI use).
+2. Upstream submissions: **not now** (user, 2026-10-24). Do not open
+   issues/PRs or comment upstream; only keep the candidate list current.
 3. Wine OR port: none / minimal / full.
 4. Blur: live without it, or invest in a blur pass on the wlroots diff.
 

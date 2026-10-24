@@ -2,7 +2,9 @@
 
 Started: 2026-10-24 on `boxszn` (AMD iGPU, KDE; no NVIDIA).
 Status: **built and sandbox-verified; awaiting NVIDIA/DRM validation** with
-[`nvidia-test-plan.md`](nvidia-test-plan.md).
+[`nvidia-test-plan.md`](nvidia-test-plan.md). Full state for the next
+session: [`HANDOFF.md`](HANDOFF.md); per-item evidence:
+[`fork-delta-audit.md`](fork-delta-audit.md).
 
 ## Why
 
@@ -122,7 +124,8 @@ multi-monitor, games, PAM unlock, screen sharing. See the test plan.
 ## Follow-ups
 
 1. NVIDIA test plan, then decide on the Wine OR port.
-2. Upstream submissions (by the maintainer) for the candidate commits above.
+2. Upstream submissions: not now (user decision 2026-10-24); the
+   "upstream candidate" column is only a list.
 3. Blur: decide whether to build it on the wlroots diff (large) or live
    without it.
 4. `plans/scripts/somewm-memory-*.sh`: switch their field lists to the v2

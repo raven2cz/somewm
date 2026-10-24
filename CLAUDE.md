@@ -28,7 +28,8 @@ The v2 line was started on 2026-10-24 because upstream 2.0/2.1 rewrote ~720
 files; the fat v1 fork could no longer be synced. Rule for v2: **keep the
 fork thin.** Prefer upstream features; port a v1 fix only after it reproduces
 on 2.1; every fork commit should be upstreamable on its own. The decision
-record, fork-delta table and the NVIDIA test plan live in `plans/v2/`.
+record, fork-delta table and the NVIDIA test plan live in `plans/v2/`;
+**start with `plans/v2/HANDOFF.md`** (complete state of the v2 work).
 
 ## Hardware Context
 
@@ -145,6 +146,8 @@ somewm-client reload
 # 4. C change: restart the session from the TTY (see below)
 ```
 `plans/scripts/install.sh --check` verifies the install (links, no libscenefx).
+`plans/scripts/v2-stack-sandbox.sh [--headless] [--shell]` runs this checkout
++ somewm-one (+ somewm-shell) isolated from the live session and /usr/local.
 `somewm-client exec <cmd>` **spawns a shell command** (awful.spawn.with_shell);
 it does not replace the compositor.
 
