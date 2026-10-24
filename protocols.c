@@ -289,11 +289,15 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	 * so running focus history on their unmap would move focus away from
 	 * the client that has it.
 	 *
-	 * Also skip while a mousegrabber runs: the user is dragging a client,
-	 * and focus_restore() would hand focus to a focus-history candidate
-	 * instead of the dragged window. */
-	if (had_exclusive_focus && !mousegrabber_isrunning())
-		focus_restore(l->mon ? l->mon : selmon);
+	 * While a mousegrabber runs, defer it to the grab's end: the user is
+	 * dragging a client, and focus_restore() now would hand focus to a
+	 * focus-history candidate instead of the dragged window. */
+	if (had_exclusive_focus) {
+		if (mousegrabber_isrunning())
+			globalconf.focus_restore_after_grab = true;
+		else
+			focus_restore(l->mon ? l->mon : selmon);
+	}
 
 	motionnotify(0, NULL, 0, 0, 0, 0);
 }

@@ -35,6 +35,8 @@
 #include "somewm_api.h"
 #include "input.h"
 #include "declare.h"
+#include "focus.h"
+#include "objects/client.h"
 
 #include <string.h>
 #include <stdbool.h>
@@ -99,6 +101,25 @@ mousegrabber_hot_reload(lua_State *L)
     mousegrabber_active = false;
 }
 
+/** Focus work a running grab deferred. client_ban_unfocus() keeps a client
+ * dragged across outputs focused while the grab runs; if it is still banned
+ * now it really left the view. A layer surface that held keyboard focus and
+ * unmapped during the grab still owes its focus_restore() (which does
+ * nothing while the session is locked).
+ */
+static void
+mousegrabber_release_focus(void)
+{
+    client_t *c = globalconf.focus.client;
+
+    if (c && c->isbanned)
+        client_ban_unfocus(c);
+    if (globalconf.focus_restore_after_grab) {
+        globalconf.focus_restore_after_grab = false;
+        focus_restore(NULL);  /* the focused monitor; no-op while locked */
+    }
+}
+
 /** Stop grabbing the mouse pointer.
  *
  * @staticfct stop
@@ -125,6 +146,7 @@ luaA_mousegrabber_stop(lua_State *L)
     /* Mark as inactive */
     mousegrabber_active = false;
 
+    mousegrabber_release_focus();
     declare_mark_all_dirty();
     return 0;
 }

@@ -1917,8 +1917,8 @@ void client_ban_unfocus(client_t *c)
          * pass then briefly sees the dragged client as invisible (its tags
          * are still on the source screen) and would clear focus mid-drag,
          * handing it to another client on the source monitor. Skip the
-         * unfocus while the grab runs; the post-grab motionnotify(0) in
-         * input.c re-evaluates focus once tag and monitor state agree. */
+         * unfocus while the grab runs; mousegrabber stop unfocuses the
+         * client then if it is still banned. */
         if (mousegrabber_isrunning())
             return;
         client_unfocus(c, false);
