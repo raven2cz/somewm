@@ -893,11 +893,17 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 		/* Update selected monitor when cursor crosses monitor boundaries.
 		 * Without this, layer-shell clients (rofi, etc.) that don't specify
-		 * an output get assigned to the stale selmon in createlayersurface(). */
+		 * an output get assigned to the stale selmon in createlayersurface().
+		 * Also queue screen::focus, as the button-press path does, so
+		 * awful.screen.focused() followers and shell panels gated on the
+		 * focused screen track the cursor. mon != selmon holds at most once
+		 * per boundary crossing, so this is not per-motion spam. */
 		{
 			Monitor *mon = xytomon(cursor->x, cursor->y);
-			if (mon && mon != selmon)
+			if (mon && mon != selmon) {
 				selmon = mon;
+				some_event_queue_global(SIG_SCREEN_FOCUS);
+			}
 		}
 	}
 
