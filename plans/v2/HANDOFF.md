@@ -53,15 +53,16 @@ Remotes: somewm `origin` = `git@github.com:raven2cz/somewm.git`, `upstream`
 = `git@github.com:trip-zip/somewm.git` (added in this session; on the NVIDIA
 box add it if missing).
 
-| repo | `legacy/v1` (= tag `v1-legacy`) | `main` = `v2/main` | base of v2 |
+| repo | `legacy/v1` (= tag `v1-legacy`) | `origin/main` (= `origin/v2/main`) | base of v2 |
 |---|---|---|---|
 | somewm | `678640f` | see `git log upstream/main..origin/main` (table below) | `upstream/main` `6eaa61e` (2.1.0 + 5) |
 | somewm-one | `89702b1` | see `git log legacy/v1..origin/main` | `legacy/v1` |
 | somewm-shell | `671e597` | `106e04e` | `legacy/v1` |
 
-On the NVIDIA box the local `main` still points at v1: switch as in
-nvidia-test-plan.md phase A (`git branch -f legacy/v1 origin/legacy/v1;
-git checkout main; git reset --hard origin/main`), never `git pull`.
+On the NVIDIA box the local `main` still points at v1: switch only with the
+script in nvidia-test-plan.md phase A (backup branch, refuses to drop local
+commits), never `git pull`. Remote `v2/main` mirrors `origin/main`; local
+`v2/main` branches, where they exist, may be stale.
 
 ### somewm commits on top of upstream/main
 
@@ -87,7 +88,10 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | `4b9c2c0` docs | review round 2 recorded; tag-slide facts corrected | - |
 | `9439c85` fix(focus,xwayland) | review round 3: re-watch the associated X11 surface after hot reload; deferred layer restore forgets a destroyed output (`layer_focus_forget_monitor`, monitor.c); no pointer rebase if `request::focus_restore` started a new grab | 73 tests + restart suite 39/39 |
 | `cd65e18` fix(scripts) | stack sandbox canonicalises the prefix, refuses `~/.local`/`/usr`/`/opt`/`/etc`, and only wipes a prefix carrying its marker file | verified both refusals |
-| last `docs(v2)` commit(s) | docs review fixes (this file, test plan phase A/B, CLAUDE.md, INSTALL.md) | - |
+| `fb2783f`, `db26b88` docs | review rounds 2-3 in the docs | - |
+| `3a7f648` fix(focus) | review round 4 (gpt-6.1-sol): grab stop tests `client_isvisible()`, not the cached `isbanned` | 50-test set passes |
+| `b0271e6` fix(scripts) | round 4: stack sandbox `--shell` runs its own `qs` (rc.lua's relaunch would pkill the host's), exports the nested `DISPLAY`, `V2_SBX_LOG`, GLES2 for nested; `wine-sandbox.sh start --config-home`; install.sh refuses a build/ with another prefix; border-probe checks expected offsets first | verified: host Quickshell runtime untouched, external xterm lands in the sandbox, GLES2 in the log |
+| last `docs(v2)` commit | round-4 docs fixes: test plan phase A (two-pass, unique backup, re-runnable; simulated on clones), phase B (IPC instead of keybindings, probe limits, B3b by eye), phase C/rollback as checked scripts, D10 on a real layer surface, D18 headless + upstream comparison, Wine in the sandbox; CLAUDE.md/INSTALL/README corrections | - |
 
 ### somewm-one commits on top of legacy/v1
 
@@ -100,6 +104,7 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | `a8f4a7f` | emits `tag_slide::start (s, name)` / `tag_slide::end (s)` around the slide (shell collage listens) |
 | `c3d88c6` | CLAUDE.md v2 notes |
 | `a395fcf` | review round 2: per-screen slide generation (no early `tag_slide::end`), `somewm-widget*` square by name, wallpaper-slide claim corrected, GLava note, themes_spec own stub |
+| `c8db93e` | review round 4: one slide generation for all screens (the shell broadcasts slideEnd to every collage) |
 
 ### somewm-shell commits on top of legacy/v1
 
@@ -107,6 +112,7 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 |---|---|
 | `bb80b0f` | MemoryDetail falls back to Lua heap + client count (the `somewm.memory.stats` it called exists nowhere); CpuDetail footer buttons pass a shell command to `somewm-client exec` (it is `with_shell`, not Lua) |
 | `e0e4008` | MemoryDetail prefers `root.memory_stats`, maps `wallpaper_bytes` |
+| `d8987bd` | review round 4: "Wibox count" row reads `drawins` on 2.x |
 | `106e04e` | CLAUDE.md v2 notes |
 
 ## 4. Fixed / not fixed / dropped (v1 items)
@@ -232,8 +238,13 @@ Sandbox gotchas learned the hard way:
 - somewm-shell hardcodes `$HOME/.config/...`; the stack script gives it a
   throwaway HOME. `qs ipc` must see the same `XDG_CONFIG_HOME` path the
   instance was started with (a symlinked path does not match).
-- rc.lua's Quickshell relaunch runs `pkill -f 'qs -c somewm'`: without
-  `SOMEWM_NO_SHELL=1` a sandbox kills the host's Quickshell.
+- rc.lua's Quickshell relaunch runs `pkill -f 'qs -c somewm'` and clears
+  `/run/user/$UID/quickshell`: without `SOMEWM_NO_SHELL=1` a sandbox kills the
+  host's Quickshell. `v2-stack-sandbox.sh --shell` therefore keeps it off and
+  starts its own `qs` instance (pid in `~/.local/somewm-v2-sbx/qs.pid`).
+- The live compositor grabs Super combos; drive a nested sandbox through
+  IPC (the test plan lists the commands). X11 test clients need the nested
+  `DISPLAY`, which the stack env file exports.
 - Start long-lived sandboxes with `setsid` (the stack script does); a
   compositor in the caller's process group took the calling shell down
   (exit 144) in this session.
@@ -284,4 +295,5 @@ both `deploy.sh`, restart from the TTY. Details in the test plan.
 | 2 | Fable (2 agents) | C delta; config + shell + docs | both stopped by API rate limiting before reporting | retried, see next rows |
 | 3 | gpt-5.6-sol (codex) | the round-2 fix commits | 7: hot reload drops the surface watch; nested rebase could feed a grab started by `request::focus_restore`; Monitor pointer ABA; prefix guard too lexical; plus pre-existing upstream issues (unmapped X11 clients missing from the hot-reload snapshot -> use-after-free on later remap; event.c auto-stop can stop a replacement grab) | ours fixed (`9439c85`, `cd65e18`); the two upstream issues recorded here, not fixed (not our delta); **rejected**: "map/unmap links removed twice" (libwayland's `wl_list_remove` NULLs the links, which window.c checks) |
 | 3 | gpt-5.6-sol (codex) | handoff docs accuracy | phase A unsafe (no backup, no check for unpushed commits, no `set -e`), stale v1 `build/`, phase B snippet stopped the sandbox before the tests, escaped `\|` greps in tables, B10/B11 order, CLAUDE.md v1 claims (OR windows, IPC exec/restart, memory_stats, dbus-run-session), inspector not an IPC global, INSTALL reload-after-install, `libgbm`/`somewm` packages, `pkill && qs`, rollback Lua tree | all fixed in the docs commit after `cd65e18`; origin/main and v2/main pushed in sync |
+| 4 | gpt-6.1-sol (codex, after the user updated codex) | C + scripts; somewm-one + shell; docs | C: 4 (stack `--shell` kills the host Quickshell; stale `isbanned` at grab stop; install.sh prefix mismatch; probe offset order). config/shell: 2 (cross-screen slideEnd; wibox_count on 2.x). docs: 18 (phase A not re-runnable and only checked v1; keybindings intercepted by the v1 parent; nested DISPLAY; renderer unverified; probe cannot judge corners/dragging; log path under changed HOME; wildcard socket rm; phase C/rollback without failure handling; Wine sequence not sandboxed; D10 not a layer surface; D18 not headless; focus-flow text; restart claims; `fork` remote; recipes bypassing phase A; local v2/main) | all fixed; phase A simulated on local clones (preflight, backup, reset, re-run) |
 | 3-4 | Fable | C delta | rate-limited again (4 attempts in total; "Server is temporarily limiting requests") | not available today. The question prepared for it was checked by hand: wlroots emits `associate` *after* reading all window properties (xwm.c `xwayland_surface_associate`), so the forced map sees complete class/title; the forced `wlr_surface_map` is exactly what wlroots' own commit handler does. Residual: `current.seq` increments on every commit, so a buffer-less commit between dissociate and re-associate would make a stale buffer look fresh (Xwayland attaches with its commits; low risk). **Next session: run a Fable review of the C delta when the rate limit allows.** |

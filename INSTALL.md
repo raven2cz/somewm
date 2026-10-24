@@ -197,11 +197,9 @@ When called with "please update all three projects":
 ```bash
 # 0. One-time, on a checkout that still has the v1 main: on 2026-10-24
 #    origin/main was replaced by the v2 line (v1 lives on as legacy/v1), so
-#    a plain `git pull` would try to merge the two lines. In each repo:
-#      git fetch origin --tags
-#      git branch -f legacy/v1 origin/legacy/v1
-#      git checkout main && git reset --hard origin/main
-#    (check `git status` first: reset --hard drops uncommitted work)
+#    a plain `git pull` would try to merge the two lines. Switch with the
+#    checked script in plans/v2/nvidia-test-plan.md, phase A (backup branch,
+#    refuses to drop local commits). Only after that does `git pull` work.
 
 # 1. Pull all three
 cd ~/git/github/somewm        && git pull origin main
@@ -240,6 +238,9 @@ does not replace the running compositor.
 
 If the box is not currently running somewm (e.g. fresh login from another DE):
 
+On a checkout still on the v1 main, do phase A of
+`plans/v2/nvidia-test-plan.md` first (see step 0 above).
+
 ```bash
 cd ~/git/github/somewm        && git pull && ./plans/scripts/install.sh
 cd ~/git/github/somewm-one    && git pull && ./deploy.sh
@@ -268,8 +269,9 @@ Limitations: uses wayland backend, not DRM — does not reproduce NVIDIA timing
 or DRM-format bugs. Per-sandbox cleanup is mandatory:
 
 ```bash
-kill <pid_from_sandbox_output>
-rm -f /run/user/$(id -u)/somewm-sandbox-*.sock
+kill <pid_from_sandbox_output>     # its exit trap removes that sandbox's own socket
+# (v2-stack-sandbox.sh: use --stop; never rm a somewm-sandbox-*.sock wildcard,
+#  it would hit other running sandboxes)
 ```
 
 ---

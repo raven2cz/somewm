@@ -77,7 +77,8 @@ open issues/PRs; the maintainer (human) submits.
   number/date/time are now separate textboxes (`widget_helper.create_runs`).
 - lock screen: `lockscreen_bg_image` -> `lockscreen_wallpaper`.
 - `SOMEWM_NO_AUTOSTART=1`, `SOMEWM_NO_SHELL=1` for nested tests.
-- menu "Restart" falls back to `awesome.restart()` (no `rebuild_restart`).
+- menu "Restart" falls back to `awesome.restart()` (Lua reload only; no
+  `rebuild_restart`).
 
 ## What v2 changes in somewm-shell
 
@@ -94,7 +95,7 @@ open issues/PRs; the maintainer (human) submits.
 | tag slide with sliding wallpaper overlays | the KDE-like slide above, without the wallpaper (would need two `type="desktop"` wiboxes with `animation.visible` slides; not done) |
 | wallpaper scene cache (`root.wallpaper_cache_*`, `root.wp_*`) | obsolete under Clay; somewm-one's calls are guarded no-ops |
 | `gears.wallpaper` | removed upstream; unused |
-| cold/rebuild restart, `somewm-session` loop | `awesome.restart()`; `main()` now returns the quit code, so a session loop can be rebuilt on `awesome.quit(2)` later |
+| cold/rebuild restart, `somewm-session` loop | none. `awesome.restart()` only reloads Lua in the running binary; running a newly installed binary needs ending the session and starting it again from the TTY. `main()` now returns the quit code, so a session loop on `awesome.quit(2)` could be rebuilt later |
 | XWayland override-redirect rewrite (`UnmanagedSurface`) | **not ported**; upstream still makes OR windows Lua clients, stacks them via Clay. Test with Wine first (test plan §6); a minimal port (role flips + focus hold) is ~150 lines |
 | `root.scene_tree_dump`, `root.layer_order`, `root.xwayland_unmanaged` | `somewm-client clay tree`, `screen.inspector` |
 | v1 debug markers `[FOCUS*]` | gone |

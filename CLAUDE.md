@@ -72,7 +72,7 @@ git checkout main && git checkout -b fix/description-here
 git add <files> && git commit -m "fix: description"
 
 # Push to our fork
-git push -u fork fix/description-here
+git push -u origin fix/description-here
 
 # View on GitHub
 gh repo view raven2cz/somewm --web
@@ -114,7 +114,7 @@ make test-unit    # Lua unit tests only (busted)
 make test-integration  # Visual integration tests
 make test-asan    # Integration tests with ASAN (uses build-asan/)
 make test-fast    # Persistent compositor mode (10x faster)
-make test-one TEST=tests/test_foo.sh  # Single test
+make test-one TEST=tests/test-memory-stats.lua  # Single test
 make test-visual  # Watch tests in window
 ninja -C build    # Direct meson build (faster iteration)
 ```
@@ -160,11 +160,10 @@ it does not replace the compositor.
 ```
 
 ### Going back to v1
-```bash
-git checkout legacy/v1   # in all three repos (somewm, somewm-one, somewm-shell)
-# v1 used the SceneFX installer of that line:
-plans/scripts/install-scenefx.sh   # exists on legacy/v1 only
-```
+Use the full, checked procedure in `plans/v2/nvidia-test-plan.md`, section
+"Rollback to v1" (all three repos to `legacy/v1`, remove v2's installed Lua
+tree, `install-scenefx.sh` of that branch, both `deploy.sh`, restart from the
+TTY). Do not do it piecemeal.
 
 ### Wine / X11 debugging
 
@@ -415,15 +414,22 @@ enum { XDGShell, LayerShell, X11 };  // client_type field
 
 ### Focus Flow (two paths - CRITICAL)
 ```
+Which path runs depends on where the focus change starts:
+
 PATH 1 - C direct (focusclient in focus.c:41):
-  Used by: keybindings (Super+K), pointer clicks, mapnotify
+  Used by: C-side focus changes (pointer clicks on clients, map-time
+        focus, focus_restore fallbacks)
   Does: stack update, border color, activate surface, keyboard enter,
         pointer constraint, Lua signals, foreign toplevel handle
 
 PATH 2 - Lua API (some_set_seat_keyboard_focus in somewm_api.c:166):
-  Used by: client.focus = c (Lua setter), awful.client.focus.*
-  Does: activate surface, keyboard enter, pointer constraint
-  NOTE: ALL game focus goes through this path, NEVER through focusclient()
+  Used by: everything that sets client.focus from Lua: keybindings such
+        as Super+J/K (awful.client.focus.byidx), sloppy focus
+        (mouse::enter -> c:activate), rules, request::activate handlers
+  Does: activate surface, keyboard enter, pointer constraint; Lua-side
+        bookkeeping in client_focus_update()
+  NOTE: most game/Steam focus arrives here (activate requests, rules),
+        but click and map paths can still go through focusclient()
 ```
 
 **wlroots same-surface skip (types/seat/wlr_seat_keyboard.c:237):**
