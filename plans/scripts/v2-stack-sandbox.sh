@@ -8,9 +8,13 @@
 #   2. copies somewm-one (and somewm-shell) into a private config home
 #   3. starts a nested (default) or headless compositor via somewm-sandbox.sh
 #      with SOMEWM_NO_AUTOSTART=1 (no second kded6/nm-applet/polkit agent)
-#   4. with --shell: lets rc.lua launch Quickshell against a throwaway HOME
-#      (somewm-shell hardcodes $HOME/.config/...), PATH has the sandbox's
-#      somewm-client first
+#   4. with --shell: starts its own Quickshell instance against a throwaway
+#      HOME (somewm-shell hardcodes $HOME/.config/...), with the sandbox's
+#      somewm-client first on PATH. rc.lua's own shell launch stays off
+#      (SOMEWM_NO_SHELL=1): it would pkill every `qs -c somewm` and clear
+#      /run/user/$UID/quickshell, i.e. take down the host's shell.
+#   5. nested: renders with GLES2 (V2_SBX_RENDERER overrides), so the test
+#      runs on the real GPU; headless: pixman
 #
 # Usage:
 #   plans/scripts/v2-stack-sandbox.sh [--headless] [--shell] [--no-build]
@@ -43,8 +47,10 @@ for a in "$@"; do
         --shell) shell=1 ;;
         --no-build) build=0 ;;
         --stop)
-            # Quickshell started inside exits when its compositor goes away.
-            [ -f "$STATE/pid" ] && kill "$(cat "$STATE/pid")" 2>/dev/null || true
+            for f in qs.pid pid; do
+                [ -f "$STATE/$f" ] && kill "$(cat "$STATE/$f")" 2>/dev/null || true
+                rm -f "$STATE/$f"
+            done
             echo "stopped"; exit 0 ;;
         -h|--help) sed -n 2,30p "$0"; exit 0 ;;
         *) echo "unknown option $a" >&2; exit 1 ;;
@@ -90,12 +96,13 @@ if [ $shell = 1 ]; then
     ln -sfn "$CFG" "$H/.config"
     for r in somewm somewm-one somewm-shell; do ln -sfn "$HOME/git/github/$r" "$H/git/github/$r"; done
     [ -d "$HOME/.local/share/fonts" ] && ln -sfn "$HOME/.local/share/fonts" "$H/.local/share/fonts"
-    export HOME=$H SOMEWM_NO_SHELL=0
-else
-    export SOMEWM_NO_SHELL=1
+    export HOME=$H
 fi
-export PATH=$PREFIX/bin:$PATH SOMEWM_NO_AUTOSTART=1 SOMEWM_SANDBOX_CONFIG_HOME=$CFG
+export PATH=$PREFIX/bin:$PATH SOMEWM_NO_AUTOSTART=1 SOMEWM_NO_SHELL=1 SOMEWM_SANDBOX_CONFIG_HOME=$CFG
 export SOMEWM_SANDBOX_LOG=$STATE/somewm.log
+if [ $headless = 0 ]; then
+    export WLR_RENDERER=${V2_SBX_RENDERER:-gles2}
+fi
 
 args=(--binary "$PREFIX/bin/somewm" --client "$PREFIX/bin/somewm-client")
 [ $headless = 1 ] && args=(--headless "${args[@]}")
@@ -109,6 +116,25 @@ sed -n 's/^nested somewm pid: //p' "$STATE/sandbox.out" > "$STATE/pid"
 
 sock=$(sed -n 's/^export SOMEWM_SOCKET=//p' "$STATE/sandbox.out")
 wdisp=$(sed -n 's/^export WAYLAND_DISPLAY=//p' "$STATE/sandbox.out")
+# The nested Xwayland's DISPLAY, so X11 test clients (xterm, Wine) land in
+# the sandbox and not on the live session.
+# Xwayland is lazy; somewm-one's rc.lua kicks it with xprop, so allow ~15 s.
+xdisp=
+for _ in $(seq 1 150); do
+    xdisp=$(SOMEWM_SOCKET=$sock "$PREFIX/bin/somewm-client" eval 'return os.getenv("DISPLAY") or ""' 2>/dev/null | grep -v '^OK$' | grep . | tail -1 || true)
+    [ -n "$xdisp" ] && [ "$xdisp" != OK ] && break
+    xdisp=; sleep 0.1
+done
+
+if [ $shell = 1 ]; then
+    (
+        export SOMEWM_SOCKET=$sock WAYLAND_DISPLAY=$wdisp XDG_RUNTIME_DIR=$(dirname "$sock") XDG_CONFIG_HOME=$CFG
+        "$SHELL_REPO/theme-export.sh" >/dev/null 2>&1 || true
+        setsid nohup qs -c somewm -n -d > "$STATE/qs.log" 2>&1 &
+        echo $! > "$STATE/qs.pid"
+    )
+fi
+
 {
     printf 'export SOMEWM_SOCKET=%q\n' "$sock"
     printf 'export WAYLAND_DISPLAY=%q\n' "$wdisp"
@@ -116,8 +142,13 @@ wdisp=$(sed -n 's/^export WAYLAND_DISPLAY=//p' "$STATE/sandbox.out")
     printf 'export XDG_RUNTIME_DIR=%q\n' "$(dirname "$sock")"
     printf 'export PATH=%q:"$PATH"\n' "$PREFIX/bin"
     printf 'export XDG_CONFIG_HOME=%q\n' "$CFG"
+    [ -n "$xdisp" ] && printf 'export DISPLAY=%q\n' "$xdisp"
+    # Absolute paths: with --shell this file also changes HOME.
+    printf 'export V2_SBX_STATE=%q\n' "$STATE"
+    printf 'export V2_SBX_LOG=%q\n' "$STATE/somewm.log"
     if [ $shell = 1 ]; then printf 'export HOME=%q\n' "$STATE/home"; fi
 } > "$STATE/env"
 
 echo "sandbox pid $(cat "$STATE/pid"), log $STATE/somewm.log"
+[ $shell = 1 ] && echo "quickshell pid $(cat "$STATE/qs.pid"), log $STATE/qs.log"
 echo "source $STATE/env"

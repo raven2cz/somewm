@@ -111,7 +111,10 @@ def scan_edge(buf, iw, ih, want, ring, bw, radius, edge):
     """
     x0, y0, x1, y1 = ring
     skip = radius + 2  # stay clear of the rounded corners
-    band = range(-3, bw + 3)
+    # Expected offsets first: an adjacent pixel that happens to match the
+    # border colour (dark wallpaper, black content) must not turn a correct
+    # border into "shifted".
+    band = list(range(0, bw)) + [d for d in range(-3, bw + 3) if not 0 <= d < bw]
 
     clean = shifted = missing = offscreen = 0
     wrong = Counter()

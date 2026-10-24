@@ -87,6 +87,16 @@ fi
 echo "==> Building (make)..."
 make -C "$SRCDIR"
 
+# make reuses an existing build/ with whatever prefix it was set up with;
+# everything below (cleanup, --check) assumes $PREFIX.
+built_prefix=$(meson introspect "$BUILDDIR" --buildoptions |
+    python3 -c 'import json,sys; print({o["name"]: o["value"] for o in json.load(sys.stdin)}["prefix"])')
+if [[ "$built_prefix" != "$PREFIX" ]]; then
+    red "build/ is configured for prefix $built_prefix, not $PREFIX."
+    red "Fix with: meson configure $BUILDDIR -Dprefix=$PREFIX (or remove build/)."
+    exit 1
+fi
+
 left=$(legacy_leftovers)
 if [[ -n "$left" ]]; then
     echo "==> Removing v1 SceneFX leftovers (sudo):"

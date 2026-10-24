@@ -8,7 +8,10 @@
 # prevent: every subcommand refuses to run unless it is talking to a sandbox.
 #
 # Subcommands:
-#   start [--binary PATH] [--test-config] [--log PATH]
+#   start [--binary PATH] [--client PATH] [--test-config | --config-home DIR] [--log PATH]
+#                        --config-home: use DIR/somewm/rc.lua (e.g. the copy
+#                        made by v2-stack-sandbox.sh); exports
+#                        SOMEWM_NO_AUTOSTART=1 SOMEWM_NO_SHELL=1 for it
 #                        start the nested compositor in the background
 #   env                  print the sandbox environment (eval-able)
 #   run -- CMD...        run CMD inside the sandbox (nested DISPLAY + WAYLAND_DISPLAY)
@@ -98,6 +101,11 @@ cmd_start() {
             --binary) binary=$2; shift 2 ;;
             --client) client=$2; shift 2 ;;
             --log)    log=$2; shift 2 ;;
+            --config-home)
+                config_home=$2
+                [[ -f "$config_home/somewm/rc.lua" ]] || die "no $config_home/somewm/rc.lua"
+                export SOMEWM_NO_AUTOSTART=1 SOMEWM_NO_SHELL=1
+                shift 2 ;;
             --test-config)
                 config_home=$(mktemp -d)
                 mkdir -p "$config_home/somewm"
