@@ -589,6 +589,7 @@ client_remove_all_listeners(client_t *c)
 		wl_list_remove(&c->configure.link);
 		wl_list_remove(&c->dissociate.link);
 		wl_list_remove(&c->set_hints.link);
+		x11_forget_dissociated_surface(c);
 		/* If associate was called, map/unmap listeners need cleanup */
 		if (c->map.link.prev && c->map.link.next) {
 			wl_list_remove(&c->map.link);

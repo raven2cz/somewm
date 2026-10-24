@@ -27,6 +27,7 @@ void activatex11(struct wl_listener *listener, void *data);
 void associatex11(struct wl_listener *listener, void *data);
 void configurex11(struct wl_listener *listener, void *data);
 void createnotifyx11(struct wl_listener *listener, void *data);
+void x11_forget_dissociated_surface(struct client_t *c);
 void dissociatex11(struct wl_listener *listener, void *data);
 void sethints(struct wl_listener *listener, void *data);
 

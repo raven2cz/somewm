@@ -212,10 +212,14 @@ struct client_t
     struct wl_listener activate;
     struct wl_listener associate;
     struct wl_listener dissociate;
-    /** The wl_surface and its commit seq at the last X11 dissociate, so a
-     * re-associate of the same surface can tell a buffer left over from
-     * before the unmap from one committed in the associate gap. */
-    struct wlr_surface *x11_dissociated_surface;
+    /** The wl_surface last associated with this X11 window, watched for
+     * destruction from associate on (so the pointer never outlives it), and
+     * its commit seq at dissociate: a re-associate of the same surface can
+     * then tell a buffer left from before the X11 unmap from one committed
+     * in the associate gap (xwayland.c associatex11). */
+    struct wlr_surface *x11_known_surface;
+    struct wl_listener x11_known_surface_destroy;
+    bool x11_known_dissociated;
     uint32_t x11_dissociated_seq;
     struct wl_listener configure;
     struct wl_listener set_hints;

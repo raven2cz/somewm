@@ -78,6 +78,40 @@ activatex11(struct wl_listener *listener, void *data)
 	lua_pop(L, 1);
 }
 
+static void
+x11_known_surface_destroyed(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, x11_known_surface_destroy);
+	wl_list_remove(&c->x11_known_surface_destroy.link);
+	c->x11_known_surface = NULL;
+	c->x11_known_dissociated = false;
+}
+
+/** Stop watching the surface remembered for associatex11. */
+void
+x11_forget_dissociated_surface(Client *c)
+{
+	if (!c->x11_known_surface)
+		return;
+	wl_list_remove(&c->x11_known_surface_destroy.link);
+	c->x11_known_surface = NULL;
+	c->x11_known_dissociated = false;
+}
+
+/* Watch the surface while it is alive. wlroots may dissociate from inside
+ * the surface's own destruction (the xwayland addon is finished after the
+ * destroy signal), so the listener must already be in place by then. */
+static void
+x11_watch_surface(Client *c, struct wlr_surface *surface)
+{
+	if (c->x11_known_surface == surface)
+		return;
+	x11_forget_dissociated_surface(c);
+	c->x11_known_surface = surface;
+	LISTEN(&surface->events.destroy, &c->x11_known_surface_destroy,
+			x11_known_surface_destroyed);
+}
+
 void
 associatex11(struct wl_listener *listener, void *data)
 {
@@ -114,9 +148,10 @@ associatex11(struct wl_listener *listener, void *data)
 	 *
 	 * The mapped-but-no-scene branch covers the mirror case, where the map
 	 * signal fired before we could subscribe. */
-	bool stale = surface == c->x11_dissociated_surface
+	bool stale = surface == c->x11_known_surface && c->x11_known_dissociated
 		&& surface->current.seq == c->x11_dissociated_seq;
-	c->x11_dissociated_surface = NULL;
+	x11_watch_surface(c, surface);
+	c->x11_known_dissociated = false;
 	if (!c->scene) {
 		if (!surface->mapped && wlr_surface_has_buffer(surface) && !stale) {
 			wlr_surface_map(surface);
@@ -339,8 +374,11 @@ dissociatex11(struct wl_listener *listener, void *data)
 	Client *c = wl_container_of(listener, c, dissociate);
 	struct wlr_surface *surface = client_surface(c);
 
-	c->x11_dissociated_surface = surface;
-	c->x11_dissociated_seq = surface ? surface->current.seq : 0;
+	/* A surface already destroyed was forgotten by its destroy listener. */
+	if (surface && surface == c->x11_known_surface) {
+		c->x11_known_dissociated = true;
+		c->x11_dissociated_seq = surface->current.seq;
+	}
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }
