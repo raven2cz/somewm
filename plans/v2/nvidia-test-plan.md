@@ -6,6 +6,13 @@ TV, Sierra Chart under Wine, Steam). The v2 line was built and verified only
 in a nested/headless sandbox on an AMD box (see [README.md](README.md),
 section "Verified on boxszn"). This plan is what that box could not do.
 
+> **Bootstrap.** On the NVIDIA workstation the local checkout is still the v1
+> line, where `plans/v2/` does not exist yet. Read these files straight from
+> origin before switching anything:
+> `git -C ~/git/github/somewm fetch origin && git -C ~/git/github/somewm show origin/main:plans/v2/HANDOFF.md`
+> (same for `README.md`, `nvidia-test-plan.md`), then run phase A of the test
+> plan, which moves all three checkouts onto v2.
+
 Read first: [HANDOFF.md](HANDOFF.md) (complete state: what was done, why,
 what is and is not fixed, how to run things), `CLAUDE.md` (v2 sections),
 [README.md](README.md). Speak Czech
@@ -33,28 +40,47 @@ with the user; write results in English.
 2026-10-24; the old main is `legacy/v1` (tag `v1-legacy`). A plain `git pull`
 would try to merge the two lines.
 
+Run this as a script (it stops at the first problem). It keeps the old
+local main as a backup branch and refuses to reset over local commits that
+exist neither in v1 on origin nor in v2:
 ```bash
+set -euo pipefail
 for r in somewm somewm-one somewm-shell; do
-  cd ~/git/github/$r
-  git status --short            # must be empty; if not, STOP and ask the user
-  git fetch origin --tags
-  git branch -f legacy/v1 origin/legacy/v1
-  git log -1 --format='%h %s' origin/legacy/v1   # sanity: v1 tip exists
-  git checkout main && git reset --hard origin/main
-  git log --oneline -5
+  R=~/git/github/$r
+  echo "== $r"
+  test -z "$(git -C $R status --porcelain)" || { echo "uncommitted changes in $R: STOP, ask the user"; exit 1; }
+  git -C $R fetch origin --tags
+  git -C $R rev-parse --verify -q origin/legacy/v1 >/dev/null || { echo "no origin/legacy/v1 in $R"; exit 1; }
+  # local commits on the old main that origin's v1 tip does not have:
+  extra=$(git -C $R log --oneline origin/legacy/v1..main 2>/dev/null || true)
+  if [ -n "$extra" ]; then echo "local commits not on origin/legacy/v1:"; echo "$extra"; echo "STOP, ask the user"; exit 1; fi
+  git -C $R branch -f backup/pre-v2-main main
+  git -C $R branch -f legacy/v1 origin/legacy/v1
+  git -C $R checkout -q main
+  git -C $R reset --hard origin/main
+  git -C $R log --oneline -3
+  test "$(git -C $R rev-parse origin/main)" = "$(git -C $R rev-parse origin/v2/main)" || echo "note: origin/v2/main differs from origin/main (main is authoritative)"
 done
-cd ~/git/github/somewm && git remote add upstream git@github.com:trip-zip/somewm.git 2>/dev/null; git fetch upstream
-git log --oneline upstream/main..main     # expect about a dozen fork commits (README table), nothing else
+git -C ~/git/github/somewm remote get-url upstream >/dev/null 2>&1 || git -C ~/git/github/somewm remote add upstream git@github.com:trip-zip/somewm.git
+git -C ~/git/github/somewm fetch upstream
+git -C ~/git/github/somewm log --oneline upstream/main..main   # the fork commits listed in HANDOFF.md section 3, nothing else
 ```
+Expected tips: the newest commit of each repo is the one HANDOFF.md
+section 3 lists last (somewm: a `docs(v2): ...` handoff commit). If the
+upstream list contains commits not in HANDOFF.md, read them before going on.
 
 A1. Record `somewm --version` of the *running* v1 binary and
 `ls -l /usr/local/bin/somewm*`, `ls /usr/local/lib | grep -i scenefx`,
 `cat ~/bin/session-launcher` (if present), `head -5 /usr/local/bin/somewm-session`.
 These are the rollback reference.
 
-A2. Build without installing:
+A2. Build without installing. An old `build/` from the v1 line carries
+options v2 no longer has (`scenefx`, `wlroots_version`, `xwayland`) and
+breaks meson; remove it first if so (install.sh does the same):
 ```bash
-cd ~/git/github/somewm && make        # release build/; downloads wlroots 0.20.2 on first run
+cd ~/git/github/somewm
+grep -q '"name": "scenefx"' build/meson-info/intro-buildoptions.json 2>/dev/null && rm -rf build
+make                                  # release build/; downloads wlroots 0.20.2 on first run
 ./build/somewm --version              # v2.1.x-...
 ```
 If the build fails on a missing package, list it for the user (no sudo for
@@ -66,15 +92,21 @@ The nested backend renders on the NVIDIA GPU through GLES2, so corner and
 animation rendering is exercised on the real driver, without DRM/KMS.
 
 B0. One command does all of B0 (private prefix build + config copy + nested
-sandbox, `SOMEWM_NO_AUTOSTART=1`, `SOMEWM_NO_SHELL=1`):
+sandbox, `SOMEWM_NO_AUTOSTART=1`, `SOMEWM_NO_SHELL=1`). The sandbox **keeps
+running** until `--stop`; run every B test from a shell that has sourced its
+env file, otherwise `somewm-client` talks to the live v1 session:
 ```bash
-~/git/github/somewm/plans/scripts/v2-stack-sandbox.sh          # nested, real GPU
-( source ~/.local/somewm-v2-sbx/env; somewm-client eval 'return awesome.version' )
+~/git/github/somewm/plans/scripts/v2-stack-sandbox.sh          # nested, real GPU; add --shell for somewm-shell
+bash                                                            # dedicated shell for phase B
+source ~/.local/somewm-v2-sbx/env
+somewm-client eval 'return awesome.version'                     # must print v2.1...
+# ... B1-B11 ...  (log: ~/.local/somewm-v2-sbx/somewm.log)
+exit
 ~/git/github/somewm/plans/scripts/v2-stack-sandbox.sh --stop
 ```
-Add `--shell` to also run somewm-shell (throwaway HOME). The manual
-equivalent, for reference: install v2 into a private prefix so the nested
-binary does not read the v1 Lua tree in `/usr/local/share/somewm`:
+The manual equivalent, for reference only (the script does this): install
+v2 into a private prefix so the nested binary does not read the v1 Lua tree
+in `/usr/local/share/somewm`:
 ```bash
 P=$HOME/.local/somewm-v2; B=$HOME/.cache/somewm-v2-build
 cd ~/git/github/somewm && meson setup $B --prefix=$P -Dsystemd=disabled -Dbuildtype=release
@@ -93,7 +125,7 @@ frame callbacks and its animations freeze (see CLAUDE.md, nested vs headless).
 
 | ID | test | pass criterion |
 |---|---|---|
-| B1 | startup log: `grep -E ' W: \|traceback\|error' <sandbox log>` | no Lua error; warnings only the known `imagebox *_fit_policy` / `markup has more than one run` (exit screen) |
+| B1 | startup log, command B1 below the table | no Lua error; warnings only the known `imagebox *_fit_policy` / `markup has more than one run` (exit screen) |
 | B2 | open 3 alacritty + 1 xterm; `client.get()` shapes | all `c.shape == 14`; windows visible (not stuck transparent) |
 | B3 | **corners on NVIDIA** (the v1 SceneFX defect): with the nested window focused, run `plans/scripts/border-probe.py nested-nvidia-1` for each of 3 focused windows; then drag one window around and run it again | 100% clean, flicker 0, every edge `ok`. Compare: v1 SceneFX 0.5 measured 56% with the left edge absent |
 | B4 | border width 2 and radius 0 variants via IPC (`c.border_width=2`, `c.shape=nil`) + probe | 100% |
@@ -102,8 +134,16 @@ frame callbacks and its animations freeze (see CLAUDE.md, nested vs headless).
 | B7 | layout-machi: Super+/ switcher, Super+. editor | overlay grid draws (was blank before the paint.lua fix) |
 | B8 | wibar | icon and number in different fonts (numbers monospace), clock date small / time larger |
 | B9 | theme switch via IPC `require("fishlive.services.themes").switch("dracula")` and back | no error; `beautiful.animation_appear == "fade"` afterwards |
-| B10 | lock screen `awesome.lock()` | wallpaper behind the dimmed overlay; then kill the sandbox (do not type the password into a sandbox) |
-| B11 | `root.memory_stats(true)` | table with `lua_bytes`, `malloc_used_bytes` etc. |
+| B10 | `somewm-client eval 'local m=root.memory_stats(true); return m.lua_bytes.." "..tostring(m.malloc_used_bytes)'` | two numbers |
+| B11 | **last:** lock screen `somewm-client eval 'awesome.lock(); return 1'` | wallpaper behind the dimmed overlay; then stop the sandbox (do not type the password into a sandbox) |
+
+Commands too long for the table:
+```bash
+# B1 (in the sandbox shell)
+grep -Ei ' W: |traceback|error' ~/.local/somewm-v2-sbx/somewm.log | grep -v EGL
+# D1 (live session)
+grep -E 'renderer|GLES|EGL' ~/.local/log/somewm-debug.log | head
+```
 
 Stop the sandbox afterwards (`kill <pid>`; `rm -f $XDG_RUNTIME_DIR/somewm-sandbox-*.sock`).
 
@@ -137,7 +177,7 @@ Log: `~/.local/log/somewm-debug.log`. Stats watchdog:
 
 | ID | area | test | pass criterion |
 |---|---|---|---|
-| D1 | startup | session comes up; `somewm --version`; `grep -E 'renderer\|GLES\|EGL' ~/.local/log/somewm-debug.log \| head` | GLES2 renderer on the NVIDIA device; no `Falling back`-type renderer errors (software cursor fallback is acceptable, note it) |
+| D1 | startup | session comes up; `somewm --version`; command D1 under the B table | GLES2 renderer on the NVIDIA device; no `Falling back`-type renderer errors (software cursor fallback is acceptable, note it) |
 | D2 | outputs | every monitor lit at its mode/scale; portrait and the Samsung TV; wallpaper per screen correct, including a monitor left of / above the primary (negative layout origin, audit #17) | correct placement, no offset wallpaper |
 | D3 | corners | `border-probe.py drm-1..3` on 3 windows, then while dragging, then on the 4K output and the TV | 100% / flicker 0 |
 | D4 | performance | idle 5 min: `somewm-stats.log` CPU% and RSS; drag a window for 10 s; tag switch 20x quickly | idle CPU ~0-2%; no stutter; RSS stable (`plans/scripts/somewm-memory-trend.sh --idle 60`) |
@@ -193,7 +233,10 @@ steps; that is also what upstream needs for an issue.
 
 ```bash
 for r in somewm somewm-one somewm-shell; do git -C ~/git/github/$r checkout legacy/v1; done
+# the v1 installer does not wipe the installed Lua tree; remove v2's first
+sudo rm -rf /usr/local/share/somewm/lua
 cd ~/git/github/somewm && ./plans/scripts/install-scenefx.sh    # exists on legacy/v1; needs wlroots0.19 + SceneFX 0.4 deps
+./plans/scripts/install-scenefx.sh --check                      # NB: v1's --check prints problems but exits 0; read its output
 cd ~/git/github/somewm-one && ./deploy.sh
 cd ~/git/github/somewm-shell && ./deploy.sh
 # restart the session from the TTY (start.sh)

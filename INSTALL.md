@@ -34,7 +34,7 @@ This file covers only the three somewm repos themselves.
 sudo pacman -S --needed \
     base-devel git meson ninja pkgconf cmake \
     wayland wayland-protocols libxkbcommon \
-    libinput libdrm libgbm mesa vulkan-icd-loader \
+    libinput libdrm mesa vulkan-icd-loader \
     pixman cairo pango \
     lua51 luajit lua51-lgi \
     xorg-xwayland xcb-util-wm xcb-util-errors \
@@ -51,9 +51,9 @@ sudo pacman -S --needed quickshell qt6-base qt6-declarative qt6-svg
 # Optional but recommended for sessions / D-Bus integration
 sudo pacman -S --needed dbus-broker xdg-desktop-portal-wlr polkit gnome-keyring
 
-# IPC client (somewm-client)
-sudo pacman -S --needed somewm   # if available, otherwise built from source below
 ```
+(`somewm-client` is built and installed with the compositor; GBM comes with
+`mesa`.)
 
 If `somewm` is not in pacman/AUR, the `somewm-client` binary is built and
 installed by `plans/scripts/install.sh` together with the compositor.
@@ -216,15 +216,19 @@ cd ~/git/github/somewm
 cd ~/git/github/somewm-one    && ./deploy.sh
 cd ~/git/github/somewm-shell  && ./deploy.sh
 
-# 4. Reload the live session (if somewm is running)
+# 4a. If step 2 installed a new compositor: log out to the TTY and run
+#     plans/scripts/start.sh. Do NOT just reload: the running binary stays
+#     the old one, and on a v1 -> v2 switch a reload would load v2 Lua into
+#     the v1 binary.
+# 4b. Lua/QML-only changes: reload in place
 somewm-client reload          # picks up rc.lua changes
-pkill -u "$(id -un)" -f 'qs -c somewm'
-qs -c somewm &                # restart the shell to pick up QML changes
+pkill -u "$(id -un)" -f 'qs -c somewm' || true
+qs -c somewm -n -d >/dev/null 2>&1 &   # restart the shell for QML changes
 disown
 ```
 
 If only `somewm-one` changed: `./deploy.sh && somewm-client reload`.
-If only `somewm-shell` changed: `./deploy.sh && pkill -f 'qs -c somewm' && qs -c somewm &`.
+If only `somewm-shell` changed: `./deploy.sh; pkill -f 'qs -c somewm' || true; qs -c somewm -n -d &`.
 
 For C-side compositor changes: `install.sh`, then restart the session from the
 TTY (`start.sh`). Note that `somewm-client exec` spawns a shell command, it
@@ -284,7 +288,7 @@ deployed copy. `somewm-client reload` reads from the deployed copy.
 
 **Quickshell shows old QML after editing somewm-shell repo**
 `./deploy.sh` deploys the QML, but `qs -c somewm` keeps the old QML cached.
-Restart it: `pkill -f 'qs -c somewm' && qs -c somewm &`.
+Restart it: `pkill -f 'qs -c somewm' || true; qs -c somewm -n -d &`.
 
 **Nested sandbox returns "WAYLAND_DISPLAY not set"**
 The script prints two sockets: `SOMEWM_SOCKET` (IPC for `somewm-client`) and

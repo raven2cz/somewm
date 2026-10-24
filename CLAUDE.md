@@ -47,8 +47,9 @@ DRM and NVIDIA validation happens on the primary machine
 - **User:** Antonin Fischer (raven2cz)
 - **OS:** Arch Linux
 - **Session:** somewm launched from TTY (NOT from display manager - DM launch is broken, separate issue)
-- **Launch command:** `dbus-run-session somewm 2>&1 | tee /tmp/somewm.log`
-- **Debug launch:** `dbus-run-session somewm -d 2>&1 | tee ~/.local/log/somewm-debug.log`
+- **Launch command:** `~/git/github/somewm/plans/scripts/start.sh` (from the
+  TTY; runs `somewm -d`, logs to `~/.local/log/somewm-debug.log`; deliberately
+  *not* wrapped in `dbus-run-session`, it uses the systemd user bus)
 - **Config:** `~/.config/somewm/rc.lua`
 - **Terminal:** alacritty
 - **Modkey:** Mod4 (Super)
@@ -182,8 +183,11 @@ Use `click`/`move` rather than xdotool: xdotool goes through XTEST inside Xwayla
 and bypasses the compositor's input path entirely, which proves nothing about
 compositor bugs.
 
-X11 override-redirect surfaces (Wine menus, tooltips) are not clients and never
-appear in `client.get()`; inspect them with `root.xwayland_unmanaged()`.
+X11 override-redirect surfaces (Wine menus, tooltips): on **v2** (upstream
+2.1) they are still Lua clients (they appear in `client.get()`, stacked in the
+`Z_CLIENT_UNMANAGED` band); the v1 rewrite that took them out of the client
+model, and its `root.xwayland_unmanaged()`, were not ported. Compare the X11
+tree with `client.get()` via `plans/scripts/wine-sandbox.sh census --probe`.
 
 ### Nested compositor sandbox (no reboot, limited fidelity)
 
@@ -255,8 +259,11 @@ somewm-client eval 'return awesome.version'           # eval Lua, return result
 somewm-client eval 'return client.focus and client.focus.name or "none"'
 somewm-client eval 'for _,c in ipairs(client.get()) do print(c.name, c.class) end'
 somewm-client eval 'return os.getenv("DISPLAY")'      # XWayland display number
-somewm-client exec somewm                              # hot-swap binary (CAREFUL!)
-somewm-client restart                                  # restart with same binary
+somewm-client exec alacritty                           # spawn a shell command (awful.spawn.with_shell)
+somewm-client reload                                   # hot-reload rc.lua in place
+# somewm-client restart = awesome.quit(1): neither start.sh nor the systemd
+# service restarts it, so it ENDS the session. somewm-client exec somewm
+# would start a second (nested) compositor, not swap the binary.
 ```
 **IPC syntax:** Single-line Lua only. Multi-line fails. Use `;` to chain statements.
 **IPC globals:** `eval` runs with the C globals only (`client`, `screen`, `tag`,
@@ -265,11 +272,13 @@ globals (rc.lua makes them locals): write `require("awful").spawn(...)`.
 
 ### Memory diagnostics
 
-> **v2 note:** `root.memory_stats()`, `root.wallpaper_cache_stats()` and
-> `root.drawable_stats()` were v1 fork APIs and do not exist on v2 (under Clay
-> drawables hold no cairo/shm surface and the wallpaper cache is gone). The
-> snapshot script falls back to Lua heap + client count; a v2 rewrite is a
-> follow-up in `plans/v2/README.md`. The text below describes v1.
+> **v2 note:** `root.memory_stats([gc])` exists on v2 in a smaller form
+> (`lua_bytes`, `clients`, `screens`, `tags`, `drawins`, `wallpaper_bytes`,
+> glibc >= 2.33: `malloc_*_bytes`). `root.wallpaper_cache_stats()` and
+> `root.drawable_stats()` are v1-only (under Clay drawables hold no cairo/shm
+> surface and the wallpaper cache is gone), as are the drawable/wallpaper
+> fields below. The snapshot/trend scripts still list v1 field names (they
+> read 0); switching them is a follow-up. The text below describes v1.
 
 somewm has explicit memory diagnostics for early leak tracking. Use these before
 assuming RSS growth is a compositor leak: wallpaper/tag-slide cache, NVIDIA,

@@ -1,5 +1,13 @@
 # v2 handoff: everything a new session needs
 
+> **Bootstrap.** On the NVIDIA workstation the local checkout is still the v1
+> line, where `plans/v2/` does not exist yet. Read these files straight from
+> origin before switching anything:
+> `git -C ~/git/github/somewm fetch origin && git -C ~/git/github/somewm show origin/main:plans/v2/HANDOFF.md`
+> (same for `README.md`, `nvidia-test-plan.md`), then run phase A of the test
+> plan, which moves all three checkouts onto v2.
+
+
 Written 2026-10-24 at the end of the session that created the v2 line, on
 `boxszn`, for the Claude session that continues on the **primary NVIDIA
 workstation**. Read this file completely, then [README.md](README.md) (the
@@ -76,6 +84,10 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | `71f6d60` fix(focus) | review round 2: pointer rebase on *every* grab stop (move/resize end on button release), deferred layer restore on the layer's own output (`layer_focus_restore_deferred()` in protocols.c), dropped on hot reload | 59-test set passes |
 | `4788dcd` fix(root) | `__GLIBC_PREREQ` nested under `#ifdef __GLIBC__` (musl builds) | build |
 | `9e93f86` fix(scripts) | sandbox removes its own mktemp dirs wherever TMPDIR is; stack sandbox refuses system prefixes, follows a changed prefix, `%q`-quoted env file, `setsid`; border-probe JSON escaping | verified (probe 100%, prefix guard) |
+| `4b9c2c0` docs | review round 2 recorded; tag-slide facts corrected | - |
+| `9439c85` fix(focus,xwayland) | review round 3: re-watch the associated X11 surface after hot reload; deferred layer restore forgets a destroyed output (`layer_focus_forget_monitor`, monitor.c); no pointer rebase if `request::focus_restore` started a new grab | 73 tests + restart suite 39/39 |
+| `cd65e18` fix(scripts) | stack sandbox canonicalises the prefix, refuses `~/.local`/`/usr`/`/opt`/`/etc`, and only wipes a prefix carrying its marker file | verified both refusals |
+| last `docs(v2)` commit(s) | docs review fixes (this file, test plan phase A/B, CLAUDE.md, INSTALL.md) | - |
 
 ### somewm-one commits on top of legacy/v1
 
@@ -207,7 +219,7 @@ screen sharing, gpu-screen-recorder, idle/DPMS, performance on 4K.
 | screenshot | `grim <file>` (with the sandbox env) or `somewm-client screenshot save <file>` |
 | shell panel | `qs ipc -c somewm call somewm-shell:panels toggle <dashboard\|memory-detail\|cpu-detail\|storage-detail\|wallpapers\|sidebar-left\|controlpanel>` |
 | border check | `plans/scripts/border-probe.py <label>` (focused client; results in `tests/bench/results/border/<label>/`) |
-| render tree | `somewm-client clay tree [screen]`; `somewm.inspector.toggle(s)` |
+| render tree | `somewm-client clay tree [screen]`; inspector: `somewm-client eval 'require("somewm.inspector").toggle(screen[1]); return 1'` (`somewm` is not an IPC global) |
 | memory | `somewm-client eval 'local m=root.memory_stats(true); return m.lua_bytes'`; `plans/scripts/somewm-memory-snapshot.sh` (falls back for missing v1 fields) |
 | somewm-one busted | `lua5.1 /usr/lib/luarocks/rocks-5.1/busted/2.3.0-1/bin/busted --helper=spec/preload.lua --lpath='?.lua;?/init.lua' spec/` |
 | config check | `somewm -k ~/.config/somewm/rc.lua` |
