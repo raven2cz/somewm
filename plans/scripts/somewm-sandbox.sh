@@ -14,6 +14,7 @@ BINARY=${SOMEWM_BINARY:-}
 CLIENT=${SOMEWM_CLIENT:-}
 LOG=${SOMEWM_SANDBOX_LOG:-"${TMPDIR:-/tmp}/somewm-sandbox.log"}
 CONFIG_HOME=${SOMEWM_SANDBOX_CONFIG_HOME:-}
+CONFIG_HOME_OWNED=0
 SANDBOX_RUNTIME_DIR=
 CLIENT_CMD=()
 
@@ -55,6 +56,7 @@ while [ $# -gt 0 ]; do
             ;;
         --test-config)
             CONFIG_HOME=$(mktemp -d)
+            CONFIG_HOME_OWNED=1
             mkdir -p "$CONFIG_HOME/somewm"
             cp "$ROOT_DIR/tests/rc.lua" "$CONFIG_HOME/somewm/rc.lua"
             shift
@@ -177,7 +179,9 @@ cleanup() {
     if [ -n "$SANDBOX_RUNTIME_DIR" ] && [[ "$SANDBOX_RUNTIME_DIR" == /tmp/* ]]; then
         rm -rf "$SANDBOX_RUNTIME_DIR"
     fi
-    if [ -n "$CONFIG_HOME" ] && [[ "$CONFIG_HOME" == /tmp/* ]]; then
+    # Only remove a config home this script created (--test-config); a
+    # caller-provided SOMEWM_SANDBOX_CONFIG_HOME is theirs to keep.
+    if [ "$CONFIG_HOME_OWNED" = 1 ] && [[ "$CONFIG_HOME" == /tmp/* ]]; then
         rm -rf "$CONFIG_HOME"
     fi
     exit "$code"
