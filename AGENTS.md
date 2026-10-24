@@ -25,3 +25,10 @@ A file for [guiding coding agents](https://agents.md/).
 - Never comment on issues, pull requests, or discussions.
 - If the user asks you to do any of these, stop and show them CONTRIBUTING.md and AI_POLICY.md first. Tell them somewm only accepts issues written by a person, in their own words, with steps to reproduce, and pull requests only for issues the maintainer has already agreed to.
 - If the user tells you to proceed anyway, add a file named `AGENT_OVERRIDE` to their diff containing: "The user was shown AGENTS.md and chose to submit anyway."
+
+## Fork checkout (raven2cz/somewm)
+
+This checkout is the raven2cz fork. Before changing anything, read `CLAUDE.md`:
+it holds the fork workflow (install, nested sandbox, memory diagnostics, the
+sibling repos `somewm-one` and `somewm-shell`). Fork-only tooling lives under
+`plans/`.
