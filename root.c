@@ -33,9 +33,12 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#ifdef __GLIBC__
+#include <features.h>
+#if __GLIBC_PREREQ(2, 33)
 #define SOMEWM_HAVE_MALLINFO2 1
 #include <malloc.h>
+#endif
 #endif
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
