@@ -52,11 +52,18 @@ for a in "$@"; do
 done
 
 # The prefix gets its Lua tree wiped before each install: never let it be a
-# system location or the live install.
+# system location, a shared prefix or the live install. Canonicalise first,
+# and only wipe a prefix this script created (marker file).
+PREFIX=$(realpath -m "$PREFIX")
 case "$PREFIX" in
-    ""|/|/usr|/usr/*|/usr/local|/usr/local/*|/opt|/opt/*|"$HOME")
-        echo "refusing prefix '$PREFIX' (system or home directory)" >&2; exit 1 ;;
+    /|/usr|/usr/*|/opt|/opt/*|/etc|/etc/*|"$HOME"|"$HOME/.local"|"$HOME/.local/share")
+        echo "refusing prefix '$PREFIX' (system or shared directory)" >&2; exit 1 ;;
 esac
+MARKER=$PREFIX/.v2-stack-sandbox
+if [ -e "$PREFIX/share/somewm" ] && [ ! -e "$MARKER" ]; then
+    echo "refusing prefix '$PREFIX': it holds a somewm install this script did not make" >&2
+    exit 1
+fi
 
 if [ $build = 1 ]; then
     if [ ! -d "$BUILD" ]; then
@@ -66,6 +73,7 @@ if [ $build = 1 ]; then
         meson configure "$BUILD" -Dprefix="$PREFIX" >/dev/null
     fi
     ninja -C "$BUILD"
+    mkdir -p "$PREFIX" && touch "$MARKER"
     rm -rf "$PREFIX/share/somewm/lua"
     meson install -C "$BUILD" --skip-subprojects >/dev/null
 fi
