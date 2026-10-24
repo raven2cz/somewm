@@ -1336,6 +1336,7 @@ main(int argc, char *argv[])
 	char *check_config = NULL;
 	int check_level = -1;  /* -1 = unset (default: warning) */
 	int show_version = 0;
+	int exit_code;
 	int c;
 
 	/* Store argv for restart capability (AwesomeWM API parity).
@@ -1427,8 +1428,12 @@ main(int argc, char *argv[])
 
 	setup();
 	run(startup_cmd);
+	/* awesome.quit(code) stores the code; hand it to whatever launched us
+	 * (a session wrapper can tell "quit" from "rebuild and restart"). Read
+	 * it before cleanup() tears globalconf down. */
+	exit_code = globalconf.exit_code;
 	cleanup();
-	return EXIT_SUCCESS;
+	return exit_code;
 
 usage:
 	die("Usage: %s [-v] [-d] [--verbose] [-c config] [-L search_path] [-s startup_command] [-k config]\n"
