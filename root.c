@@ -21,6 +21,7 @@
 #include "objects/drawable.h"
 #include "objects/drawin.h"
 #include "objects/client.h"
+#include "objects/screen.h"
 #include "screenshot_compose.h"
 #include "somewm_types.h"
 #include "declare.h"
@@ -32,6 +33,10 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <linux/input-event-codes.h>
 #include <time.h>
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#define SOMEWM_HAVE_MALLINFO2 1
+#include <malloc.h>
+#endif
 #include <wlr/render/interface.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/render/wlr_renderer.h>
@@ -1245,6 +1250,59 @@ luaA_root_get_content(lua_State *L)
 
 /* ========== END SCREENSHOT SUPPORT ========== */
 
+static void
+memory_stats_set(lua_State *L, const char *key, size_t value)
+{
+	lua_pushnumber(L, (lua_Number)value);
+	lua_setfield(L, -2, key);
+}
+
+/** root.memory_stats([gc]) - coarse, read-only memory counters for leak
+ * hunting. With gc true the Lua heap is collected twice first, so lua_bytes
+ * is the live heap rather than garbage awaiting collection.
+ *
+ * Counts what somewm itself owns: the Lua heap, object counts, the root
+ * wallpaper surface and (glibc >= 2.33) the malloc arena view. Renderer, driver and
+ * wlroots allocations are not visible here; compare with /proc RSS.
+ */
+static int
+luaA_root_memory_stats(lua_State *L)
+{
+	if (lua_toboolean(L, 1)) {
+		lua_gc(L, LUA_GCCOLLECT, 0);
+		lua_gc(L, LUA_GCCOLLECT, 0);
+	}
+
+	size_t lua_bytes = (size_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024
+		+ (size_t)lua_gc(L, LUA_GCCOUNTB, 0);
+
+	lua_newtable(L);
+	memory_stats_set(L, "lua_bytes", lua_bytes);
+	memory_stats_set(L, "clients", (size_t)globalconf.clients.len);
+	int screens = 0;
+	luaA_screen_get_all(L, NULL, &screens);
+	memory_stats_set(L, "screens", (size_t)screens);
+	memory_stats_set(L, "tags", (size_t)globalconf.tags.len);
+	memory_stats_set(L, "drawins", (size_t)globalconf.drawins.len);
+
+	size_t wallpaper_bytes = 0;
+	if (globalconf.wallpaper
+			&& cairo_surface_get_type(globalconf.wallpaper) == CAIRO_SURFACE_TYPE_IMAGE)
+		wallpaper_bytes = (size_t)cairo_image_surface_get_stride(globalconf.wallpaper)
+			* (size_t)cairo_image_surface_get_height(globalconf.wallpaper);
+	memory_stats_set(L, "wallpaper_bytes", wallpaper_bytes);
+
+#ifdef SOMEWM_HAVE_MALLINFO2
+	struct mallinfo2 mi = mallinfo2();
+	memory_stats_set(L, "malloc_arena_bytes", mi.arena);
+	memory_stats_set(L, "malloc_used_bytes", mi.uordblks);
+	memory_stats_set(L, "malloc_free_bytes", mi.fordblks);
+	memory_stats_set(L, "malloc_releasable_bytes", mi.keepcost);
+#endif
+
+	return 1;
+}
+
 /** __index metamethod for root
  * Delegates to miss handler if set, otherwise calls default handler.
  * Matches AwesomeWM root.c:620-626 exactly.
@@ -1275,6 +1333,8 @@ const luaL_Reg root_methods[] = {
 	{ "_keys", luaA_root_keys },
 	{ "_remove_key", luaA_root_remove_key },
 	{ "_wallpaper", luaA_root_wallpaper },
+	/* somewm extension: debug memory counters (upstream proposal #508) */
+	{ "memory_stats", luaA_root_memory_stats },
 	{ "cursor", luaA_root_cursor },
     { "_cursor_magnify", luaA_root_cursor_magnify },
 	{ "cursor_theme", luaA_root_cursor_theme },
