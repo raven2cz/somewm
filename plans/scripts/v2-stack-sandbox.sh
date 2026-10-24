@@ -51,14 +51,25 @@ for a in "$@"; do
     esac
 done
 
+# The prefix gets its Lua tree wiped before each install: never let it be a
+# system location or the live install.
+case "$PREFIX" in
+    ""|/|/usr|/usr/*|/usr/local|/usr/local/*|/opt|/opt/*|"$HOME")
+        echo "refusing prefix '$PREFIX' (system or home directory)" >&2; exit 1 ;;
+esac
+
 if [ $build = 1 ]; then
     if [ ! -d "$BUILD" ]; then
         meson setup "$BUILD" "$ROOT" --prefix="$PREFIX" -Dsystemd=disabled -Dbuildtype=debugoptimized
+    else
+        # A build dir set up earlier keeps its prefix; follow V2_SBX_PREFIX.
+        meson configure "$BUILD" -Dprefix="$PREFIX" >/dev/null
     fi
     ninja -C "$BUILD"
     rm -rf "$PREFIX/share/somewm/lua"
     meson install -C "$BUILD" --skip-subprojects >/dev/null
 fi
+[ -x "$PREFIX/bin/somewm" ] || { echo "no somewm in $PREFIX/bin; run without --no-build" >&2; exit 1; }
 
 CFG=$STATE/config
 mkdir -p "$CFG/somewm" "$CFG/quickshell"
@@ -88,14 +99,16 @@ done
 grep -q '^export WAYLAND_DISPLAY=.' "$STATE/sandbox.out" || { cat "$STATE/sandbox.out"; exit 1; }
 sed -n 's/^nested somewm pid: //p' "$STATE/sandbox.out" > "$STATE/pid"
 
+sock=$(sed -n 's/^export SOMEWM_SOCKET=//p' "$STATE/sandbox.out")
+wdisp=$(sed -n 's/^export WAYLAND_DISPLAY=//p' "$STATE/sandbox.out")
 {
-    grep '^export' "$STATE/sandbox.out"
-    sock=$(sed -n 's/^export SOMEWM_SOCKET=//p' "$STATE/sandbox.out")
+    printf 'export SOMEWM_SOCKET=%q\n' "$sock"
+    printf 'export WAYLAND_DISPLAY=%q\n' "$wdisp"
     # --headless runs in its own XDG_RUNTIME_DIR; qs ipc and grim need it.
-    echo "export XDG_RUNTIME_DIR=$(dirname "$sock")"
-    echo "export PATH=$PREFIX/bin:\$PATH"
-    echo "export XDG_CONFIG_HOME=$CFG"
-    [ $shell = 1 ] && echo "export HOME=$STATE/home"
+    printf 'export XDG_RUNTIME_DIR=%q\n' "$(dirname "$sock")"
+    printf 'export PATH=%q:"$PATH"\n' "$PREFIX/bin"
+    printf 'export XDG_CONFIG_HOME=%q\n' "$CFG"
+    if [ $shell = 1 ]; then printf 'export HOME=%q\n' "$STATE/home"; fi
 } > "$STATE/env"
 
 echo "sandbox pid $(cat "$STATE/pid"), log $STATE/somewm.log"

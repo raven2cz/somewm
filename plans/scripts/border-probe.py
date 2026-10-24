@@ -298,6 +298,10 @@ def main():
 
     geo = json.loads(ipc(
         'local b=require("beautiful"); '
+        # Strings land inside a hand-built JSON literal: drop quotes,
+        # backslashes and control characters (a Wine title such as
+        # C:\\Program Files would otherwise break json.loads).
+        'local function clean(s) return (tostring(s or ""):gsub(\'[%c"\\\\]\', "")) end; '
         'local c=client.focus; local g=c:geometry(); local s=c.screen; '
         'local sg=s.geometry; local o=s.outputs; local n=nil; '
         'for k,v in pairs(o) do n = (type(v)=="table" and v.name) or '
@@ -307,7 +311,7 @@ def main():
         '"class":"%s","output":"%s","sx":%d,"sy":%d,"sw":%d,"sh":%d,'
         '"blur":%s,"colour":"%s"}\', '
         'g.x, g.y, g.width, g.height, c.border_width or 0, (type(c.shape) == "number" and c.shape) or c.corner_radius or 0, '
-        '(c.name or ""):gsub(\'"\',""), c.class or "", tostring(n), '
+        'clean(c.name), clean(c.class), clean(tostring(n)), '
         'sg.x, sg.y, sg.width, sg.height, '
         'tostring(c.backdrop_blur and true or false), '
         'tostring(b.border_color_active or b.border_focus or b.border_color '

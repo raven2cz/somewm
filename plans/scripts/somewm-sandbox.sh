@@ -176,12 +176,14 @@ cleanup() {
         wait "$SOMEWM_PID" 2>/dev/null || true
     fi
     rm -f "$SOCKET"
-    if [ -n "$SANDBOX_RUNTIME_DIR" ] && [[ "$SANDBOX_RUNTIME_DIR" == /tmp/* ]]; then
+    # Both directories were made by mktemp in this script (which honours
+    # TMPDIR), so remove exactly those paths, wherever they live.
+    if [ -n "$SANDBOX_RUNTIME_DIR" ] && [ -d "$SANDBOX_RUNTIME_DIR" ]; then
         rm -rf "$SANDBOX_RUNTIME_DIR"
     fi
     # Only remove a config home this script created (--test-config); a
     # caller-provided SOMEWM_SANDBOX_CONFIG_HOME is theirs to keep.
-    if [ "$CONFIG_HOME_OWNED" = 1 ] && [[ "$CONFIG_HOME" == /tmp/* ]]; then
+    if [ "$CONFIG_HOME_OWNED" = 1 ] && [ -n "$CONFIG_HOME" ] && [ -d "$CONFIG_HOME" ]; then
         rm -rf "$CONFIG_HOME"
     fi
     exit "$code"
