@@ -103,18 +103,20 @@ def near(a, b, tol=8):
 def scan_edge(buf, iw, ih, want, ring, bw, radius, edge):
     """Walk one edge of the ring.
 
-    For every position along the edge, look for the border colour anywhere in a
-    +/-3px band around where it should be. Three outcomes per position:
-      clean   - found at the expected offset
-      shifted - found, but off by a pixel or more
-      missing - not found in the band at all
+    For every position along the edge, look for the full border width in the
+    border colour at the expected offset, else shifted by up to 3px. Three
+    outcomes per position:
+      clean   - the whole width at the expected offset
+      shifted - the whole width, but off by 1-3px
+      missing - neither
     """
     x0, y0, x1, y1 = ring
     skip = radius + 2  # stay clear of the rounded corners
-    # Expected offsets first: an adjacent pixel that happens to match the
-    # border colour (dark wallpaper, black content) must not turn a correct
-    # border into "shifted".
-    band = list(range(0, bw)) + [d for d in range(-3, bw + 3) if not 0 <= d < bw]
+    # A position is clean only when the whole border width sits at the
+    # expected offsets; otherwise look for the full width shifted by up to
+    # 3px (so neither a matching neighbour pixel nor a partly matching shifted
+    # border is mistaken for the other).
+    shifts = [k for k in range(-3, 4) if k != 0]
 
     clean = shifted = missing = offscreen = 0
     wrong = Counter()
@@ -138,17 +140,22 @@ def scan_edge(buf, iw, ih, want, ring, bw, radius, edge):
                 offscreen += 1
                 continue
 
-        hit = None
-        for d in band:
-            if edge in ("top", "bottom"):
-                x, y = p, base + d
-            else:
-                x, y = base + d, p
-            if not (0 <= x < iw and 0 <= y < ih):
-                continue
-            if near(px(buf, iw, x, y), want):
-                hit = d
-                break
+        def full_width_at(k):
+            for d in range(k, k + bw):
+                if edge in ("top", "bottom"):
+                    x, y = p, base + d
+                else:
+                    x, y = base + d, p
+                if not (0 <= x < iw and 0 <= y < ih):
+                    return False
+                if not near(px(buf, iw, x, y), want):
+                    return False
+            return True
+
+        if full_width_at(0):
+            hit = 0
+        else:
+            hit = next((k for k in shifts if full_width_at(k)), None)
         if hit is None:
             missing += 1
             if edge in ("top", "bottom"):
@@ -157,7 +164,7 @@ def scan_edge(buf, iw, ih, want, ring, bw, radius, edge):
                 x, y = base, p
             if 0 <= x < iw and 0 <= y < ih:
                 wrong[px(buf, iw, x, y)] += 1
-        elif 0 <= hit < bw:
+        elif hit == 0:
             clean += 1
         else:
             shifted += 1

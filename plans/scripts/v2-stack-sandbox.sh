@@ -129,8 +129,11 @@ done
 if [ $shell = 1 ]; then
     (
         export SOMEWM_SOCKET=$sock WAYLAND_DISPLAY=$wdisp XDG_RUNTIME_DIR=$(dirname "$sock") XDG_CONFIG_HOME=$CFG
+        # Its X11 children must not open on the host.
+        if [ -n "$xdisp" ]; then export DISPLAY=$xdisp; else unset DISPLAY; fi
         "$SHELL_REPO/theme-export.sh" >/dev/null 2>&1 || true
-        setsid nohup qs -c somewm -n -d > "$STATE/qs.log" 2>&1 &
+        # No -d: qs would daemonise and $! would be the exiting launcher.
+        setsid nohup qs -c somewm -n > "$STATE/qs.log" 2>&1 &
         echo $! > "$STATE/qs.pid"
     )
 fi
@@ -142,7 +145,12 @@ fi
     printf 'export XDG_RUNTIME_DIR=%q\n' "$(dirname "$sock")"
     printf 'export PATH=%q:"$PATH"\n' "$PREFIX/bin"
     printf 'export XDG_CONFIG_HOME=%q\n' "$CFG"
-    [ -n "$xdisp" ] && printf 'export DISPLAY=%q\n' "$xdisp"
+    if [ -n "$xdisp" ]; then
+        printf 'export DISPLAY=%q\n' "$xdisp"
+    else
+        # Never leave the host's DISPLAY in a sandbox shell.
+        echo 'unset DISPLAY'
+    fi
     # Absolute paths: with --shell this file also changes HOME.
     printf 'export V2_SBX_STATE=%q\n' "$STATE"
     printf 'export V2_SBX_LOG=%q\n' "$STATE/somewm.log"
@@ -151,4 +159,5 @@ fi
 
 echo "sandbox pid $(cat "$STATE/pid"), log $STATE/somewm.log"
 [ $shell = 1 ] && echo "quickshell pid $(cat "$STATE/qs.pid"), log $STATE/qs.log"
+[ -n "$xdisp" ] || echo "warning: nested DISPLAY not found; the env file unsets DISPLAY" >&2
 echo "source $STATE/env"

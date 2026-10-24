@@ -94,7 +94,7 @@ pick() {
 # --- subcommands ------------------------------------------------------------
 
 cmd_start() {
-    local binary="" client="" log="$DEFAULT_LOG" config_home=""
+    local binary="" client="" log="$DEFAULT_LOG" config_home="" config_owned=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -108,6 +108,7 @@ cmd_start() {
                 shift 2 ;;
             --test-config)
                 config_home=$(mktemp -d)
+                config_owned=1
                 mkdir -p "$config_home/somewm"
                 cp "$ROOT_DIR/tests/rc.lua" "$config_home/somewm/rc.lua"
                 shift ;;
@@ -172,16 +173,18 @@ cmd_start() {
 
     assert_not_live "$socket" "$display" "$wayland"
 
-    cat >"$STATE_FILE" <<EOF
-SB_PID=$pid
-SB_SOCKET=$socket
-SB_CLIENT=$client
-SB_BINARY=$binary
-SB_DISPLAY=$display
-SB_WAYLAND_DISPLAY=$wayland
-SB_LOG=$log
-SB_CONFIG_HOME=$config_home
-EOF
+    {
+        printf 'SB_PID=%q\n' "$pid"
+        printf 'SB_SOCKET=%q\n' "$socket"
+        printf 'SB_CLIENT=%q\n' "$client"
+        printf 'SB_BINARY=%q\n' "$binary"
+        printf 'SB_DISPLAY=%q\n' "$display"
+        printf 'SB_WAYLAND_DISPLAY=%q\n' "$wayland"
+        printf 'SB_LOG=%q\n' "$log"
+        printf 'SB_CONFIG_HOME=%q\n' "$config_home"
+        # Only a --test-config dir is ours to delete; --config-home is the caller's.
+        printf 'SB_CONFIG_OWNED=%q\n' "$config_owned"
+    } >"$STATE_FILE"
 
     info "pid=$pid  DISPLAY=$display  WAYLAND_DISPLAY=$wayland"
     info "log: $log"
@@ -275,7 +278,9 @@ cmd_stop() {
         kill -9 "$SB_PID" 2>/dev/null || true
     fi
     rm -f "${SB_SOCKET:-}"
-    [[ -n "${SB_CONFIG_HOME:-}" && "${SB_CONFIG_HOME}" == /tmp/* ]] && rm -rf "$SB_CONFIG_HOME"
+    if [[ "${SB_CONFIG_OWNED:-0}" == 1 && -n "${SB_CONFIG_HOME:-}" && -d "$SB_CONFIG_HOME" ]]; then
+        rm -rf "$SB_CONFIG_HOME"
+    fi
     rm -f "$STATE_FILE"
 }
 
