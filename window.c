@@ -649,6 +649,10 @@ client_reregister_listeners(client_t *c)
 		LISTEN(&xsurface->events.request_configure, &c->configure, configurex11);
 		LISTEN(&xsurface->events.request_fullscreen, &c->request_fullscreen, fullscreennotify);
 		LISTEN(&xsurface->events.set_hints, &c->set_hints, sethints);
+		/* client_remove_all_listeners forgot the watched surface; watch the
+		 * one still associated again (xwayland.c associatex11). */
+		if (xsurface->surface)
+			x11_watch_surface(c, xsurface->surface);
 		LISTEN(&xsurface->events.set_title, &c->set_title, updatetitle);
 
 		/* If mapped (has surface association), register map/unmap */

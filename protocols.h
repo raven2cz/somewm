@@ -18,6 +18,7 @@ struct wlr_surface;
 /* Layer shell */
 void layer_keyboard_focus(Monitor *m);
 void layer_focus_restore_deferred(bool run);
+void layer_focus_forget_monitor(Monitor *m);
 void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 void createlayersurface(struct wl_listener *listener, void *data);
 void destroylayersurfacenotify(struct wl_listener *listener, void *data);

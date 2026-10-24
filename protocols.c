@@ -255,25 +255,34 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	free(l);
 }
 
-/* The monitor whose focus_restore() a layer unmap deferred because a
- * mousegrabber was running; NULL when none is pending. */
+/* A focus_restore() that a layer unmap deferred because a mousegrabber was
+ * running, and the monitor it belongs to (NULL: the focused one; cleared
+ * when that output goes away, see layer_focus_forget_monitor). */
+static bool deferred_focus_pending;
 static Monitor *deferred_focus_mon;
 
-/** Run a focus_restore() that a layer-surface unmap deferred during a grab,
- * on the monitor the surface was on (if that output still exists). Called
- * when the grab stops; dropped on hot reload. */
+/** Run (or with run false, drop) a focus_restore() that a layer-surface
+ * unmap deferred during a grab. Called when the grab stops; dropped on hot
+ * reload. */
 void
 layer_focus_restore_deferred(bool run)
 {
-	Monitor *m = deferred_focus_mon, *it;
-	bool alive = false;
+	Monitor *m = deferred_focus_mon;
 
-	deferred_focus_mon = NULL;
-	if (!run || !m)
+	if (!deferred_focus_pending)
 		return;
-	wl_list_for_each(it, &mons, link)
-		alive = alive || it == m;
-	focus_restore(alive ? m : NULL);
+	deferred_focus_pending = false;
+	deferred_focus_mon = NULL;
+	if (run)
+		focus_restore(m);  /* NULL -> selmon */
+}
+
+/** An output is being destroyed: a deferred restore must not keep it. */
+void
+layer_focus_forget_monitor(Monitor *m)
+{
+	if (deferred_focus_mon == m)
+		deferred_focus_mon = NULL;
 }
 
 void
@@ -314,8 +323,10 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	 * dragging a client, and focus_restore() now would hand focus to a
 	 * focus-history candidate instead of the dragged window. */
 	if (had_exclusive_focus) {
-		if (mousegrabber_isrunning())
-			deferred_focus_mon = l->mon ? l->mon : selmon;
+		if (mousegrabber_isrunning()) {
+			deferred_focus_pending = true;
+			deferred_focus_mon = l->mon;
+		}
 		else
 			focus_restore(l->mon ? l->mon : selmon);
 	}

@@ -148,6 +148,7 @@ cleanupmon(struct wl_listener *listener, void *data)
 	closemon(m);
 	declare_handle_drop(m);
 	declare_output_destroy(m->declare);
+	layer_focus_forget_monitor(m);
 	free(m);
 
 	if (updatemons_pending) {

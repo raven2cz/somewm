@@ -101,7 +101,7 @@ x11_forget_dissociated_surface(Client *c)
 /* Watch the surface while it is alive. wlroots may dissociate from inside
  * the surface's own destruction (the xwayland addon is finished after the
  * destroy signal), so the listener must already be in place by then. */
-static void
+void
 x11_watch_surface(Client *c, struct wlr_surface *surface)
 {
 	if (c->x11_known_surface == surface)

@@ -123,7 +123,10 @@ mousegrabber_release_focus(void)
     if (c && c->isbanned)
         client_ban_unfocus(c);
     layer_focus_restore_deferred(true);
-    motionnotify(0, NULL, 0, 0, 0, 0);
+    /* request::focus_restore runs Lua, which may have started a new grab;
+     * a rebase now would feed that grab a synthetic event. */
+    if (!mousegrabber_isrunning())
+        motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
 /** Stop grabbing the mouse pointer.
