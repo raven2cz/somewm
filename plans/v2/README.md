@@ -65,10 +65,11 @@ open issues/PRs; the maintainer (human) submits.
 - `anim_client.lua` removed; `fishlive/config/animations.lua` maps the v1
   timings onto 2.1 theme keys, corners via `c.shape = 14` (square for
   `steam_app_*`, Wine, `*.exe`, fullscreen), notification popup fade.
-- KDE-like tag slide on the 2.1 tag animation: new clients and the tag
-  wallpaper come in from the right on a higher tag index, from the left on a
-  lower one. A leaving client only animates its frame in 2.1, so the old
-  desktop does not visibly slide out. `tag_slide::start/end` are still
+- KDE-like tag slide on the 2.1 tag animation: new clients come in from the
+  right on a higher tag index, from the left on a lower one. The wallpaper
+  switches at once (measured: at 0.5 s of a 2 s slide every sampled pixel
+  already equals the new wallpaper), and a leaving client only animates its
+  frame in 2.1, so only the arriving windows visibly slide. `tag_slide::start/end` are still
   emitted for the shell collage.
 - layout-machi: function `bgimage` is no longer drawn; `layout-machi/paint.lua`
   paints it into a surface.
@@ -90,7 +91,7 @@ open issues/PRs; the maintainer (human) submits.
 | SceneFX corners, shadows, border frame | upstream `client.shape`, nine-patch shadows |
 | backdrop blur (clients, lock screen) | **none**. Would need a blur pass in the wlroots diff/render.c; feature request upstream if wanted |
 | `anim_client` (fade/maximize/swap/float/layer/minimize) | upstream animations; minimize and layer-surface fades are gone |
-| tag slide with sliding wallpaper overlays | the KDE-like slide above |
+| tag slide with sliding wallpaper overlays | the KDE-like slide above, without the wallpaper (would need two `type="desktop"` wiboxes with `animation.visible` slides; not done) |
 | wallpaper scene cache (`root.wallpaper_cache_*`, `root.wp_*`) | obsolete under Clay; somewm-one's calls are guarded no-ops |
 | `gears.wallpaper` | removed upstream; unused |
 | cold/rebuild restart, `somewm-session` loop | `awesome.restart()`; `main()` now returns the quit code, so a session loop can be rebuilt on `awesome.quit(2)` later |

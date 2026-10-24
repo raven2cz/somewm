@@ -98,7 +98,7 @@ frame callbacks and its animations freeze (see CLAUDE.md, nested vs headless).
 | B3 | **corners on NVIDIA** (the v1 SceneFX defect): with the nested window focused, run `plans/scripts/border-probe.py nested-nvidia-1` for each of 3 focused windows; then drag one window around and run it again | 100% clean, flicker 0, every edge `ok`. Compare: v1 SceneFX 0.5 measured 56% with the left edge absent |
 | B4 | border width 2 and radius 0 variants via IPC (`c.border_width=2`, `c.shape=nil`) + probe | 100% |
 | B5 | animations: spawn/close (fade 0.5/0.4 s), maximize/unmaximize, toggle floating, swap master (Super+Ctrl+Return), focus change border ease | smooth, no flashing at 0,0, no stuck half-transparent window |
-| B6 | tag switch Super+Right / Super+Left (or `awful.tag.viewnext/viewprev`) | new tag's clients and wallpaper enter from the right going up, from the left going down; no tearing; old desktop disappears at once (known 2.1 limit) |
+| B6 | tag switch Super+Right / Super+Left (or `awful.tag.viewnext/viewprev`) | new tag's clients enter from the right going up, from the left going down; no tearing; wallpaper switches at once and the old desktop disappears at once (known 2.x limits) |
 | B7 | layout-machi: Super+/ switcher, Super+. editor | overlay grid draws (was blank before the paint.lua fix) |
 | B8 | wibar | icon and number in different fonts (numbers monospace), clock date small / time larger |
 | B9 | theme switch via IPC `require("fishlive.services.themes").switch("dracula")` and back | no error; `beautiful.animation_appear == "fade"` afterwards |

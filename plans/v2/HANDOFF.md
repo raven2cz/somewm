@@ -47,8 +47,8 @@ box add it if missing).
 
 | repo | `legacy/v1` (= tag `v1-legacy`) | `main` = `v2/main` | base of v2 |
 |---|---|---|---|
-| somewm | `678640f` | `a13f3ae` + this handoff commit | `upstream/main` `6eaa61e` (2.1.0 + 5) |
-| somewm-one | `89702b1` | `c3d88c6` | `legacy/v1` |
+| somewm | `678640f` | see `git log upstream/main..origin/main` (table below) | `upstream/main` `6eaa61e` (2.1.0 + 5) |
+| somewm-one | `89702b1` | see `git log legacy/v1..origin/main` | `legacy/v1` |
 | somewm-shell | `671e597` | `106e04e` | `legacy/v1` |
 
 On the NVIDIA box the local `main` still points at v1: switch as in
@@ -60,7 +60,7 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | commit | content | status |
 |---|---|---|
 | `93b1726` chore(fork) | `plans/` carried from v1 (minus SceneFX diagnostics/patches, v1 sync records moved to `plans/done/legacy-v1/`), `install.sh` replaces `install-scenefx.sh`, sandbox/test scripts look in `build/`, AGENTS.md pointer to CLAUDE.md | fork-only |
-| `a01a16f` fix(xwayland) | `associatex11()` maps a surface whose buffer was committed before associate (Sierra Chart dialogs that never appeared: in `client.get()`, 0x0, no scene). Skips a *stale* buffer kept from before an X11 unmap (commit seq recorded at dissociate, `c->x11_dissociated_surface/seq`) | sandbox tests pass; **real Wine untested** |
+| `a01a16f` fix(xwayland) | `associatex11()` maps a surface whose buffer was committed before associate (Sierra Chart dialogs that never appeared: in `client.get()`, 0x0, no scene). Skips a *stale* buffer kept from before an X11 unmap (commit seq recorded at dissociate) | sandbox tests pass; **real Wine untested** |
 | `f715bff` fix: exit code | `main()` returns `globalconf.exit_code` set by `awesome.quit(code)` (upstream always returned 0) | tested by build only |
 | `7d080ee` fix(input) | `screen::focus` queued when the pointer crosses outputs (was only on empty-space clicks) | needs multi-monitor (D9) |
 | `77c40de` fix(focus) | no ban-unfocus while a mousegrabber runs (client dragged across outputs kept focus); pointer focus rebased (`motionnotify(0)`) when the grab callback ends it | needs multi-monitor (D8) |
@@ -71,7 +71,11 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | `0be4c0b` fix(focus) | when a grab stops: unfocus a focused client that is still banned; run a `focus_restore()` deferred by the layer-shell fix (`globalconf.focus_restore_after_grab`) | tests pass |
 | `bf62bd8` docs | plans/v2/README.md; `plans/scripts/border-probe.py` back from v1, radius from `c.shape` | probe 100% on pixman sandbox |
 | `a13f3ae` docs | nvidia-test-plan.md | - |
-| (this commit) | HANDOFF.md, fork-delta-audit.md, `plans/scripts/v2-stack-sandbox.sh` | - |
+| `dd90cdb` docs | HANDOFF.md, fork-delta-audit.md, `plans/scripts/v2-stack-sandbox.sh` | - |
+| `670521b` fix(xwayland) | review round 2: the remembered surface is watched from associate on (`c->x11_known_surface`, destroy listener), because wlroots can dissociate from inside the surface's destruction; forgotten on destroy/teardown/hot reload | OR-stacking test 5/5 (it crashed on the round-1 version) |
+| `71f6d60` fix(focus) | review round 2: pointer rebase on *every* grab stop (move/resize end on button release), deferred layer restore on the layer's own output (`layer_focus_restore_deferred()` in protocols.c), dropped on hot reload | 59-test set passes |
+| `4788dcd` fix(root) | `__GLIBC_PREREQ` nested under `#ifdef __GLIBC__` (musl builds) | build |
+| `9e93f86` fix(scripts) | sandbox removes its own mktemp dirs wherever TMPDIR is; stack sandbox refuses system prefixes, follows a changed prefix, `%q`-quoted env file, `setsid`; border-probe JSON escaping | verified (probe 100%, prefix guard) |
 
 ### somewm-one commits on top of legacy/v1
 
@@ -83,6 +87,7 @@ git checkout main; git reset --hard origin/main`), never `git pull`.
 | `a8abf49` | KDE-like tag slide: in `property::selected`, higher index -> `beautiful.animation_tag = "slide_right"`, lower -> `"slide_left"`; `M.tag_slide = false` disables |
 | `a8f4a7f` | emits `tag_slide::start (s, name)` / `tag_slide::end (s)` around the slide (shell collage listens) |
 | `c3d88c6` | CLAUDE.md v2 notes |
+| `a395fcf` | review round 2: per-screen slide generation (no early `tag_slide::end`), `somewm-widget*` square by name, wallpaper-slide claim corrected, GLava note, themes_spec own stub |
 
 ### somewm-shell commits on top of legacy/v1
 
@@ -131,7 +136,16 @@ D2), #19 scene dumps (use `somewm-client clay tree`, `screen.inspector`),
 **Known v2 limits found in this session (upstream behaviour, not bugs we
 can fix in config):**
 - A leaving client only animates its frame; its content snaps away. So the
-  tag slide brings the new desktop in but the old one vanishes at once.
+  tag slide brings the new windows in but the old ones vanish at once.
+- The wallpaper does **not** slide: measured at 0.5 s of a 2 s slide, every
+  sampled pixel already equals the new tag's wallpaper. (An earlier note in
+  this session claimed otherwise; it misread a screenshot.) Sliding it would
+  need two `type="desktop"` wiboxes with `animation.visible` slides.
+- `beautiful.animation_tag` is one global word: two screens switching in
+  opposite directions within one frame would share the last direction.
+- Client shape masks (`shape_input`, `shape_bounding`) are accepted and never
+  read on 2.x: GLava's click-through rule (somewm-one rules.lua) is a no-op,
+  GLava now takes pointer input.
 - A tag word is one word for arriving and leaving clients; it names the
   *edge arriving clients come from* (measured: `slide_right` enters from the
   right edge, from x=674 to x=18 on a 1280 output).
@@ -165,8 +179,8 @@ Box: AMD Phoenix iGPU, KDE Wayland, no NVIDIA, no passwordless sudo, no Wine.
 - somewm-one in the sandbox: no Lua errors; windows map visible with
   `c.shape == 14`; layout-machi switcher overlay draws; theme switch keeps
   animation keys; lock screen shows the wallpaper; tag slide direction
-  measured with a red xterm (`fin-*`: next enters from the right, prev from
-  the left); `tag_slide::start/end` fire; fade interpolates on tag switch.
+  measured with a red xterm (next enters from the right, prev from the
+  left); `tag_slide::start/end` fire; fade interpolates on tag switch.
 - somewm-shell in a headless sandbox: dashboard, memory/cpu/storage panels,
   wallpaper picker, control panel render; memory panel shows malloc rows.
 - busted (somewm-one): 225 pass / 7 fail / 1 error, identical before and
@@ -248,3 +262,5 @@ both `deploy.sh`, restart from the TTY. Details in the test plan.
 | round | reviewer | scope | findings | outcome |
 |---|---|---|---|---|
 | 1 | gpt-5.6-sol (codex) | somewm C delta | stale re-associate buffer; grab-deferred unfocus; grab-deferred focus_restore; mallinfo2 needs glibc 2.33 | all fixed (`a01a16f`, `0be4c0b`, `e095d6e`) |
+| 2 | gpt-5.6-sol (codex; the user asked for "sol 6.1", `gpt-6.1-sol` is rejected for this ChatGPT account) | somewm C + scripts, somewm-one, somewm-shell | somewm: 10 (rebase only on motion-ended grabs; deferred restore on wrong output; stale flag across hot reload; dangling surface pointer; `__GLIBC_PREREQ` on musl; probe JSON escaping; stack prefix cache; env quoting; TMPDIR cleanup; ban-unfocus suppressed for any grab). somewm-one: 7. shell: none | fixed: all somewm items except "any grab" (kept: repaired at grab stop now; documented). somewm-one: early slide end, webwidget corners, spec stub fixed; wallpaper-slide claim verified false and corrected; global word and GLava documented; **rejected**: "eval cannot `require`" (wrong: `require` is a global, used throughout this session). The round-1 fix for the dangling pointer itself crashed `test-xwayland-override-redirect-stacking` (listener added inside surface destruction); reworked in `670521b` |
+| 2 | Fable (2 agents) | C delta; config + shell + docs | both stopped by API rate limiting before reporting | retried, see next rows |
