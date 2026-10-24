@@ -212,6 +212,11 @@ struct client_t
     struct wl_listener activate;
     struct wl_listener associate;
     struct wl_listener dissociate;
+    /** The wl_surface and its commit seq at the last X11 dissociate, so a
+     * re-associate of the same surface can tell a buffer left over from
+     * before the unmap from one committed in the associate gap. */
+    struct wlr_surface *x11_dissociated_surface;
+    uint32_t x11_dissociated_seq;
     struct wl_listener configure;
     struct wl_listener set_hints;
     /** Decoration */

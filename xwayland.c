@@ -90,6 +90,40 @@ associatex11(struct wl_listener *listener, void *data)
 
 	LISTEN(&surface->events.map, &c->map, mapnotify);
 	LISTEN(&surface->events.unmap, &c->unmap, unmapnotify);
+
+	/* wlroots maps an Xwayland surface from exactly one place: its own
+	 * commit handler (xwayland/xwm.c, xwayland_surface_handle_commit ->
+	 * wlr_surface_map when the surface has a buffer). That handler is
+	 * subscribed inside xwayland_surface_associate(), i.e. during this very
+	 * call. A buffer the client committed before that point is never
+	 * noticed: the surface holds a buffer, stays unmapped forever, and no
+	 * map signal ever arrives. The client then sits in client.get() with no
+	 * scene node, no screen, no tags and 0x0 geometry -- invisible until
+	 * something forces another commit (an X11 unmap/map cycle does).
+	 *
+	 * Observed with Sierra Chart under Wine: a dialog would intermittently
+	 * not appear at all, in exactly that state. wlroots 0.20.2 still has
+	 * the gap, so close it here: mapping the surface makes wlroots emit the
+	 * map signal we just subscribed to. Calling mapnotify() directly would
+	 * leave wlroots' own surface->mapped state inconsistent.
+	 *
+	 * A re-associate of the surface the window had before an X11 unmap
+	 * still holds that old buffer (dissociate unmaps but keeps it); it is
+	 * only taken when the surface committed since, so a stale picture is
+	 * never mapped ahead of the client's fresh commit.
+	 *
+	 * The mapped-but-no-scene branch covers the mirror case, where the map
+	 * signal fired before we could subscribe. */
+	bool stale = surface == c->x11_dissociated_surface
+		&& surface->current.seq == c->x11_dissociated_seq;
+	c->x11_dissociated_surface = NULL;
+	if (!c->scene) {
+		if (!surface->mapped && wlr_surface_has_buffer(surface) && !stale) {
+			wlr_surface_map(surface);
+		} else if (surface->mapped) {
+			mapnotify(&c->map, NULL);
+		}
+	}
 }
 
 static void
@@ -303,6 +337,10 @@ void
 dissociatex11(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, dissociate);
+	struct wlr_surface *surface = client_surface(c);
+
+	c->x11_dissociated_surface = surface;
+	c->x11_dissociated_seq = surface ? surface->current.seq : 0;
 	wl_list_remove(&c->map.link);
 	wl_list_remove(&c->unmap.link);
 }
