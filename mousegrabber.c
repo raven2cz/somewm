@@ -36,6 +36,7 @@
 #include "input.h"
 #include "declare.h"
 #include "focus.h"
+#include "protocols.h"
 #include "objects/client.h"
 
 #include <string.h>
@@ -99,13 +100,20 @@ mousegrabber_hot_reload(lua_State *L)
     luaL_unref(L, LUA_REGISTRYINDEX, globalconf.mousegrabber);
     globalconf.mousegrabber = LUA_REFNIL;
     mousegrabber_active = false;
+    /* The reload rebuilds focus from the new Lua state; a restore deferred
+     * by the old one must not fire on some later, unrelated grab stop. */
+    layer_focus_restore_deferred(false);
 }
 
-/** Focus work a running grab deferred. client_ban_unfocus() keeps a client
- * dragged across outputs focused while the grab runs; if it is still banned
- * now it really left the view. A layer surface that held keyboard focus and
- * unmapped during the grab still owes its focus_restore() (which does
- * nothing while the session is locked).
+/** Focus work a running grab deferred, run whenever a grab stops.
+ * client_ban_unfocus() keeps a client dragged across outputs focused while
+ * the grab runs; if it is still banned now it really left the view. A layer
+ * surface that held keyboard focus and unmapped during the grab still owes
+ * its focus_restore() (a no-op while the session is locked). Finally rebase
+ * pointer focus: without it the pointer-focused surface stays the one under
+ * the cursor when the grab started, so a client dropped on another output
+ * gets no button events until the next motion (sway's seatop_default
+ * re-entry). motionnotify(0) emits no Lua mouse signals.
  */
 static void
 mousegrabber_release_focus(void)
@@ -114,10 +122,8 @@ mousegrabber_release_focus(void)
 
     if (c && c->isbanned)
         client_ban_unfocus(c);
-    if (globalconf.focus_restore_after_grab) {
-        globalconf.focus_restore_after_grab = false;
-        focus_restore(NULL);  /* the focused monitor; no-op while locked */
-    }
+    layer_focus_restore_deferred(true);
+    motionnotify(0, NULL, 0, 0, 0, 0);
 }
 
 /** Stop grabbing the mouse pointer.

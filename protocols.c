@@ -255,6 +255,27 @@ destroylayersurfacenotify(struct wl_listener *listener, void *data)
 	free(l);
 }
 
+/* The monitor whose focus_restore() a layer unmap deferred because a
+ * mousegrabber was running; NULL when none is pending. */
+static Monitor *deferred_focus_mon;
+
+/** Run a focus_restore() that a layer-surface unmap deferred during a grab,
+ * on the monitor the surface was on (if that output still exists). Called
+ * when the grab stops; dropped on hot reload. */
+void
+layer_focus_restore_deferred(bool run)
+{
+	Monitor *m = deferred_focus_mon, *it;
+	bool alive = false;
+
+	deferred_focus_mon = NULL;
+	if (!run || !m)
+		return;
+	wl_list_for_each(it, &mons, link)
+		alive = alive || it == m;
+	focus_restore(alive ? m : NULL);
+}
+
 void
 unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 {
@@ -294,7 +315,7 @@ unmaplayersurfacenotify(struct wl_listener *listener, void *data)
 	 * focus-history candidate instead of the dragged window. */
 	if (had_exclusive_focus) {
 		if (mousegrabber_isrunning())
-			globalconf.focus_restore_after_grab = true;
+			deferred_focus_mon = l->mon ? l->mon : selmon;
 		else
 			focus_restore(l->mon ? l->mon : selmon);
 	}

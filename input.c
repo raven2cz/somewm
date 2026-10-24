@@ -954,16 +954,8 @@ motionnotify(uint32_t time, struct wlr_input_device *device, double dx, double d
 
 	/* If mousegrabber is active, route event to Lua callback (AwesomeWM behavior:
 	 * check mousegrabber BEFORE enter/leave signals to filter them during grabs) */
-	if (event_handle_mousegrabber(cursor->x, cursor->y, 0)) {
-		/* If that call ended the grab (the callback returned false), rebase
-		 * pointer focus right away. Otherwise the pointer-focused surface
-		 * stays whatever it was when the grab started, and a client dropped
-		 * on another monitor gets no button events until the next motion.
-		 * Mirrors sway's seatop_default re-entry. */
-		if (!mousegrabber_isrunning())
-			motionnotify(0, NULL, 0, 0, 0, 0);
+	if (event_handle_mousegrabber(cursor->x, cursor->y, 0))
 		return; /* Don't process event further (skip enter/leave signals, pointerfocus) */
-	}
 
 	/* Track which object is under the cursor and emit enter/leave/move signals
 	 * (only when mousegrabber is NOT active - filtered above) */

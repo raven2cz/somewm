@@ -226,9 +226,6 @@ typedef struct
 
     /** The mouse pointer grabber function (Lua registry ref) */
     int mousegrabber;
-    /** A layer surface that held keyboard focus unmapped during a grab;
-     * its focus_restore() runs when the grab stops (mousegrabber.c). */
-    bool focus_restore_after_grab;
 
     /** Mouse state tracking for enter/leave events */
     struct {
