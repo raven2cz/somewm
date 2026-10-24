@@ -2,20 +2,44 @@
 
 ## Project Overview
 
-**somewm** is a Wayland compositor porting AwesomeWM to Wayland, built on wlroots 0.19.
-It combines dwl/tinywl compositor patterns with the full AwesomeWM Lua API.
+**somewm** is a Wayland compositor porting AwesomeWM to Wayland. Since 2.1 every
+bar, popup, client and widget is declared in one Clay layout tree per output,
+which somewm solves and reconciles into the wlroots scene graph.
 
 - **Language:** C (GNU11) + Lua (5.1/LuaJIT compatible)
 - **Build:** Meson + Makefile wrapper
 - **License:** MIT (compositor), GPL (AwesomeWM Lua code)
-- **wlroots:** 0.19 (bundled in `subprojects/wlroots/`)
-- **XWayland:** Optional, compile with `-Dxwayland=true`
+- **wlroots:** 0.20.2, always built from `subprojects/wlroots.wrap` with
+  `subprojects/packagefiles/wlroots-corners.diff` (rounded corners, GLES2 and
+  pixman renderers only; no Vulkan renderer is built) and linked in
+- **XWayland:** always on (the `-Dxwayland` option is gone)
+- **No SceneFX.** Upstream refuses it as a dependency (#387, closed
+  2026-10-13). Corners come from `client.shape`, shadows are upstream's
+  nine-patch; there is no backdrop blur.
+
+## Fork lines (read this first)
+
+| line | branch / tag | base | status |
+|---|---|---|---|
+| **v2** (current) | `main` | upstream 2.1 + a thin fork delta | active |
+| v1 (legacy) | `legacy/v1`, tag `v1-legacy` | upstream Aug 2026 + 230 fork commits, wlroots 0.19 + SceneFX | frozen 2026-10-24, kept buildable |
+
+The v2 line was started on 2026-10-24 because upstream 2.0/2.1 rewrote ~720
+files; the fat v1 fork could no longer be synced. Rule for v2: **keep the
+fork thin.** Prefer upstream features; port a v1 fix only after it reproduces
+on 2.1; every fork commit should be upstreamable on its own. The decision
+record, fork-delta table and the NVIDIA test plan live in `plans/v2/`.
 
 ## Hardware Context
 
 **Primary dev/test machine:** NVIDIA RTX 5070 Ti (proprietary driver, nvidia-drm).
 The upstream author does NOT use NVIDIA, so NVIDIA-specific bugs are our responsibility.
 Sway officially refuses to support proprietary NVIDIA drivers but the code still works.
+
+**Secondary machine `boxszn`:** AMD Phoenix iGPU, KDE Plasma Wayland session, no
+NVIDIA, no passwordless sudo. Only the nested/headless sandbox is possible there;
+DRM and NVIDIA validation happens on the primary machine
+(`plans/v2/nvidia-test-plan.md`).
 
 ## User & Environment
 
@@ -66,12 +90,14 @@ those destined for upstream PRs to `trip-zip/somewm`) are authored by the human
 maintainer. Do not add Claude as co-author. Same applies to PR/issue bodies:
 no "Generated with Claude Code" footer, no AI tool mentions.
 
-### Relevant upstream issues
-- **#137** - Steam games lose keyboard focus on launch (FIXED in our fork)
-- **#135** - Keyboard focus desyncs from visual focus (FIXED in our fork)
-- **#133** - Minecraft stuck (likely same root cause, FIXED in our fork)
-- **#64** - Sloppy focus doesn't update Wayland keyboard focus (CLOSED upstream)
-- **#109** - Client focus bugs (CLOSED upstream)
+### Upstream contribution policy
+
+Upstream (`AGENTS.md`, `AI_POLICY.md`, `CONTRIBUTING.md`) accepts issues only
+written by a person, and PRs only for issues the maintainer already agreed to;
+AI use must be disclosed. Agents must **never** open issues/PRs or comment
+upstream. Prepare a fix on a branch and a short note for the maintainer
+(human) to submit. Upstream-candidate fork commits are listed in
+`plans/v2/README.md`.
 
 ## Build Commands
 
@@ -108,31 +134,32 @@ deploy commands, and the update workflow across `somewm` + `somewm-one` +
 `somewm-shell` together — i.e. the recipe to follow when moving to a fresh
 workstation or doing a clean reinstall.
 
-### Quick iteration cycle (no reboot)
+### Quick iteration cycle
 ```bash
 # 1. Edit code
-# 2. Build + install with SceneFX (handles ldconfig for libscenefx)
-~/git/github/somewm/plans/scripts/install-scenefx.sh
-# 3. Hot-swap running session via IPC
-somewm-client exec somewm
+# 2. Build + install (release build/, wipes the installed Lua tree first,
+#    removes v1 SceneFX leftovers from /usr/local)
+~/git/github/somewm/plans/scripts/install.sh
+# 3. Lua-only change: hot reload in place
+somewm-client reload
+# 4. C change: restart the session from the TTY (see below)
 ```
-**WARNING:** `somewm-client exec somewm` replaces the running compositor process.
-If under Wayland, this may launch a nested instance instead. For DRM session
-changes, a full reboot is required.
-
-**IMPORTANT:** Always use `install-scenefx.sh` instead of `sudo make install`.
-The script builds with `-Dscenefx=enabled` into `build-fx/`, runs ldconfig for
-`libscenefx-0.4.so`, and installs to `/usr/local`. Plain `make install` uses the
-release `build/` tree without SceneFX (use `make asan` for the ASAN dev build
-in `build-asan/`).
+`plans/scripts/install.sh --check` verifies the install (links, no libscenefx).
+`somewm-client exec <cmd>` **spawns a shell command** (awful.spawn.with_shell);
+it does not replace the compositor.
 
 ### Full test cycle (reboot required for DRM changes)
 ```bash
-# Build + install with SceneFX + reboot
-~/git/github/somewm/plans/scripts/install-scenefx.sh && sudo reboot
-
-# After reboot, launch from TTY (script at plans/scripts/start.sh)
+~/git/github/somewm/plans/scripts/install.sh && sudo reboot
+# After reboot, launch from TTY
 ~/git/github/somewm/plans/scripts/start.sh
+```
+
+### Going back to v1
+```bash
+git checkout legacy/v1   # in all three repos (somewm, somewm-one, somewm-shell)
+# v1 used the SceneFX installer of that line:
+plans/scripts/install-scenefx.sh   # exists on legacy/v1 only
 ```
 
 ### Wine / X11 debugging
@@ -160,6 +187,20 @@ appear in `client.get()`; inspect them with `root.xwayland_unmanaged()`.
 Use this when you need to run `somewm` inside the current Wayland session. It is
 the right workflow for quick MPV/client geometry checks, Lua IPC checks, and
 memory diagnostics without replacing the real session.
+
+**Nested vs headless.** With `WLR_BACKENDS=wayland` the nested output only
+renders when the parent compositor sends frame callbacks. Under KDE a hidden or
+occluded nested window gets none, so QML/Clay animations freeze half-way and
+`grim` hangs. For anything time-based (animations, Quickshell panels) use
+`--headless` (own frame timer, pixman renderer); `somewm-client screenshot save
+<path>` works with either backend.
+
+**Isolating somewm-one/somewm-shell.** `SOMEWM_SANDBOX_CONFIG_HOME=<dir>` points
+the sandbox at a config copy (`<dir>/somewm/rc.lua`). In that config,
+`SOMEWM_NO_AUTOSTART=1` skips the session daemons (kded6, nm-applet, polkit) and
+`SOMEWM_NO_SHELL=1` keeps rc.lua from (re)launching Quickshell. somewm-shell
+hardcodes `$HOME/.config/...`, so a shell test needs a throwaway `HOME` whose
+`.config` is that directory.
 
 ```bash
 ~/git/github/somewm/plans/scripts/somewm-sandbox.sh
@@ -194,7 +235,7 @@ Manual equivalent, if the helper script is not available:
 SOCKET="$XDG_RUNTIME_DIR/somewm-sandbox-$$.sock"
 WLR_BACKENDS=wayland \
 SOMEWM_SOCKET="$SOCKET" \
-~/git/github/somewm/build-fx/somewm -d 2>/tmp/somewm-nested-debug.log &
+~/git/github/somewm/build/somewm -d 2>/tmp/somewm-nested-debug.log &
 sleep 3
 DISPLAY_NAME=$(SOMEWM_SOCKET="$SOCKET" somewm-client eval 'return os.getenv("WAYLAND_DISPLAY")')
 WAYLAND_DISPLAY="$DISPLAY_NAME" mpv --no-terminal /path/to/video.mp4 &
@@ -215,8 +256,17 @@ somewm-client exec somewm                              # hot-swap binary (CAREFU
 somewm-client restart                                  # restart with same binary
 ```
 **IPC syntax:** Single-line Lua only. Multi-line fails. Use `;` to chain statements.
+**IPC globals:** `eval` runs with the C globals only (`client`, `screen`, `tag`,
+`root`, `awesome`, `mouse`). `awful`, `gears`, `beautiful`, `naughty` are *not*
+globals (rc.lua makes them locals): write `require("awful").spawn(...)`.
 
 ### Memory diagnostics
+
+> **v2 note:** `root.memory_stats()`, `root.wallpaper_cache_stats()` and
+> `root.drawable_stats()` were v1 fork APIs and do not exist on v2 (under Clay
+> drawables hold no cairo/shm surface and the wallpaper cache is gone). The
+> snapshot script falls back to Lua heap + client count; a v2 rewrite is a
+> follow-up in `plans/v2/README.md`. The text below describes v1.
 
 somewm has explicit memory diagnostics for early leak tracking. Use these before
 assuming RSS growth is a compositor leak: wallpaper/tag-slide cache, NVIDIA,
@@ -295,13 +345,11 @@ grep -E '\[FOCUS|MAPNOTIFY' ~/.local/log/somewm-debug.log | tail -50
 grep 'Dispatch\|mpv\|steam' ~/.local/log/somewm-debug.log | tail -50
 ```
 
-### Debug logging markers (currently in code)
-- `[SOMEWM-DEBUG]` - startup marker (WLR_ERROR level, always visible)
-- `[FOCUS]` - focusclient() in somewm.c
-- `[FOCUS-API]` - some_set_seat_keyboard_focus() in somewm_api.c
-- `[FOCUS-ACTIVATE]` - client_activate_surface() in client.h
-- `[FOCUS-ENTER]` - client_notify_enter() in client.h
-- `[MAPNOTIFY-FOCUS]` - mapnotify() re-delivery in somewm.c
+### Debug logging markers
+The v1 `[FOCUS*]`/`[SOMEWM-DEBUG]` markers are gone on v2. `[HOTPLUG]` remains
+(monitor.c, window.c). For the render side use `somewm-client clay tree
+[screen]` (what the last frame solved) and `screen.inspector`
+(`somewm.inspector.toggle(s)`).
 
 ### Important: `-d` flag for debug logging
 `globalconf.log_level` overrides `WLR_LOG` env var. Default is 1 (ERROR).
@@ -314,8 +362,8 @@ even with `WLR_LOG=debug`.
 ```bash
 WLR_DEBUG=1 somewm                    # (less useful, -d flag is better)
 WAYLAND_DEBUG=1 somewm                # Protocol-level traces (very verbose)
-WLR_RENDERER=vulkan somewm            # Force Vulkan renderer (NVIDIA)
-WLR_RENDERER=gles2 somewm             # Force GLES2 renderer
+WLR_RENDERER=gles2 somewm             # GLES2 (the only GPU renderer built on v2)
+WLR_RENDERER=pixman somewm            # software renderer
 WLR_NO_HARDWARE_CURSORS=1 somewm      # Software cursor (NVIDIA fix)
 WLR_DRM_NO_ATOMIC=1 somewm            # Force legacy DRM (NVIDIA fix)
 XCURSOR_THEME=Adwaita XCURSOR_SIZE=24 # Cursor theme
@@ -328,18 +376,18 @@ release, no sanitizers). Crashes produce stack traces.
 
 ## Key Architecture
 
-### Scene Graph Layers (bottom to top)
-```
-LyrBg       - Wallpaper
-LyrBottom   - Below-normal surfaces
-LyrTile     - Tiled windows
-LyrFloat    - Floating windows
-LyrWibox    - Panels/wibox (Lua widgets)
-LyrTop      - Above-normal surfaces
-LyrFS       - Fullscreen windows
-LyrOverlay  - Overlays
-LyrBlock    - Session lock
-```
+### Rendering (v2)
+Lua declares every bar, popup, client and widget into one Clay tree per output
+(`lua/wibox/clay.lua`, `lua/awful/client/clay.lua`); `declare.c` solves it and
+`render.c` reconciles Clay's render commands into wlr_scene (rects and borders
+as scene rects rounded by the wlroots diff; text, images and paths rasterised
+with cairo into buffers). Scene layers are only `LyrDesktop` and `LyrBlock`;
+draw order is the Clay zIndex band (`declare.c` `Z_*`: background layer,
+desktop clients, bottom, below/normal clients, drawins, above, fullscreen,
+ontop, top layer, popups, notifications, overlay layer, unmanaged X11, lock).
+Widgets no longer implement `fit`/`draw`; a function `bgimage` is not drawn;
+a markup with several fonts is drawn in its first run's font (colours do
+survive).
 
 ### Client Types
 ```c
@@ -355,12 +403,12 @@ enum { XDGShell, LayerShell, X11 };  // client_type field
 
 ### Focus Flow (two paths - CRITICAL)
 ```
-PATH 1 - C direct (focusclient in somewm.c:~2302):
+PATH 1 - C direct (focusclient in focus.c:41):
   Used by: keybindings (Super+K), pointer clicks, mapnotify
   Does: stack update, border color, activate surface, keyboard enter,
         pointer constraint, Lua signals, foreign toplevel handle
 
-PATH 2 - Lua API (some_set_seat_keyboard_focus in somewm_api.c:~421):
+PATH 2 - Lua API (some_set_seat_keyboard_focus in somewm_api.c:166):
   Used by: client.focus = c (Lua setter), awful.client.focus.*
   Does: activate surface, keyboard enter, pointer constraint
   NOTE: ALL game focus goes through this path, NEVER through focusclient()
@@ -375,6 +423,10 @@ if (seat->keyboard_state.focused_surface == surface) {
 Workaround: clear focus first, then re-enter (KWin MR !60 pattern).
 
 ### Known NVIDIA issues
+- Upstream 2.1 builds wlroots with the GLES2 renderer only; corners are drawn
+  by its own diff, not SceneFX. The v1 one-pixel rounded border defect was a
+  SceneFX 0.5 problem; whether 2.1's corners are clean on NVIDIA is item #1 of
+  the NVIDIA test plan.
 - Surface may not be `mapped` when focus is set (race with NVIDIA DRM)
 - XWayland surfaces need `wlr_xwayland_set_seat()` on EVERY focus change
 - Keyboard enter must be sent even when `wlr_seat_get_keyboard()` returns NULL
@@ -385,7 +437,10 @@ Workaround: clear focus first, then re-enter (KWin MR !60 pattern).
 ## Directory Structure
 
 ```
-somewm.c              # Main compositor (5800+ lines) - event loop, focus, input, output
+somewm.c              # main(), setup/run/cleanup
+declare.c, render.c   # Clay declare/solve per output, scene reconcile
+clay_impl.c           # the one TU compiling third_party clay.h
+focus.c, input.c, window.c, monitor.c, protocols.c, xwayland.c  # split-out compositor core
 somewm_api.c          # Lua API bridge (C->Lua, Lua->C)
 somewm_api.h          # API declarations
 somewm_types.h        # Core types: Monitor, LayerSurface, scene layers
@@ -452,7 +507,9 @@ commit IDs were rewritten so cross-references break (acceptable trade-off).
 - `plans/upstream/` - Upstream sync records and fork status
 - `plans/done/repo-split/` - 2026-04-29 split-out playbook + paper trail
 - `plans/done/` - Archived completed plans and investigations
-- `plans/scripts/install-scenefx.sh` - Build + install with SceneFX + ldconfig (USE THIS, not `make install`)
+- `plans/v2/` - v2 decision record, fork-delta table, NVIDIA test plan
+- `plans/done/legacy-v1/` - v1-era sync records (kolo9/kolo10, Wine OR rewrite)
+- `plans/scripts/install.sh` - Build + install the v2 release tree (USE THIS)
 - `plans/scripts/start.sh` - Launch somewm with debug logging from TTY
 - `plans/scripts/somewm-sandbox.sh` - Launch nested/headless somewm sandbox for client and IPC debugging
 - `plans/scripts/wine-sandbox.sh` - Run Wine apps in a nested sandbox; refuses any subcommand that would resolve to the live session's DISPLAY/socket
@@ -469,7 +526,7 @@ commit IDs were rewritten so cross-references break (acceptable trade-off).
   - Output: `sway/desktop/output.c` (begin_destroy)
   - XWayland: `sway/desktop/xwayland.c`
   - NVIDIA: `sway/server.c:164` (nvidia-drm detection)
-- **wlroots:** `subprojects/wlroots/` - compositor library, bundled
+- **wlroots:** `subprojects/wlroots-0.20.2/` (unpacked from the wrap) - compositor library, bundled
   - Seat/keyboard: `types/seat/wlr_seat_keyboard.c` (the same-surface skip at line 237!)
   - Output: `types/output/output.c` (wlr_output_finish assertions)
   - Scene: `types/scene/` (scene graph rendering)
@@ -477,7 +534,7 @@ commit IDs were rewritten so cross-references break (acceptable trade-off).
 ## NVIDIA-Specific Workarounds Checklist
 
 When debugging NVIDIA issues, check:
-1. `WLR_RENDERER=vulkan` vs `gles2` vs auto
+1. Renderer: v2 has GLES2 (and pixman) only; Vulkan is not built
 2. `WLR_NO_HARDWARE_CURSORS=1`
 3. `WLR_DRM_NO_ATOMIC=1`
 4. `__NV_PRIME_RENDER_OFFLOAD=1` for hybrid GPU
@@ -517,9 +574,10 @@ cat diff.patch | gemini -m gemini-3.1-pro-preview -p "Review prompt here"
 - `gemini -m model -p "prompt"` (not `gemini-cli`, binary is `gemini`)
 - Pipe diff to stdin, review prompt as the command argument
 
-## Completed Fixes (in our fork raven2cz/somewm)
+## Fork delta on v2
 
-### Branch: fix/xwayland-keyboard-focus
-1. `fd6ec3d` - XWayland keyboard focus delivery in Lua focus path
-2. `d203de4` - XWayland focusable detection via ICCCM input model
-3. `aea9cc4` - awesome.exec() Lua state use-after-free
+See `plans/v2/README.md` for the full table. In short (all upstream
+candidates): XWayland map-before-associate (Sierra Chart dialogs), main()
+returns awesome.quit's code, screen::focus on pointer crossing outputs,
+focus kept on a client dragged across outputs (+ post-grab pointer rebase),
+layer-surface unmap restores focus only for the focus holder.

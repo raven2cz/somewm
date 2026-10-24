@@ -37,9 +37,13 @@ sudo pacman -S --needed \
     libinput libdrm libgbm mesa vulkan-icd-loader \
     pixman cairo pango \
     lua51 luajit lua51-lgi \
-    xorg-xwayland \
-    libliftoff libdisplay-info \
+    xorg-xwayland xcb-util-wm xcb-util-errors \
+    libliftoff libdisplay-info librsvg \
     seatd
+
+# Tests and screenshots (busted lives at
+# /usr/lib/luarocks/rocks-5.1/busted/2.3.0-1/bin/busted; run it with lua5.1)
+sudo pacman -S --needed lua51-busted grim wl-clipboard github-cli
 
 # Quickshell (somewm-shell runtime)
 sudo pacman -S --needed quickshell qt6-base qt6-declarative qt6-svg
@@ -52,7 +56,10 @@ sudo pacman -S --needed somewm   # if available, otherwise built from source bel
 ```
 
 If `somewm` is not in pacman/AUR, the `somewm-client` binary is built and
-installed by `install-scenefx.sh` together with the compositor.
+installed by `plans/scripts/install.sh` together with the compositor.
+
+No system wlroots package is needed: since 2.1 somewm always builds wlroots
+0.20.2 from its wrap (with somewm's corner diff) and links it in.
 
 NVIDIA-specific (only on the dev box):
 ```bash
@@ -87,31 +94,31 @@ If SSH keys are not yet provisioned on the new box, swap `git@github.com:` for
 
 ---
 
-## 3. Build & install somewm (with SceneFX)
+## 3. Build & install somewm
 
 ```bash
 cd ~/git/github/somewm
-./plans/scripts/install-scenefx.sh
+./plans/scripts/install.sh
 ```
 
 What this does:
-1. Configures meson into `build-fx/` with `-Dscenefx=enabled`.
-2. Builds with ninja.
-3. Installs to `/usr/local` (sudo).
-4. Adds `/usr/local/lib` to `/etc/ld.so.conf.d/local.conf` if missing.
-5. Runs `ldconfig` so the linker finds `libscenefx-0.4.so`.
-6. Verifies `/usr/local/bin/somewm` resolves all libraries.
+1. `make` -- release build in `build/` (a `build/` configured by the v1 line,
+   which still has the `scenefx` option, is removed first).
+2. Removes v1 SceneFX leftovers from `/usr/local` (`libscenefx-*`, its
+   pkg-config file and headers), if any.
+3. `sudo make install` -- installs to `/usr/local`, wiping the installed Lua
+   tree first so no stale v1 module (`anim_client`, `tag_slide`,
+   `gears.wallpaper`) can be picked up.
+4. `ldconfig`, then verifies the binary links and is not a SceneFX build.
 
 Verify after install:
 ```bash
-./plans/scripts/install-scenefx.sh --check
-which somewm                # /usr/local/bin/somewm
-which somewm-client         # /usr/local/bin/somewm-client
-ldconfig -p | grep scenefx  # libscenefx-0.4.so registered
+./plans/scripts/install.sh --check
+somewm --version            # v2.1.x-... on the v2 line
 ```
 
-**Never** use plain `sudo make install` here — that uses the ASAN dev build
-without SceneFX and skips the ldconfig step.
+The v1 line (`legacy/v1`) has its own `install-scenefx.sh`; use that only after
+checking out `legacy/v1`.
 
 ---
 
@@ -188,6 +195,14 @@ The `-d` flag enables debug-level logging (overrides `WLR_LOG`).
 When called with "please update all three projects":
 
 ```bash
+# 0. One-time, on a checkout that still has the v1 main: on 2026-10-24
+#    origin/main was replaced by the v2 line (v1 lives on as legacy/v1), so
+#    a plain `git pull` would try to merge the two lines. In each repo:
+#      git fetch origin --tags
+#      git branch -f legacy/v1 origin/legacy/v1
+#      git checkout main && git reset --hard origin/main
+#    (check `git status` first: reset --hard drops uncommitted work)
+
 # 1. Pull all three
 cd ~/git/github/somewm        && git pull origin main
 cd ~/git/github/somewm-one    && git pull origin main
@@ -195,7 +210,7 @@ cd ~/git/github/somewm-shell  && git pull origin main
 
 # 2. Rebuild + reinstall the compositor
 cd ~/git/github/somewm
-./plans/scripts/install-scenefx.sh
+./plans/scripts/install.sh
 
 # 3. Deploy the configs
 cd ~/git/github/somewm-one    && ./deploy.sh
@@ -211,9 +226,9 @@ disown
 If only `somewm-one` changed: `./deploy.sh && somewm-client reload`.
 If only `somewm-shell` changed: `./deploy.sh && pkill -f 'qs -c somewm' && qs -c somewm &`.
 
-For C-side compositor changes: `install-scenefx.sh` then either
-`somewm-client exec somewm` to hot-swap the binary in place (Wayland-only,
-careful — replaces the running process) or full reboot for DRM-backend changes.
+For C-side compositor changes: `install.sh`, then restart the session from the
+TTY (`start.sh`). Note that `somewm-client exec` spawns a shell command, it
+does not replace the running compositor.
 
 ---
 
@@ -222,7 +237,7 @@ careful — replaces the running process) or full reboot for DRM-backend changes
 If the box is not currently running somewm (e.g. fresh login from another DE):
 
 ```bash
-cd ~/git/github/somewm        && git pull && ./plans/scripts/install-scenefx.sh
+cd ~/git/github/somewm        && git pull && ./plans/scripts/install.sh
 cd ~/git/github/somewm-one    && git pull && ./deploy.sh
 cd ~/git/github/somewm-shell  && git pull && ./deploy.sh
 # Then log out, switch to TTY, and run start.sh.
@@ -257,10 +272,10 @@ rm -f /run/user/$(id -u)/somewm-sandbox-*.sock
 
 ## 10. Troubleshooting
 
-**`somewm` won't start, libscenefx not found**
+**`somewm` won't start after switching lines**
 ```bash
-~/git/github/somewm/plans/scripts/install-scenefx.sh --check
-sudo ldconfig
+~/git/github/somewm/plans/scripts/install.sh --check   # v2
+# a v1 binary needs libscenefx: check out legacy/v1 and run its installer
 ```
 
 **Reload of `rc.lua` does nothing after editing the somewm-one repo**
@@ -275,8 +290,8 @@ Restart it: `pkill -f 'qs -c somewm' && qs -c somewm &`.
 The script prints two sockets: `SOMEWM_SOCKET` (IPC for `somewm-client`) and
 `WAYLAND_DISPLAY` (Wayland display for client apps). They are different.
 
-**`build-fx/` permissions broken after a manual `sudo ninja install`**
-`install-scenefx.sh` self-heals this on the next run by reclaiming ownership.
+**`build/` permissions broken after a manual `sudo ninja install`**
+`install.sh` self-heals this on the next run by reclaiming ownership.
 No manual `chown` needed.
 
 **Memory / leak diagnostics**
@@ -291,10 +306,9 @@ No manual `chown` needed.
 
 | Path | Owner | Source |
 |------|-------|--------|
-| `/usr/local/bin/somewm` | system (sudo) | `install-scenefx.sh` |
-| `/usr/local/bin/somewm-client` | system (sudo) | `install-scenefx.sh` |
-| `/usr/local/lib/libscenefx-0.4.so` | system (sudo) | `install-scenefx.sh` |
-| `/etc/ld.so.conf.d/local.conf` | system (sudo) | `install-scenefx.sh` |
+| `/usr/local/bin/somewm` | system (sudo) | `install.sh` |
+| `/usr/local/bin/somewm-client` | system (sudo) | `install.sh` |
+| `/usr/local/share/somewm/` | system (sudo) | `install.sh` (Lua tree wiped on each install) |
 | `~/.config/somewm/` | user | `somewm-one/deploy.sh` |
 | `~/.config/quickshell/somewm/` | user | `somewm-shell/deploy.sh` |
 | `~/.local/log/somewm-debug.log` | user | `start.sh` |
