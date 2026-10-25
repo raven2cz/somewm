@@ -45,8 +45,11 @@ sudo pacman -S --needed \
 # /usr/lib/luarocks/rocks-5.1/busted/2.3.0-1/bin/busted; run it with lua5.1)
 sudo pacman -S --needed lua51-busted grim wl-clipboard github-cli
 
-# Quickshell (somewm-shell runtime)
-sudo pacman -S --needed quickshell qt6-base qt6-declarative qt6-svg
+# Quickshell (somewm-shell runtime): build it from the AUR with the aur/
+# prefix. The bare name can resolve to cachyos' noctalia-qs (it provides
+# quickshell-git), which lags behind Qt. Rebuild after every Qt upgrade.
+sudo pacman -S --needed qt6-base qt6-declarative qt6-svg
+paru -S aur/quickshell-git
 
 # Optional but recommended for sessions / D-Bus integration
 sudo pacman -S --needed dbus-broker xdg-desktop-portal-wlr polkit gnome-keyring
@@ -195,6 +198,8 @@ The `-d` flag enables debug-level logging (overrides `WLR_LOG`).
 When called with "please update all three projects":
 
 ```bash
+# Moving a whole machine from v1 to v2: follow plans/v2/migrate-machine.md
+# (checked recipe incl. GPU selection, Quickshell, environment.d).
 # 0. One-time, on a checkout that still has the v1 main: on 2026-10-24
 #    origin/main was replaced by the v2 line (v1 lives on as legacy/v1), so
 #    a plain `git pull` would try to merge the two lines. Switch with the
