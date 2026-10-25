@@ -91,7 +91,7 @@ D6, D11, D18 prelim. Still to do:
   D2/D5/D8/D9 need the other monitors connected, W1-W5 Sierra Chart.
 - ghostty bottom/right border tint; try hardware cursors (drop
   WLR_NO_HARDWARE_CURSORS=1 in environment.d).
-- Upstream candidates (not submitted, user decision): a5e4a5c
+- Upstream notes: plans/v2/upstream-notes.md. Candidates (not submitted, user decision): a5e4a5c
   (configure_retry after hot reload), d3cad6c (shadow under translucent
   owners), rounded border (63f1347), flow-bar shadow (5b18ed1).
 - A wallpaper file name in ~/Pictures/wallpapers/public-wallpapers/portrait/
