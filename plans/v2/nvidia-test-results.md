@@ -23,6 +23,7 @@ version line)
 | B3 | pass | border-probe nested-nvidia-1..3: 100.0 %, flicker 0, all edges ok; with rounded border (fork change) nested-nvidia-rounded-1..3: 100.0 %, flicker 0 | stock 2.1 draws a SQUARE border around a rounded client (docs: use border_width 0) |
 | B3b | pass | corner crops /tmp/v2b/corners-rb.png: rounded 1px ring, anti-aliased, inner radius 13 matches the surface | after the fork change |
 | D18 (prelim, headless) | pass | fork branch: 321 pass / 13 fail / 25 skip; the same 13 fail with the identical assertion on a pristine `upstream/main` worktree on this box (text/font metrics, systray separator, bundled bar groups, drag-border-refocus) | 0 new failures from the fork delta |
+| C | done, session restart pending | user ran `install.sh` (sudo) + `--check`: All good, no libscenefx in /usr/local/lib; build objects rebuilt after the fork commits (the `--version` string still says g100c356: it is computed when the meson tree is configured, cosmetic); `deploy.sh` for somewm-one and somewm-shell; `somewm -k ~/.config/somewm/rc.lua`: no issues; `/usr/local/bin/somewm-session` = upstream wrapper | next: log out to a TTY, run `plans/scripts/start.sh`; the next session continues with phase D |
 
 ## Open problems
 
