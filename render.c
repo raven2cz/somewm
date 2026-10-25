@@ -218,9 +218,10 @@ struct rnode {
 	bool img_stretch, img_natural;
 	struct render_shape shape;
 	struct shadow_cache *shadow;
-	Clay_BoundingBox shadow_clip;
-	struct wlr_scene_buffer *shadow_tiles[SHADOW_SLICE_COUNT];
-	struct wlr_scene_rect *shadow_fills[SHADOW_FILL_COUNT];
+	Clay_BoundingBox shadow_clip, shadow_owner;
+	/* Each nine-patch piece minus the owner's box: up to four parts. */
+	struct wlr_scene_buffer *shadow_tiles[SHADOW_SLICE_COUNT][SHADOW_CUTS];
+	struct wlr_scene_rect *shadow_fills[SHADOW_FILL_COUNT][SHADOW_CUTS];
 	float *shape_ops;
 	size_t shape_ops_len;
 	/* The scale this node's raster was drawn at: the fourth raster cache key
@@ -2360,6 +2361,7 @@ static Clay_BoundingBox shadow_clip_box(const struct render_shadow *style,
 		right = fminf(right, owner.x);
 		break;
 	case RENDER_SHADOW_CLIP_NONE:
+	case RENDER_SHADOW_CLIP_OWNER:
 		return box;
 	}
 	box.width = fmaxf(0, right - box.x);
@@ -2367,13 +2369,42 @@ static Clay_BoundingBox shadow_clip_box(const struct render_shadow *style,
 	return box;
 }
 
+/* The parts of a outside o, in fixed slots (above, below, left, right) so a
+ * part keeps its scene node while the owner moves; empty slots have no size. */
+static void box_subtract(Clay_BoundingBox a, Clay_BoundingBox o,
+		Clay_BoundingBox out[SHADOW_CUTS])
+{
+	float ar = a.x + a.width, ab = a.y + a.height;
+	float o_r = o.x + o.width, ob = o.y + o.height;
+	for (int k = 0; k < SHADOW_CUTS; k++)
+		out[k] = (Clay_BoundingBox){a.x, a.y, 0, 0};
+	if (box_empty(box_intersect(a, o))) {
+		out[0] = a;
+		return;
+	}
+	float my0 = fmaxf(a.y, o.y), my1 = fminf(ab, ob);
+	if (o.y > a.y)
+		out[0] = (Clay_BoundingBox){a.x, a.y, a.width, o.y - a.y};
+	if (ob < ab)
+		out[1] = (Clay_BoundingBox){a.x, ob, a.width, ab - ob};
+	if (o.x > a.x)
+		out[2] = (Clay_BoundingBox){a.x, my0, o.x - a.x, my1 - my0};
+	if (o_r < ar)
+		out[3] = (Clay_BoundingBox){o_r, my0, ar - o_r, my1 - my0};
+}
+
 static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox)
 {
 	const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
 	Clay_BoundingBox clip = shadow_clip_box(style, rbox);
+	/* RENDER_SHADOW_CLIP_OWNER: paint around the owner, never under it. */
+	Clay_BoundingBox owner = style->clip_edge == RENDER_SHADOW_CLIP_OWNER
+		? box_snap(style->owner_box) : (Clay_BoundingBox){0};
 	bool clip_changed = !box_pos_equal(n->shadow_clip, clip)
-		|| !box_size_equal(n->shadow_clip, clip);
+		|| !box_size_equal(n->shadow_clip, clip)
+		|| !box_pos_equal(n->shadow_owner, owner)
+		|| !box_size_equal(n->shadow_owner, owner);
 	bool fresh = n->node == NULL;
     float opacity = command_opacity(rs, cmd);
     bool opacity_changed = opacity != n->opacity;
@@ -2387,15 +2418,18 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		n->node = &tree->node;
 		rs->created++;
 		for (int i = 0; i < SHADOW_SLICE_COUNT; i++)
-			n->shadow_tiles[i] = wlr_scene_buffer_create(tree, NULL);
+			for (int k = 0; k < SHADOW_CUTS; k++)
+				n->shadow_tiles[i][k] = wlr_scene_buffer_create(tree, NULL);
 		float clear[4] = {0};
 		for (int i = 0; i < SHADOW_FILL_COUNT; i++)
-			n->shadow_fills[i] = wlr_scene_rect_create(tree, 0, 0, clear);
+			for (int k = 0; k < SHADOW_CUTS; k++)
+				n->shadow_fills[i][k] = wlr_scene_rect_create(tree, 0, 0, clear);
 	}
 	if (changed) {
 		struct shadow_cache *cache = shadow_cache_get(rs, style);
 		for (int i = 0; i < SHADOW_SLICE_COUNT; i++)
-			raster_set_buffer(n->shadow_tiles[i], cache->tiles[i]);
+			for (int k = 0; k < SHADOW_CUTS; k++)
+				raster_set_buffer(n->shadow_tiles[i][k], cache->tiles[i]);
 		shadow_cache_release(rs, n->shadow);
 		n->shadow = cache;
 		n->raster_bytes = cache->bytes; /* per-command footprint, shared in state total */
@@ -2407,7 +2441,8 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
             style->rgba[1] * style->rgba[3] * opacity, style->rgba[2] * style->rgba[3] * opacity,
             style->rgba[3] * opacity};
         for (int i = 0; i < SHADOW_FILL_COUNT; i++)
-            wlr_scene_rect_set_color(n->shadow_fills[i], color);
+            for (int k = 0; k < SHADOW_CUTS; k++)
+                wlr_scene_rect_set_color(n->shadow_fills[i][k], color);
         if (!changed) muts++;
     }
 	int r = style->radius, cr = style->corner_radius, cs = r + cr;
@@ -2426,46 +2461,51 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 	for (int i = 0; i < SHADOW_SLICE_COUNT + SHADOW_FILL_COUNT; i++) {
 		int *b = boxes[i];
 		bool tile = i < SHADOW_SLICE_COUNT;
-		struct wlr_scene_node *node = tile ? &n->shadow_tiles[i]->node
-			: &n->shadow_fills[i-SHADOW_SLICE_COUNT]->node;
         Clay_BoundingBox full = {cmd->boundingBox.x + b[0], cmd->boundingBox.y + b[1], b[2], b[3]};
         /* Cut paint, including solid fills, without moving the nine-patch.
          * buffer_apply_clip maps the cut into device pixels and stretched strips. */
-        Clay_BoundingBox cut = box_intersect(full, clip);
-        int px = (int)(cut.x - rbox.x), py = (int)(cut.y - rbox.y);
-        bool show = fits && !box_empty(cut) && (!tile || n->shadow->tiles[i]);
-		if (node->enabled != show) {
-			wlr_scene_node_set_enabled(node, show);
-			muts++;
-		}
-		if (!show)
-			continue;
-        if (node->x != px || node->y != py) {
-            wlr_scene_node_set_position(node, px, py);
-			muts++;
-		}
-		if (tile) {
-			struct wlr_scene_buffer *sb = n->shadow_tiles[i];
-            if (opacity_changed) wlr_scene_buffer_set_opacity(sb, opacity);
-            if (changed || clip_changed || !box_pos_equal(n->box, cmd->boundingBox)
-                    || !box_size_equal(n->box, cmd->boundingBox)
-                    || !box_pos_equal(n->rbox, rbox) || !box_size_equal(n->rbox, rbox)) {
-                Clay_RenderCommand tile_cmd = {.boundingBox = full};
-                struct cairo_buffer *raster = n->shadow->tiles[i];
-                buffer_apply_clip(sb, &tile_cmd, cut, rs->scale,
-                    raster->base.width, raster->base.height);
-                muts++;
-            }
-		} else {
-			struct wlr_scene_rect *rect = n->shadow_fills[i-SHADOW_SLICE_COUNT];
-            if (rect->width != (int)cut.width || rect->height != (int)cut.height) {
-                wlr_scene_rect_set_size(rect, (int)cut.width, (int)cut.height);
+        Clay_BoundingBox parts[SHADOW_CUTS];
+        box_subtract(box_intersect(full, clip), owner, parts);
+		for (int k = 0; k < SHADOW_CUTS; k++) {
+			Clay_BoundingBox cut = parts[k];
+			struct wlr_scene_node *node = tile ? &n->shadow_tiles[i][k]->node
+				: &n->shadow_fills[i-SHADOW_SLICE_COUNT][k]->node;
+			int px = (int)(cut.x - rbox.x), py = (int)(cut.y - rbox.y);
+			bool show = fits && !box_empty(cut) && (!tile || n->shadow->tiles[i]);
+			if (node->enabled != show) {
+				wlr_scene_node_set_enabled(node, show);
 				muts++;
+			}
+			if (!show)
+				continue;
+			if (node->x != px || node->y != py) {
+				wlr_scene_node_set_position(node, px, py);
+				muts++;
+			}
+			if (tile) {
+				struct wlr_scene_buffer *sb = n->shadow_tiles[i][k];
+				if (opacity_changed) wlr_scene_buffer_set_opacity(sb, opacity);
+				if (changed || clip_changed || !box_pos_equal(n->box, cmd->boundingBox)
+						|| !box_size_equal(n->box, cmd->boundingBox)
+						|| !box_pos_equal(n->rbox, rbox) || !box_size_equal(n->rbox, rbox)) {
+					Clay_RenderCommand tile_cmd = {.boundingBox = full};
+					struct cairo_buffer *raster = n->shadow->tiles[i];
+					buffer_apply_clip(sb, &tile_cmd, cut, rs->scale,
+						raster->base.width, raster->base.height);
+					muts++;
+				}
+			} else {
+				struct wlr_scene_rect *rect = n->shadow_fills[i-SHADOW_SLICE_COUNT][k];
+				if (rect->width != (int)cut.width || rect->height != (int)cut.height) {
+					wlr_scene_rect_set_size(rect, (int)cut.width, (int)cut.height);
+					muts++;
+				}
 			}
 		}
 	}
     n->opacity = opacity;
 	n->shadow_clip = clip;
+	n->shadow_owner = owner;
 	return muts;
 }
 

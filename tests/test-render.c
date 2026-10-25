@@ -2265,7 +2265,8 @@ static void test_shadow_tiles(void) {
 	CHECK_EQ(render_buffers_created(f.rs), 8);
 	/* Four 20x20 corners and four 12x1 edges, shared between both owners. */
 	CHECK_EQ(render_raster_bytes(f.rs), (4*20*20 + 4*12)*4);
-	CHECK_EQ(child_count(wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0))), 11);
+	CHECK_EQ(child_count(wlr_scene_tree_from_node(child_at(render_tree(f.parent), 0))),
+		11 * SHADOW_CUTS);
 	CHECK_EQ(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds), 0);
 	style.owner_box.width = 1000;
 	CHECK(render_reconcile(f.rs, commands_of(cmds, 2), &no_hooks, no_bounds) > 0);
@@ -2311,7 +2312,7 @@ static void test_bar_shadow_clip(void) {
 					child_at(render_tree(f.parent), 0));
 				struct wlr_box full[11];
 				for (int i = 0; i < 11; i++) {
-					struct wlr_scene_node *node = child_at(tree, i);
+					struct wlr_scene_node *node = child_at(tree, i * SHADOW_CUTS);
 					int w, h;
 					if (i < 8) {
 						struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
@@ -2328,7 +2329,7 @@ static void test_bar_shadow_clip(void) {
 				render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
 				CHECK_EQ(render_buffers_created(f.rs), 0);
 				for (int i = 0; i < 11; i++) {
-					struct wlr_scene_node *node = child_at(tree, i);
+					struct wlr_scene_node *node = child_at(tree, i * SHADOW_CUTS);
 					struct wlr_box cut = full[i];
 					int *start = vertical ? &cut.y : &cut.x;
 					int *length = vertical ? &cut.height : &cut.width;
@@ -2374,7 +2375,7 @@ static void test_bar_shadow_clip(void) {
 				style.gen++;
 				render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
 				for (int i = 0; i < 11; i++) {
-					struct wlr_scene_node *node = child_at(tree, i);
+					struct wlr_scene_node *node = child_at(tree, i * SHADOW_CUTS);
 					CHECK(node->enabled);
 					CHECK_EQ(tree->node.x + node->x, full[i].x);
 					CHECK_EQ(tree->node.y + node->y, full[i].y);
@@ -2389,6 +2390,65 @@ static void test_bar_shadow_clip(void) {
 			}
 		}
 	}
+	fixture_finish(&f, &no_hooks);
+}
+
+/* A client's or floating wibox's shadow paints around its owner only: no
+ * visible part overlaps the owner, and cutting removes area. */
+static long visible_area(struct wlr_scene_tree *tree, struct wlr_box owner,
+		bool *overlaps) {
+	long area = 0;
+	struct wlr_scene_node *node;
+	wl_list_for_each(node, &tree->children, link) {
+		if (!node->enabled) continue;
+		int w, h;
+		if (node->type == WLR_SCENE_NODE_RECT) {
+			struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+			w = rect->width; h = rect->height;
+		} else {
+			struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+			w = sb->dst_width; h = sb->dst_height;
+		}
+		struct wlr_box b = {tree->node.x + node->x, tree->node.y + node->y, w, h}, i;
+		if (wlr_box_intersection(&i, &b, &owner)) *overlaps = true;
+		area += (long)w * h;
+	}
+	return area;
+}
+
+static void test_shadow_owner_cut(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shadow style = {.radius = 50, .corner_radius = 14,
+		.spread = -35, .offset_x = 10, .offset_y = 10, .rgba = {0, 0, 0, 1},
+		.owner_box = {100, 100, 400, 300}};
+	Clay_RenderCommand cmd = cmd_custom(1,
+		(uintptr_t)render_shadow_tag(&style), 0, 0, 0, 0);
+	struct wlr_box owner = {100, 100, 400, 300};
+	bool overlaps = false;
+	render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+	struct wlr_scene_tree *tree = wlr_scene_tree_from_node(
+		child_at(render_tree(f.parent), 0));
+	long uncut = visible_area(tree, owner, &overlaps);
+	CHECK(overlaps);
+	style.clip_edge = RENDER_SHADOW_CLIP_OWNER;
+	style.gen++;
+	render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+	overlaps = false;
+	long cut = visible_area(tree, owner, &overlaps);
+	CHECK(!overlaps);
+	CHECK(cut > 0);
+	CHECK(cut < uncut);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
+	CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds), 0);
+	/* Moving the owner re-cuts without new rasters. */
+	style.owner_box.x += 7;
+	owner.x += 7;
+	render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+	overlaps = false;
+	visible_area(tree, owner, &overlaps);
+	CHECK(!overlaps);
+	CHECK_EQ(render_buffers_created(f.rs), 0);
 	fixture_finish(&f, &no_hooks);
 }
 
@@ -2445,7 +2505,7 @@ static void test_owner_bounds(void) {
     wl_list_for_each(node, &shadow->children, link) {
         if (node->enabled) CHECK(node->x >= 0);
     }
-    struct wlr_scene_buffer *edge = wlr_scene_buffer_from_node(child_at(shadow, 4));
+    struct wlr_scene_buffer *edge = wlr_scene_buffer_from_node(child_at(shadow, 4 * SHADOW_CUTS));
     CHECK(edge->src_box.x > 0);
     struct wlr_scene_rect *border = wlr_scene_rect_from_node(child_at(tree, 1));
     CHECK_EQ(border->width, 60);
@@ -2604,6 +2664,7 @@ int main(void) {
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shared shadow tiles", test_shadow_tiles },
 		{ "bar shadows clip tiles and fills at the inner edge", test_bar_shadow_clip },
+		{ "client and wibox shadows paint around their owner only", test_shadow_owner_cut },
 		{ "shadow follows current owner", test_shadow_current_owner },
         { "owner bounds fit borders and crop shadow tiles", test_owner_bounds },
         { "animated borders exclude their surface pixels", test_animated_border_surface },

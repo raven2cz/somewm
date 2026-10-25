@@ -1856,7 +1856,7 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
     }
     record_client_exit(n);
 	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e,
-		RENDER_SHADOW_CLIP_NONE);
+		RENDER_SHADOW_CLIP_OWNER);
 	size_t next = i + 1;
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_composite(host, next, z, n->client, clamp, ids);
@@ -2283,7 +2283,7 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
 	root_entrance(id, slot);
 	record_open(role, handle, id, slot, wsrc, hsrc, host);
 	declare_shadow(&d->shadow, d->shadow_config, true, handle, slot,
-		RENDER_SHADOW_CLIP_NONE);
+		RENDER_SHADOW_CLIP_OWNER);
 	if (host->inner_clip) {
 		/* Fills the slot's padded box and carries the root's clip scope,
 		 * so the border paints outside it with the slot's own metadata.
@@ -2416,7 +2416,7 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
 	root_entrance(frame_id, &frame);
 	record_open("WIBOX", handle, frame_id, &frame, DECLARE_SRC_USER, DECLARE_SRC_USER, &host);
 	declare_shadow(&d->shadow, d->shadow_config, true, handle, &frame,
-		RENDER_SHADOW_CLIP_NONE);
+		RENDER_SHADOW_CLIP_OWNER);
 	declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
 	native_close();
 

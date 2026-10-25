@@ -182,7 +182,13 @@ enum render_shadow_clip {
 	RENDER_SHADOW_CLIP_BOTTOM,
 	RENDER_SHADOW_CLIP_LEFT,
 	RENDER_SHADOW_CLIP_RIGHT,
+	/* Paint around the owner only, never under it (clients, floating
+	 * wiboxes): a translucent owner would show the fade beneath it. */
+	RENDER_SHADOW_CLIP_OWNER,
 };
+
+/* A nine-patch piece minus its owner's box: above, below, left, right. */
+#define SHADOW_CUTS 4
 
 struct render_shadow {
 	uint64_t gen;
