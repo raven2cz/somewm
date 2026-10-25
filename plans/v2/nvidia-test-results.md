@@ -32,13 +32,13 @@ version line)
 
 ## Open problems
 
-- FIXED a5e4a5c (install + session restart pending): crash in upstream
+- FIXED a5e4a5c (installed 09:46, live since the 09:46 restart): crash in upstream
   window.c configure_retry after a hot reload. clients_detach() memcpy'd the
   client into a snapshot and lua_close() freed the userdata while the retry
   timer still pointed at it. Timer now dropped at detach and in client_wipe;
   tests/restart/configure-retry-after-restart.sh crashes without the fix;
   restart suite 40/40. Upstream candidate.
-- FIXED d3cad6c (install pending): translucent clients showed the shadow's
+- FIXED d3cad6c (installed 09:46; user confirmed the glow is gone): translucent clients showed the shadow's
   fade under them (light band top/left with the v1-like offsets). Client and
   floating wibox shadows are now cut by the owner's box
   (RENDER_SHADOW_CLIP_OWNER, 4 scene parts per nine-patch piece).
@@ -75,3 +75,24 @@ version line)
   windows radius 50, offset 10/10, spread -35; bars/popups radius 40,
   spread -16 (a 33 px bar cannot take more: the nine-patch needs
   height + 2*spread >= 0, otherwise no shadow is drawn).
+
+## Next session (state 2026-10-25 ~10:00)
+
+Live session runs v2 on NVIDIA (WLR_DRM_DEVICES), Quickshell autostarts,
+hot reload is safe again (a5e4a5c). Done: A, A1, A2, B0-B3b, C, D1, D3 (notes),
+D6, D11, D18 prelim. Still to do:
+- Wallpaper slide on tag switch (v1 feature): the output-covering wallpaper
+  drawin (declare.c declare_wallpaper_drawin) has no animation path; Codex's
+  config-only overlay attempt clipped the outgoing image. Decide: config
+  overlay redone, or a small compositor change (animation on that path).
+- D4 idle 5 min sample, D7, D10, D10b, D12 (lock + PAM), D13 reload x5
+  (memory), D14 screenshots/recording, D15 screen share (portal now
+  UseIn=somewm, XDG_CURRENT_DESKTOP=somewm), D16 mpv, D17 idle/DPMS,
+  D2/D5/D8/D9 need the other monitors connected, W1-W5 Sierra Chart.
+- ghostty bottom/right border tint; try hardware cursors (drop
+  WLR_NO_HARDWARE_CURSORS=1 in environment.d).
+- Upstream candidates (not submitted, user decision): a5e4a5c
+  (configure_retry after hot reload), d3cad6c (shadow under translucent
+  owners), rounded border (63f1347), flow-bar shadow (5b18ed1).
+- A wallpaper file name in ~/Pictures/wallpapers/public-wallpapers/portrait/
+  is too long for the filesystem (gears.surface load error at startup).
