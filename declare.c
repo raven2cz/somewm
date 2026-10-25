@@ -973,7 +973,8 @@ clay_color(const float rgba[4])
  * previous-frame box (clay.h:2720-2726), so no box of its own is declared. */
 static void
 declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
-	bool drawin, uint64_t handle, const Clay_ElementDeclaration *owner)
+	bool drawin, uint64_t handle, const Clay_ElementDeclaration *owner,
+	enum render_shadow_clip clip_edge)
 {
 	const shadow_config_t *config = shadow_get_effective_config(override, drawin);
 	if (!config->enabled)
@@ -982,8 +983,10 @@ declare_shadow(struct render_shadow *shadow, const shadow_config_t *override,
 		.radius = MAX(0, config->radius),
 		.corner_radius = MAX(0, config->corner_radius),
 		.rgba = {config->color[0], config->color[1], config->color[2], shadow_paint(config)},
+		.clip_edge = clip_edge,
 	};
 	if (shadow->radius != value.radius || shadow->corner_radius != value.corner_radius
+			|| shadow->clip_edge != value.clip_edge
 			|| memcmp(shadow->rgba, value.rgba, sizeof(value.rgba))) {
 		value.gen = shadow->gen + 1;
 		*shadow = value;
@@ -1852,7 +1855,8 @@ declare_client_frame(const struct widget_host *host, size_t i, int16_t z,
         record->x11_configure_serial = n->x11_configure_serial;
     }
     record_client_exit(n);
-	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e);
+	declare_shadow(&c->shadow, c->shadow_config, false, n->client, e,
+		RENDER_SHADOW_CLIP_NONE);
 	size_t next = i + 1;
 	for (uint16_t k = 0; k < n->children; k++)
 		next = declare_composite(host, next, z, n->client, clamp, ids);
@@ -2278,7 +2282,8 @@ declare_widget_frame(drawin_t *d, struct widget_host *host, Clay_ElementId id,
     native_configure(slot);
 	root_entrance(id, slot);
 	record_open(role, handle, id, slot, wsrc, hsrc, host);
-	declare_shadow(&d->shadow, d->shadow_config, true, handle, slot);
+	declare_shadow(&d->shadow, d->shadow_config, true, handle, slot,
+		RENDER_SHADOW_CLIP_NONE);
 	if (host->inner_clip) {
 		/* Fills the slot's padded box and carries the root's clip scope,
 		 * so the border paints outside it with the slot's own metadata.
@@ -2410,7 +2415,8 @@ declare_drawin(drawin_t *d, Monitor *m, int16_t z)
     native_configure(&frame);
 	root_entrance(frame_id, &frame);
 	record_open("WIBOX", handle, frame_id, &frame, DECLARE_SRC_USER, DECLARE_SRC_USER, &host);
-	declare_shadow(&d->shadow, d->shadow_config, true, handle, &frame);
+	declare_shadow(&d->shadow, d->shadow_config, true, handle, &frame,
+		RENDER_SHADOW_CLIP_NONE);
 	declare_widget_tree(&host, z, leaf_userdata(handle, opacity));
 	native_close();
 
@@ -2630,8 +2636,9 @@ declare_floating_layers(Monitor *m)
  * floats over the output at the same edge in its band. The drawin's
  * geometry is whatever its tree's root solved to, written back after the
  * solve (bars_settle), so Lua reads the box the frame drew and input finds
- * the bar there. A bar declares no shadow: a flow element has no band to
- * put one under. */
+ * the bar there. Flow-bar shadows float above normal clients and are cut
+ * at the bar's inner edge so they cannot paint over the bar itself. With
+ * two bars stacked on the same edge, the outer shadow may cover the inner bar. */
 struct bar_record {
 	drawin_t *d;
 	struct widget_host host;
@@ -2649,6 +2656,12 @@ bar_flows(drawin_t *d)
 static void
 declare_bar(drawin_t *d, Monitor *m, int16_t z)
 {
+	static const enum render_shadow_clip clip_edges[] = {
+		[DRAWIN_EDGE_TOP] = RENDER_SHADOW_CLIP_TOP,
+		[DRAWIN_EDGE_BOTTOM] = RENDER_SHADOW_CLIP_BOTTOM,
+		[DRAWIN_EDGE_LEFT] = RENDER_SHADOW_CLIP_LEFT,
+		[DRAWIN_EDGE_RIGHT] = RENDER_SHADOW_CLIP_RIGHT,
+	};
 	static const Clay_FloatingAttachPointType points[] = {
 		[DRAWIN_EDGE_TOP] = CLAY_ATTACH_POINT_CENTER_TOP,
 		[DRAWIN_EDGE_BOTTOM] = CLAY_ATTACH_POINT_CENTER_BOTTOM,
@@ -2700,7 +2713,15 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 		slot.floating.zIndex = z;
 		slot.floating.pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH;
 	}
-	if (!bar->host.path_clip && d->bar.stretch && !mg[0] && !mg[1] && !mg[2] && !mg[3]) {
+	bool fills_slot = d->bar.stretch && !mg[0] && !mg[1] && !mg[2] && !mg[3];
+	/* Only full-slot and shaped bars have a frame to cast from. */
+	bool shadow = shadow_get_effective_config(d->shadow_config, true)->enabled
+		&& (fills_slot || bar->host.path_clip);
+	/* Flow shadows must cover normal clients without raising bar paint. */
+	Clay_ElementDeclaration shadow_band = {
+		.floating = { .zIndex = z ? z : Z_DRAWIN },
+	};
+	if (!bar->host.path_clip && fills_slot && !shadow) {
 		declare_widget_slot(&bar->host, id, &slot, "WIBAR", DECLARE_SRC_THEME, DECLARE_SRC_THEME,
 			z, leaf_userdata(handle, opacity));
 		return;
@@ -2708,6 +2729,9 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 	native_open(id);
 	native_configure(&slot);
 	record_open("WIBAR", handle, id, &slot, DECLARE_SRC_THEME, DECLARE_SRC_THEME, &bar->host);
+	if (shadow && !bar->host.path_clip)
+		declare_shadow(&d->shadow, d->shadow_config, true, handle, &shadow_band,
+			clip_edges[d->bar.edge]);
 	if (bar->host.path_clip) {
 		int bw = d->border_width;
 		Clay_ElementDeclaration frame = {
@@ -2724,6 +2748,9 @@ declare_bar(drawin_t *d, Monitor *m, int16_t z)
 		native_open(frame_id);
 		native_configure(&frame);
 		record_open("WIBOX", handle, frame_id, &frame, DECLARE_SRC_THEME, DECLARE_SRC_THEME, &bar->host);
+		if (shadow)
+			declare_shadow(&d->shadow, d->shadow_config, true, handle, &shadow_band,
+				clip_edges[d->bar.edge]);
 	}
 	declare_widget_tree(&bar->host, z, leaf_userdata(handle, opacity));
 	if (bar->host.path_clip)

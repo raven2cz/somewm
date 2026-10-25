@@ -218,6 +218,7 @@ struct rnode {
 	bool img_stretch, img_natural;
 	struct render_shape shape;
 	struct shadow_cache *shadow;
+	Clay_BoundingBox shadow_clip;
 	struct wlr_scene_buffer *shadow_tiles[SHADOW_SLICE_COUNT];
 	struct wlr_scene_rect *shadow_fills[SHADOW_FILL_COUNT];
 	float *shape_ops;
@@ -2340,10 +2341,39 @@ static Clay_BoundingBox shadow_owner_box(const struct render_shadow *style)
 	return box;
 }
 
+static Clay_BoundingBox shadow_clip_box(const struct render_shadow *style,
+		Clay_BoundingBox box)
+{
+	Clay_BoundingBox owner = box_snap(style->owner_box);
+	float right = box.x + box.width, bottom = box.y + box.height;
+	switch (style->clip_edge) {
+	case RENDER_SHADOW_CLIP_TOP:
+		box.y = fmaxf(box.y, owner.y + owner.height);
+		break;
+	case RENDER_SHADOW_CLIP_BOTTOM:
+		bottom = fminf(bottom, owner.y);
+		break;
+	case RENDER_SHADOW_CLIP_LEFT:
+		box.x = fmaxf(box.x, owner.x + owner.width);
+		break;
+	case RENDER_SHADOW_CLIP_RIGHT:
+		right = fminf(right, owner.x);
+		break;
+	case RENDER_SHADOW_CLIP_NONE:
+		return box;
+	}
+	box.width = fmaxf(0, right - box.x);
+	box.height = fmaxf(0, bottom - box.y);
+	return box;
+}
+
 static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		Clay_RenderCommand *cmd, Clay_BoundingBox rbox)
 {
 	const struct render_shadow *style = render_shadow_of(cmd->renderData.custom.customData);
+	Clay_BoundingBox clip = shadow_clip_box(style, rbox);
+	bool clip_changed = !box_pos_equal(n->shadow_clip, clip)
+		|| !box_size_equal(n->shadow_clip, clip);
 	bool fresh = n->node == NULL;
     float opacity = command_opacity(rs, cmd);
     bool opacity_changed = opacity != n->opacity;
@@ -2399,7 +2429,9 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		struct wlr_scene_node *node = tile ? &n->shadow_tiles[i]->node
 			: &n->shadow_fills[i-SHADOW_SLICE_COUNT]->node;
         Clay_BoundingBox full = {cmd->boundingBox.x + b[0], cmd->boundingBox.y + b[1], b[2], b[3]};
-        Clay_BoundingBox cut = box_intersect(full, rbox);
+        /* Cut paint, including solid fills, without moving the nine-patch.
+         * buffer_apply_clip maps the cut into device pixels and stretched strips. */
+        Clay_BoundingBox cut = box_intersect(full, clip);
         int px = (int)(cut.x - rbox.x), py = (int)(cut.y - rbox.y);
         bool show = fits && !box_empty(cut) && (!tile || n->shadow->tiles[i]);
 		if (node->enabled != show) {
@@ -2415,7 +2447,7 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		if (tile) {
 			struct wlr_scene_buffer *sb = n->shadow_tiles[i];
             if (opacity_changed) wlr_scene_buffer_set_opacity(sb, opacity);
-            if (changed || !box_pos_equal(n->box, cmd->boundingBox)
+            if (changed || clip_changed || !box_pos_equal(n->box, cmd->boundingBox)
                     || !box_size_equal(n->box, cmd->boundingBox)
                     || !box_pos_equal(n->rbox, rbox) || !box_size_equal(n->rbox, rbox)) {
                 Clay_RenderCommand tile_cmd = {.boundingBox = full};
@@ -2433,6 +2465,7 @@ static int reconcile_shadow(struct render_state *rs, struct rnode *n,
 		}
 	}
     n->opacity = opacity;
+	n->shadow_clip = clip;
 	return muts;
 }
 

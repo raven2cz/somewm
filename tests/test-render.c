@@ -2288,6 +2288,110 @@ static void test_shadow_tiles(void) {
 	fixture_finish(&f, &no_hooks);
 }
 
+static void test_bar_shadow_clip(void) {
+	struct fixture f;
+	fixture_init(&f);
+	struct render_shadow style = {.radius = 12, .corner_radius = 8,
+		.spread = 3, .rgba = {1, 0, 1, 1}, .owner_box = {100, 100, 120, 80}};
+	Clay_RenderCommand cmd = cmd_custom(1,
+		(uintptr_t)render_shadow_tag(&style), 0, 0, 0, 0);
+	float scales[] = {1, 1.25f, 1.5f};
+	int offsets[] = {-8, 6};
+	for (size_t s = 0; s < 3; s++) {
+		render_set_scale(f.rs, scales[s]);
+		for (int edge = RENDER_SHADOW_CLIP_TOP; edge <= RENDER_SHADOW_CLIP_RIGHT; edge++) {
+			bool vertical = edge <= RENDER_SHADOW_CLIP_BOTTOM;
+			bool after = edge == RENDER_SHADOW_CLIP_TOP || edge == RENDER_SHADOW_CLIP_LEFT;
+			for (size_t o = 0; o < 2; o++) {
+				style.offset_x = vertical ? 0 : offsets[o];
+				style.offset_y = vertical ? offsets[o] : 0;
+				style.clip_edge = RENDER_SHADOW_CLIP_NONE;
+				render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+				struct wlr_scene_tree *tree = wlr_scene_tree_from_node(
+					child_at(render_tree(f.parent), 0));
+				struct wlr_box full[11];
+				for (int i = 0; i < 11; i++) {
+					struct wlr_scene_node *node = child_at(tree, i);
+					int w, h;
+					if (i < 8) {
+						struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+						w = sb->dst_width; h = sb->dst_height;
+					} else {
+						struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+						w = rect->width; h = rect->height;
+					}
+					full[i] = (struct wlr_box){tree->node.x + node->x,
+						tree->node.y + node->y, w, h};
+				}
+				style.clip_edge = edge;
+				style.gen++;
+				render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+				CHECK_EQ(render_buffers_created(f.rs), 0);
+				for (int i = 0; i < 11; i++) {
+					struct wlr_scene_node *node = child_at(tree, i);
+					struct wlr_box cut = full[i];
+					int *start = vertical ? &cut.y : &cut.x;
+					int *length = vertical ? &cut.height : &cut.width;
+					int boundary = after ? (vertical ? 180 : 220) : 100;
+					if (after && *start < boundary) {
+						*length -= boundary - *start;
+						*start = boundary;
+					} else if (!after && *start + *length > boundary) {
+						*length = boundary - *start;
+					}
+					CHECK_EQ(node->enabled, *length > 0);
+					if (*length <= 0) continue;
+					CHECK_EQ(tree->node.x + node->x, cut.x);
+					CHECK_EQ(tree->node.y + node->y, cut.y);
+					if (i >= 8) {
+						struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
+						CHECK_EQ(rect->width, cut.width);
+						CHECK_EQ(rect->height, cut.height);
+						continue;
+					}
+					struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+					CHECK_EQ(sb->dst_width, cut.width);
+					CHECK_EQ(sb->dst_height, cut.height);
+					if (!memcmp(&cut, &full[i], sizeof(cut))) continue;
+					/* Source crops use the actual device-density raster. The
+					 * one-pixel edge strips must retain their stretch ratio. */
+					double sx = (double)sb->buffer->width /
+						render_device_len(full[i].x, full[i].width, scales[s]);
+					double sy = (double)sb->buffer->height /
+						render_device_len(full[i].y, full[i].height, scales[s]);
+					CHECK(fabs(sb->src_box.x - render_device_len(full[i].x,
+						cut.x - full[i].x, scales[s]) * sx) < 0.001);
+					CHECK(fabs(sb->src_box.y - render_device_len(full[i].y,
+						cut.y - full[i].y, scales[s]) * sy) < 0.001);
+					CHECK(fabs(sb->src_box.width - render_device_len(cut.x,
+						cut.width, scales[s]) * sx) < 0.001);
+					CHECK(fabs(sb->src_box.height - render_device_len(cut.y,
+						cut.height, scales[s]) * sy) < 0.001);
+				}
+				CHECK_EQ(render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds), 0);
+				/* Removing the bar role restores every tile and its full source. */
+				style.clip_edge = RENDER_SHADOW_CLIP_NONE;
+				style.gen++;
+				render_reconcile(f.rs, commands_of(&cmd, 1), &no_hooks, no_bounds);
+				for (int i = 0; i < 11; i++) {
+					struct wlr_scene_node *node = child_at(tree, i);
+					CHECK(node->enabled);
+					CHECK_EQ(tree->node.x + node->x, full[i].x);
+					CHECK_EQ(tree->node.y + node->y, full[i].y);
+					if (i < 8) {
+						struct wlr_scene_buffer *sb = wlr_scene_buffer_from_node(node);
+						CHECK_EQ(sb->src_box.width, 0);
+						CHECK_EQ(sb->src_box.height, 0);
+						CHECK_EQ(sb->dst_width, full[i].width);
+						CHECK_EQ(sb->dst_height, full[i].height);
+					}
+				}
+			}
+		}
+	}
+	fixture_finish(&f, &no_hooks);
+}
+
 static void test_animated_border_surface(void) {
     struct fixture f;
     struct fake_clients fc;
@@ -2499,6 +2603,7 @@ int main(void) {
 		{ "fractional moves refresh rasters", test_fractional_moves_refresh_rasters },
 		{ "stretched image crop uses source extent", test_stretched_image_crop_uses_source_extent },
 		{ "shared shadow tiles", test_shadow_tiles },
+		{ "bar shadows clip tiles and fills at the inner edge", test_bar_shadow_clip },
 		{ "shadow follows current owner", test_shadow_current_owner },
         { "owner bounds fit borders and crop shadow tiles", test_owner_bounds },
         { "animated borders exclude their surface pixels", test_animated_border_surface },

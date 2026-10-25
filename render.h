@@ -176,6 +176,14 @@ int render_device_len(int origin, int len, float scale);
  * RECTANGLE only for a fill, clay.h:2780, and a CUSTOM command regardless,
  * clay.h:2875). All ones, a value no handle takes. */
 #define RENDER_CLIP_MARK ((void *)(uintptr_t)UINT64_MAX)
+enum render_shadow_clip {
+	RENDER_SHADOW_CLIP_NONE,
+	RENDER_SHADOW_CLIP_TOP,
+	RENDER_SHADOW_CLIP_BOTTOM,
+	RENDER_SHADOW_CLIP_LEFT,
+	RENDER_SHADOW_CLIP_RIGHT,
+};
+
 struct render_shadow {
 	uint64_t gen;
     uint64_t owner;
@@ -183,6 +191,8 @@ struct render_shadow {
 	float rgba[4];
 	uint32_t owner_id;
 	int spread, offset_x, offset_y;
+	/* Bars keep only the half-plane past their inner edge. */
+	enum render_shadow_clip clip_edge;
 	/* Current completed layout, including owners with no paint command. */
 	Clay_BoundingBox owner_box;
 };

@@ -26,10 +26,12 @@ runner.run_steps{
     end,
     wait(function()
         assert(a.y==0 and b.y==20 and s.workarea.y==40)
-        example.pixel(100,10,'#ff0000');example.pixel(100,30,'#0000ff')
-        example.pixel(100,41,'#ffffff');example.pixel(100,47,'#ffffff')
+        -- The outer bar's magenta shadow overlaps the inner blue bar.
+        example.pixel(100,10,'#ff0000');example.pixel(100,30,'#7100ff')
+        -- The inner bar's shadow paints over the wallpaper below both bars.
+        example.pixel(100,41,'#ff00ff');example.pixel(100,47,'#ff00ff')
         local dump=awesome._clay_tree(s)
-        assert(not dump:find('shadow',1,true),'flow wibar unexpectedly declares a shadow')
+        assert(dump:find('SHADOW',1,true),'flow wibar must declare a shadow')
         example.save('bar-order-before',dump)
         s:connect_signal('property::workarea',changed)
     end),
@@ -40,7 +42,8 @@ runner.run_steps{
     end,
     wait(function()
         assert(b.y==0 and s.workarea.y==20 and signals>0,'hide did not settle and signal')
-        example.pixel(100,10,'#0000ff');example.pixel(100,30,'#ffffff')
+        -- With one bar, the shadow tail blends magenta over white.
+        example.pixel(100,10,'#0000ff');example.pixel(100,30,'#ff8eff')
         local dump=awesome._clay_tree(s)
         local _,count=dump:gsub('WIBAR screen','')
         assert(count==1,'hidden bar must be absent, without a placeholder')
@@ -49,9 +52,10 @@ runner.run_steps{
     function() a.visible=true;return true end,
     wait(function()
         assert(b.y==0 and a.y==20 and s.workarea.y==40,'shown bar must become innermost')
-        example.pixel(100,10,'#0000ff');example.pixel(100,30,'#ff0000')
+        -- Reordering puts the outer shadow over the inner red bar instead.
+        example.pixel(100,10,'#0000ff');example.pixel(100,30,'#ff0071')
         example.save('bar-order-after',awesome._clay_tree(s))
-        io.stderr:write('[PASS] visibility order and pixels; hidden bar absent; workarea signals after frame; no flow-bar shadow\n')
+        io.stderr:write('[PASS] visibility order and pixels; hidden bar absent; workarea signals after frame; flow-bar shadows\n')
     end),
     function()
         s:disconnect_signal('property::workarea',changed)
