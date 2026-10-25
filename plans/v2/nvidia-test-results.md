@@ -32,9 +32,18 @@ version line)
 
 ## Open problems
 
-- Compositor crash (SIGSEGV, use-after-free) in upstream window.c configure_retry
-  seen in a headless sandbox with hot reloads (core: coredumpctl 275046);
-  being investigated by Codex. Until fixed: no hot reload in the live session.
+- FIXED a5e4a5c (install + session restart pending): crash in upstream
+  window.c configure_retry after a hot reload. clients_detach() memcpy'd the
+  client into a snapshot and lua_close() freed the userdata while the retry
+  timer still pointed at it. Timer now dropped at detach and in client_wipe;
+  tests/restart/configure-retry-after-restart.sh crashes without the fix;
+  restart suite 40/40. Upstream candidate.
+- FIXED d3cad6c (install pending): translucent clients showed the shadow's
+  fade under them (light band top/left with the v1-like offsets). Client and
+  floating wibox shadows are now cut by the owner's box
+  (RENDER_SHADOW_CLIP_OWNER, 4 scene parts per nine-patch piece).
+  test-client-shadow-translucent.lua fails without it. Full suite: same 13
+  known environment failures, test-clay-cursor flaky under load (3/3 alone).
 - Wallpaper slide on tag switch (v1 feature) not done: the output-covering
   wallpaper drawin has no animation path; overlay approach clipped the
   outgoing image.
