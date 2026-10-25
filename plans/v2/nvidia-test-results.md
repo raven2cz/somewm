@@ -51,3 +51,9 @@ version line)
 - 2026-10-25: implementation by Codex gpt-6.1-sol, Claude reviews and tests;
   compositor changes minimal, config first (somewm-one cleanup against 2.1
   and somewm.org docs); SceneFX removed from all current docs/scripts.
+- 2026-10-25: shadows tuned live to the v1 look (soft, right/bottom; SceneFX
+  in v1 ignored clip_directional and blurred a window-sized box, ~50 % at the
+  edge). 2.1 nine-patch equivalent, all six themes (somewm-one eea2e0a):
+  windows radius 50, offset 10/10, spread -35; bars/popups radius 40,
+  spread -16 (a 33 px bar cannot take more: the nine-patch needs
+  height + 2*spread >= 0, otherwise no shadow is drawn).
