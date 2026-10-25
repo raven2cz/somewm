@@ -5098,6 +5098,14 @@ clients_detach(client_snapshot_t **out, int *out_count)
 		/* Remove all wlroots listeners */
 		client_remove_all_listeners(c);
 
+		/* The configure retry timer points at this userdata, which
+		 * lua_close() frees. Drop it; the next commit of the rebuilt
+		 * client arms it again if the size still differs. */
+		if (c->configure_retry) {
+			wl_event_source_remove(c->configure_retry);
+			c->configure_retry = NULL;
+		}
+
 		for (j = 0; j < CLIENT_TITLEBAR_COUNT; j++) {
 			declare_handle_drop(c->titlebar[j].drawable);
 			widget_nodes_clear(&c->titlebar[j].widgets);

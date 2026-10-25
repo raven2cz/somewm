@@ -1547,6 +1547,11 @@ client_xproperty_free(client_xproperty_t *property)
 static void
 client_wipe(client_t *c)
 {
+    /* The retry timer's data is this userdata: it must not outlive it. */
+    if (c->configure_retry) {
+        wl_event_source_remove(c->configure_retry);
+        c->configure_retry = NULL;
+    }
     if (c->shape_ref)
         luaL_unref(globalconf_get_lua_State(), LUA_REGISTRYINDEX, c->shape_ref);
     while (c->xproperties) {
