@@ -12,8 +12,8 @@ many of its pixels are actually the border colour.
 Run it once per configuration and compare the "clean" percentages:
 
     plans/scripts/border-probe.py baseline
-    plans/scripts/border-probe.py noblur
-    plans/scripts/border-probe.py small-blur
+    plans/scripts/border-probe.py rounded
+    plans/scripts/border-probe.py square
 
 Results land in tests/bench/results/border/<label>/ as summary.json plus the
 captured frames, so runs can be diffed after the fact.
@@ -277,22 +277,16 @@ def compositor_pid():
     return pids[0]
 
 
-def compositor_env():
-    """Blur-related env of the running compositor, straight from /proc."""
+def compositor_info():
+    """Process and wlroots libraries for the target compositor."""
     pid = compositor_pid()
-    try:
-        raw = Path(f"/proc/{pid}/environ").read_bytes().decode(errors="replace")
-    except Exception:
-        return {"pid": pid}
-    env = dict(e.split("=", 1) for e in raw.split("\0") if "=" in e)
     out = {"pid": pid}
-    for k in ("SOMEWM_BLUR_PASSES", "SOMEWM_BLUR_RADIUS",
-              "SOMEWM_BLUR_BOTTOM_ONLY"):
-        out[k] = env.get(k, "(unset)")
+    if pid is None:
+        return out
     libs = subprocess.run(["ldd", f"/proc/{pid}/exe"], capture_output=True,
                           text=True).stdout
     out["libs"] = [l.split("=>")[0].strip() for l in libs.splitlines()
-                   if "scenefx" in l or "wlroots" in l]
+                   if "wlroots" in l]
     return out
 
 
@@ -319,11 +313,10 @@ def main():
         'return string.format('
         '\'{"x":%d,"y":%d,"w":%d,"h":%d,"bw":%d,"radius":%d,"name":"%s",'
         '"class":"%s","output":"%s","sx":%d,"sy":%d,"sw":%d,"sh":%d,'
-        '"blur":%s,"colour":"%s"}\', '
-        'g.x, g.y, g.width, g.height, c.border_width or 0, (type(c.shape) == "number" and c.shape) or c.corner_radius or 0, '
+        '"colour":"%s"}\', '
+        'g.x, g.y, g.width, g.height, c.border_width or 0, (type(c.shape) == "number" and c.shape) or 0, '
         'clean(c.name), clean(c.class), clean(tostring(n)), '
         'sg.x, sg.y, sg.width, sg.height, '
-        'tostring(c.backdrop_blur and true or false), '
         'tostring(b.border_color_active or b.border_focus or b.border_color '
         'or "#000000"))'))
 
@@ -376,10 +369,10 @@ def main():
     summary = {
         "label": label,
         "client": {k: geo[k] for k in
-                   ("name", "class", "x", "y", "w", "h", "bw", "radius", "blur")},
+                   ("name", "class", "x", "y", "w", "h", "bw", "radius")},
         "border_colour": geo["colour"],
         "clients_open": nclients,
-        "compositor": compositor_env(),
+        "compositor": compositor_info(),
         "edges": edges,
         "clean_pct": round(100.0 * ok / tot, 1) if tot else 0.0,
         "worst_verdict": ("corrupt" if any(e["verdict"] == "corrupt"
@@ -401,7 +394,7 @@ def main():
     print(f"client     : {geo['class']} \"{geo['name'][:40]}\" "
           f"{geo['w']}x{geo['h']}+{geo['x']}+{geo['y']}")
     print(f"border     : width {bw}, radius {geo['radius']}, theme colour "
-          f"{geo['colour']} -> rgb{want}, blur {geo['blur']}")
+          f"{geo['colour']} -> rgb{want}")
     print(f"on screen  : " + ", ".join(f"rgb{c} x{n}" for c, n in dominant))
     if dominant and not near(dominant[0][0], want):
         print("             ^ theme colour is not what is actually drawn; "
@@ -409,9 +402,6 @@ def main():
     print(f"clients    : {nclients} open")
     c = summary["compositor"]
     print(f"compositor : pid {c.get('pid')}  {' '.join(c.get('libs', []))}")
-    print(f"blur env   : passes={c.get('SOMEWM_BLUR_PASSES')} "
-          f"radius={c.get('SOMEWM_BLUR_RADIUS')} "
-          f"bottom_only={c.get('SOMEWM_BLUR_BOTTOM_ONLY')}")
     print()
     print(f"{'edge':<8} {'clean':>8} {'shifted':>8} {'missing':>8} "
           f"{'offscr':>7} {'colours':>8} {'verdict':<13} worst wrong colour")

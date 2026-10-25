@@ -13,9 +13,10 @@ which somewm solves and reconciles into the wlroots scene graph.
   `subprojects/packagefiles/wlroots-corners.diff` (rounded corners, GLES2 and
   pixman renderers only; no Vulkan renderer is built) and linked in
 - **XWayland:** always on (the `-Dxwayland` option is gone)
-- **No SceneFX.** Upstream refuses it as a dependency (#387, closed
-  2026-10-13). Corners come from `client.shape`, shadows are upstream's
-  nine-patch; there is no backdrop blur.
+- **Rendering:** Corners come from `client.shape`; shadows use upstream's
+  nine-patch renderer, configured with `beautiful.shadow_*`. There is no blur.
+  Do not reintroduce SceneFX: upstream refuses it as a dependency (#387,
+  closed 2026-10-13).
 
 ## Fork lines (read this first)
 

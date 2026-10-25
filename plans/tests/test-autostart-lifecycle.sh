@@ -12,8 +12,7 @@
 #   * restart() of a `failed` entry re-enters the gated cycle
 #   * /bin/false oneshot with retries=1 lands in `failed`
 #
-# Required binaries: somewm + somewm-client. Either build/ or
-# build-nofx/ works (no SceneFX needed for headless).
+# Required binaries: somewm + somewm-client from build/ or build-test/.
 
 set -euo pipefail
 
@@ -32,9 +31,7 @@ pick_binary() {
     local c
     for c in \
         "$ROOT_DIR/build/somewm" \
-        "$ROOT_DIR/build/somewm" \
-        "$ROOT_DIR/build-test/somewm" \
-        "$ROOT_DIR/build-nofx/somewm"; do
+        "$ROOT_DIR/build-test/somewm"; do
         if [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
     done
     return 1
@@ -43,9 +40,7 @@ pick_client() {
     local c
     for c in \
         "$ROOT_DIR/build/somewm-client" \
-        "$ROOT_DIR/build/somewm-client" \
-        "$ROOT_DIR/build-test/somewm-client" \
-        "$ROOT_DIR/build-nofx/somewm-client"; do
+        "$ROOT_DIR/build-test/somewm-client"; do
         if [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
     done
     return 1

@@ -85,7 +85,6 @@ pick_binary() {
     local candidate
     if [ "$BACKEND" = "headless" ]; then
         for candidate in \
-            "$ROOT_DIR/build-nofx/somewm" \
             "$ROOT_DIR/build-test/somewm" \
             "$ROOT_DIR/build/somewm" \
             "$ROOT_DIR/somewm"; do
@@ -96,7 +95,6 @@ pick_binary() {
         done
     else
         for candidate in \
-            "$ROOT_DIR/build/somewm" \
             "$ROOT_DIR/build/somewm" \
             "$ROOT_DIR/build-test/somewm" \
             "$ROOT_DIR/somewm"; do

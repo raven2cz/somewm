@@ -27,9 +27,7 @@ pick() {
     local sub="$1" c
     for c in \
         "$ROOT_DIR/build/$sub" \
-        "$ROOT_DIR/build/$sub" \
-        "$ROOT_DIR/build-test/$sub" \
-        "$ROOT_DIR/build-nofx/$sub"; do
+        "$ROOT_DIR/build-test/$sub"; do
         if [ -x "$c" ]; then printf '%s\n' "$c"; return 0; fi
     done
     return 1

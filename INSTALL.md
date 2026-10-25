@@ -109,7 +109,7 @@ What this does:
 3. `sudo make install` -- installs to `/usr/local`, wiping the installed Lua
    tree first so no stale v1 module (`anim_client`, `tag_slide`,
    `gears.wallpaper`) can be picked up.
-4. `ldconfig`, then verifies the binary links and is not a SceneFX build.
+4. `ldconfig`, then verifies the v2 binary links and checks for v1 leftovers.
 
 Verify after install:
 ```bash
