@@ -73,9 +73,9 @@ end
 
 -- The corners of the shape, less the border as a wibox's content takes
 -- them: a titlebar on an edge takes that edge's corners, the surface the
--- rest. Nothing is authored when the client is square. A border stays
--- square here and takes a click in the corner; without one the surface's
--- own cut corner lets the click through.
+-- rest. Nothing is authored when the client is square. The border follows
+-- the shape around them (clay.describe) and takes a click in the corner;
+-- without one the surface's own cut corner lets the click through.
 local function assign_corners(c, bw, top, right, bottom, left, pixels)
     local r = math.max(shape_radius(c) - bw, 0)
     if r <= 0 then return end
@@ -211,6 +211,12 @@ function clay.describe(c, allocation)
     end
     if bw > 0 then
         box.border, box.bw = {c:_border_rgba()}, {bw, bw, bw, bw}
+        -- The border rounds with the shape: its outer edge takes the
+        -- shape's radius and its inner edge that radius less the width
+        -- (render.c reconcile_border), which is what assign_corners gave
+        -- the content. A fullscreen client has no border here.
+        local radius = shape_radius(c)
+        if radius > 0 then box.radius = radius end
     end
     local state = previous[c]
     local focused = capi.client.focus == c
