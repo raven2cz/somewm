@@ -27,8 +27,16 @@ version line)
 | D1 | pass (after fix) | first v2 start composited on the AMD iGPU (`EGL driver name: radeonsi`, multi-GPU copy to the NVIDIA card that drives DP-1; v1 logs show the same); fixed with udev symlink `/dev/dri/nvidia-card` (`/etc/udev/rules.d/61-somewm-nvidia-card.rules`, KERNELS 0000:01:00.0) + `WLR_DRM_DEVICES=/dev/dri/nvidia-card` in `~/.config/environment.d/50-somewm.conf`; start.sh now sources environment.d (e20152b). After restart: `Opening fixed list of KMS devices from WLR_DRM_DEVICES`, `GL renderer: NVIDIA GeForce RTX 4070 SUPER`. Software cursor forced by `WLR_NO_HARDWARE_CURSORS=1` (v1-era env) | `XDG_CURRENT_DESKTOP` in environment.d changed `wlroots` -> `somewm` (somewm.portal `UseIn=somewm`). Log: only `mouse::leave on unregistered drawin` warnings |
 | D3 | pass with notes | border-probe drm-alacritty: bottom ok, sides ok except the top 15 px, top edge tinted 50 %: the wibar shadow falls over a client directly below the bar (by design); drm-1 on ghostty: top/left 100 %, bottom/right tinted ~90 % (e2b55a -> cca3 54), also with `shape = nil` (worse): ghostty-specific, its surface appears to cover the border's far edges | open: ghostty bottom/right border tint |
 | D4 | pending | first 2 min: RSS 537 MB, CPU 5-10 % while the terminal scrolls; GPU 9 %, 304 MiB | needs a real 5 min idle sample |
+| D6 | pass (user) | user: Steam and Dispatch (Proton, X11) work, clicks and keyboard; live client list with Steam running: Steam main window mapped and managed, 0 unmapped/no-screen clients (v1 showed ~110 Steam ghost clients) | the v1 issue "clicks do not work in games/Steam" does not reproduce on v2 |
 
 ## Open problems
+
+- Compositor crash (SIGSEGV, use-after-free) in upstream window.c configure_retry
+  seen in a headless sandbox with hot reloads (core: coredumpctl 275046);
+  being investigated by Codex. Until fixed: no hot reload in the live session.
+- Wallpaper slide on tag switch (v1 feature) not done: the output-covering
+  wallpaper drawin has no animation path; overlay approach clipped the
+  outgoing image.
 
 - ghostty: bottom/right border pixels tinted (~90 % border colour) on the live
   output, top/left exact; alacritty is clean. Suspect the client surface
