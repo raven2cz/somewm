@@ -1,5 +1,11 @@
 # v2 handoff: everything a new session needs
 
+> **2026-10-25 update.** r9home now runs v2 live. Open work and the plan for
+> the home PC: [TODO.md](TODO.md); moving a machine from v1:
+> [migrate-machine.md](migrate-machine.md); results:
+> [nvidia-test-results.md](nvidia-test-results.md); upstream material:
+> [upstream-notes.md](upstream-notes.md).
+
 > **Bootstrap.** On the NVIDIA workstation the local checkout is still the v1
 > line, where `plans/v2/` does not exist yet. Read these files straight from
 > origin before switching anything:
