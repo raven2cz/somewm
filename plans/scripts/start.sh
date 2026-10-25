@@ -5,6 +5,30 @@ mkdir -p ~/.local/log
 # Rotate previous session log (keep last 5)
 "$(dirname "$0")/somewm-log-rotate.sh" 2>/dev/null || true
 
+# Same environment as the systemd launcher (somewm-session): environment.d
+# carries the GPU selection and NVIDIA variables.
+for _conf in "$HOME/.config/environment.d/"*.conf; do
+    [ -f "$_conf" ] || continue
+    set -a
+    . "$_conf"
+    set +a
+done
+unset _conf
+
+# A WLR_DRM_DEVICES entry that does not exist (udev rule missing) would stop
+# the compositor from starting: fall back to wlroots' own GPU choice.
+if [ -n "${WLR_DRM_DEVICES:-}" ]; then
+    _ok=1
+    IFS=: read -ra _devs <<< "$WLR_DRM_DEVICES"
+    for _d in "${_devs[@]}"; do [ -e "$_d" ] || _ok=0; done
+    if [ "$_ok" = 0 ]; then
+        echo "start.sh: WLR_DRM_DEVICES=$WLR_DRM_DEVICES missing, ignoring it" \
+            >> ~/.local/log/somewm-debug.log.env-warning
+        unset WLR_DRM_DEVICES
+    fi
+    unset _ok _devs _d
+fi
+
 # Clean stale Quickshell instance locks from previous sessions.
 # Without this, awful.spawn.once() may think QS is already running
 # after a compositor crash/restart.
