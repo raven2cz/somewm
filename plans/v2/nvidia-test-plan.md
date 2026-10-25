@@ -91,6 +91,11 @@ cd ~/git/github/somewm
 for d in build build-test build-asan; do   # v1-configured trees break meson on v2
   grep -q '"name": "scenefx"' $d/meson-info/intro-buildoptions.json 2>/dev/null && rm -rf $d
 done
+# ignored v1 subproject trees: wlroots-0.20/ also provides wlroots-0.20 and
+# meson stops with "Multiple wrap files provide" (install.sh does the same)
+for sp in wlroots-0.20 scenefx scenefx-0.4 scenefx-0.5; do
+  [ -d subprojects/$sp ] && mkdir -p ~/.cache/somewm-v1-subprojects && mv subprojects/$sp ~/.cache/somewm-v1-subprojects/
+done
 make                                  # release build/; downloads wlroots 0.20.2 on first run
 ./build/somewm --version              # v2.1.x-...
 ```

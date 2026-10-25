@@ -84,6 +84,23 @@ if [[ -f "$BUILDDIR/meson-info/intro-buildoptions.json" ]] &&
     rm -rf "$BUILDDIR"
 fi
 
+# A v1 checkout leaves ignored subproject trees behind. v1's wlroots-0.20/
+# also provides the wlroots-0.20 dependency, so meson refuses to configure
+# ("Multiple wrap files provide 'wlroots-0.20'"). Move them aside instead of
+# deleting them: a rollback to legacy/v1 can reuse them.
+V1_SUBPROJECTS_STASH="${XDG_CACHE_HOME:-$HOME/.cache}/somewm-v1-subprojects"
+for sp in wlroots-0.20 scenefx scenefx-0.4 scenefx-0.5; do
+    [[ -d "$SRCDIR/subprojects/$sp" ]] || continue
+    if [[ -e "$V1_SUBPROJECTS_STASH/$sp" ]]; then
+        red "subprojects/$sp is a v1 leftover, but $V1_SUBPROJECTS_STASH/$sp exists."
+        red "Move or remove one of them by hand."
+        exit 1
+    fi
+    yellow "==> subprojects/$sp is a v1 leftover; moving it to $V1_SUBPROJECTS_STASH/"
+    mkdir -p "$V1_SUBPROJECTS_STASH"
+    mv "$SRCDIR/subprojects/$sp" "$V1_SUBPROJECTS_STASH/"
+done
+
 echo "==> Building (make)..."
 make -C "$SRCDIR"
 
